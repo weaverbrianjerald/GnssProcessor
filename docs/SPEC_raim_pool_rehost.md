@@ -1,6 +1,6 @@
 # SPEC — RAIM pool re-host (post-fit RAIM on the Card-4 invariant-carry lineage)
 
-**Status:** INC-0 built, default-OFF, compile-clean, unit-gated. Field gates 1–3 owed.
+**Status:** INC-0 built, default-OFF, unit-gated. Field gates 1–3 MEASURED 2026-09-13 (§7.1): the screen is live and neutral (RECOMMEND_SCOPED, pinned on the field golden), the actuator is untested for want of opportunity (KEEP_OFF); the power leg is owed.
 **Date:** 2026-08-13
 **Knobs:** `network.raim_carry_invariant` (screen, measure-only), `network.raim_carry_invariant_refloat`
 (actuator). Neither fingerprinted (eq34-hygiene / dw-release precedent), so a same-snapshot A/B is legal.
@@ -258,6 +258,72 @@ threshold here was calibrated against a constant.
 | **Field gate 3 — refloat armed.** | Grade on datum-invariant / SD quantities only (invariant #5): `total_IF` on a ≥2 h window per the level-channel rule, plus chord lifetime and `dd_sigma_cyc` against the OFF leg — churn is the predicted failure mode (R4). |
 
 ---
+
+### 7.1 Field gates 1–3 MEASURED (2026-09-13; worker on worktree-agent-ac909cc72761ca6f7, exe = main's producer `gnss_processor_rs7.exe` 23C628B3…, seed `runs/evseed_field6h_v5` ep0604; `scripts/raim_gate_grade.py`; manager grade)
+
+**Pre-flight.**  (a) Neither knob is a warm-resume fingerprint token — gates 2–3 ran as legs from one snapshot
+(all 8 warm-resumed under `state_snapshot_require`).  (b) **R3 is non-binding under eq34** — `NetworkRunContext.cpp:292`
+resolves `k.phase_datum_prioritized = prioritized || ensemble || eq34`, so the `(!phase_datum_prioritized && is_pivot)`
+skip at `NetworkRaim.cpp:201 / 822 / 1090 / 1184` never fires on this lineage: the pool counts **61 × N − ε** station-epochs
+(7196 over 118 epochs; 14698 over 241), the pivot / clock-datum station MBAR00UGA included.  (The worker's first
+reading of the raw getter said "MBAR skipped"; the leg's own arithmetic corrected it.  R3 still bites a
+legacy-pivot-datum `carry_invariant` lineage.)  (c) **R1 splits:** the A4 withhold compares `sigma0_adapt`, which the
+WITHIN-EPOCH tier publishes over `R.pl_amb` only (`NetworkSolveGlue.cpp:1310–1473`, `:1900`) — deferral D1 — so the
+re-host CANNOT make the withhold fire on any lineage until D1 lands (the loader's R1 warning overstates that half; and
+`network_epoch_status.csv`'s `sigma0` column is that within-epoch statistic, not this card's).  The URA path IS live
+(`NetworkRaim.cpp:435 → NetworkSolPrep.cpp:433`, `emit_ura` armed); `ura_retro_bump` / `clock_monitor_couple_raim` off,
+`ura_refloat_inflate` 1.0 (inert).
+
+**Gate 1 PASS.**  OFF smoke `products.txt` `87a33bf0…` (the certified golden hash); ON: `20 seam pass(es), 1200
+station-epoch(s) with a live census, 18163 ambiguity cell(s) screened` — not the DEAD WIRING warn; σ̂₀ mean / max
+1.000 / 1.000, 0 satellites / 0 arcs flagged (`ZERO OPPORTUNITY`); **ON hash == OFF hash**, every record kind identical.
+
+**Gate 2 — the screen is live and completely neutral** (116-epoch legs from ep0604; ⚠ all three carry `zwd_seam_reseed:
+true`, which §21.21 of SPEC_event_harness has since shown is the wrong posture for this lineage — shared by the three
+arms, so the A/B stands; the absolute ZWD / clock numbers are inflated exactly as RS-10 predicts):
+
+| | raim_ctl | raim_screen | raim_screen_nowh |
+|---|---|---|---|
+| seam passes / pool station-epochs / cells | INERT (loader warn) | 118 / 7196 / **107 396** | 118 / 7196 / 107 396 |
+| σ̂₀ mean / max over live-pool epochs | — | **1.000 / 1.000** | 1.000 / 1.000 |
+| satellites / arcs flagged; T3 / T4 rows | — | **0 / 0; 0 / 0** | 0 / 0; 0 / 0 |
+| A4 withheld epochs | 0 / 118 | **0 / 118** | 0 / 118 |
+| URA Δ vs ctl (U records) | — | **0.000 m, 0 of 3487** | 0.000 |
+| products sha256 | `a910f1be…` | `a910f1be…` | `a910f1be…` |
+| wall | 316 s | 527 s (contention) | 332 s |
+
+C / B / P byte-identical between the control and BOTH screen legs — the "differs only at withheld epochs" clause has an
+empty list; `ev_seam_grade` identical on every channel.  Cost ≈ 15 s / 118 epochs ≈ 0.13 s per epoch (~5 %).  R2's
+power question is answered in the negative-evidence direction: a network carrying metre-level ZWD and clock error
+(from the misapplied reseed) still produced σ̂₀ ≡ 1.000 across 107 396 cells — exactly "the free ambiguity column
+absorbs the tension locally" R2 predicts.
+
+**Gate 3 — the actuator is UNTESTED, not dead.**  The first attempt was discarded: `scripts/event_leg.py` changed on
+main between the two launches (the RS-10 conditional landed), so `raim3_ctl` carried `zwd_seam_reseed: true` and
+`raim3_refloat` false — a two-knob A/B with a spurious 36-withhold difference (SPEC_event_harness §21.21; feedback:
+harness defaults are shared state).  Gate 3b, both 240-epoch legs generated back-to-back off one harness (sha16
+`e6071f43…`, `zwd_seam_reseed: false` on both, diff = the two card knobs + paths): 241 / 241 emitted on both; pool
+14 698 station-epochs / **220 718 cells**; σ̂₀ 1.000 / 1.000; satellites / arcs flagged **0 / 0**; refloats queued /
+drained **0 / 0**; chord lifetime mean 35.78 = 35.78; `dd_sigma_cyc` p50 3.9468 = 3.9468; D5 flags / re-taps / births per
+epoch identical; `products.txt` **byte-identical** (`c1f6a6e6…`) — three 240-epoch legs (the discarded refloat leg too)
+hash the same with the actuator on and off.  `total_IF` over the 2 h window: min 7.77 m at 40 min, final 10.01 m
+(+29 %, still degrading — the level channel has not converged at 2 h on this lineage, invariant CLAUDE.md Amendment 6).
+`refloats_queued == 0` with `sats_flagged == 0` is the ZERO-OPPORTUNITY state (§5), not the dead-actuator signature;
+the pre-registered PASS shape (`refloats_queued > 0`) is not met for want of opportunity.  One non-reproducible
+termination: `raim3b_refloat`'s first run died at ~epoch 177 with exit −1 and a clean log tail (an external kill —
+four run-only workers shared the exe NAME `gnss_processor_rs7.exe`; evidence `runs/evleg_raim3b_refloat_crash1`); the
+identical `leg.json` re-ran 241 / 241.
+
+**Decision.**  `network.raim_carry_invariant` (the screen): **RECOMMEND_SCOPED** on `carry_invariant` lineages and
+PINNED on `golden_field_gps_dual` — it makes post-fit RAIM run at all there (today: pool empty, σ̂₀ a constant, the
+loader's own "INERT" warning) at ~5 % epoch cost with products byte-identical, and its run-end telemetry (§5) is the
+first honest reading of what the tier sees; the "RAIM always on" directive is served by a live, neutral screen, not by
+an inert one.  `network.raim_carry_invariant_refloat` (the actuator): **KEEP_OFF** — uncertified, zero opportunity in
+2 h 58 min of field data.  **Owed, pre-registered:** the POWER leg — E3 (the equal-count slip at GOPE00CZE/G24, +10)
+with the screen armed vs off from the v8 harness seed: does σ̂₀ leave its floor at +10, is G24's arc flagged (T3 / T4
+rows > 0), and with the actuator armed does `refloats_queued` read > 0 with the arc drained into `carry_slipped_ambs`
+(the §7 unit item that proves actuation reaches the carry) — the one measurement that turns "runs" into "screens".
+D1 (re-host the within-epoch tier's pool) stays deferred and is the prerequisite for any withhold on this lineage.
 
 ## 8. Promotion
 
