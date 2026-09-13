@@ -464,6 +464,15 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.raim_within_epoch",
               "the ONLY tier that acts BEFORE emit (adapt-and-EMIT); also the only source of the "
               "sigma0_adapt column" },
+            // --- RAIM pool re-host (docs/SPEC_raim_pool_rehost.md s7.1, 2026-09-13): the post-fit
+            //     screen runs on carry_invariant lineages (qc_amb census); neutral until it sees
+            //     something.  The actuator stays a separate KEEP_OFF knob.
+            { network_carry_invariant_ && network_raim_,
+              network_raim_carry_invariant_,
+              Tier::SCOPED, false, "network.raim_carry_invariant",
+              "re-host the post-fit RAIM pool onto the carry-neutral qc_amb census so T3/T4 run at all "
+              "under carry_invariant: 107k cells / 118 epochs on the field golden, products byte-identical, "
+              "~5 % epoch cost; sigma0 at its 1.0 floor so far (power leg owed)" },
             // --- SCOPED tier: EMISSION and PRODUCT knobs ------------------------------
             { nc.closed_loop.enable || network_service_mode_,
               network_emit_clock_disc_,

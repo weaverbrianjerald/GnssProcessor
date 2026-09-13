@@ -79,7 +79,8 @@
     "network.serialize_disc_counters": true,
     "network.state_snapshot_station_capture": true,
     "network.state_snapshot_rxcb_lin_capture": true,
-    "network.state_snapshot_signal_capture": true
+    "network.state_snapshot_signal_capture": true,
+    "network.raim_carry_invariant": true
    },
    "unset": [
     "network.emit_pb_filter_jump_k",
