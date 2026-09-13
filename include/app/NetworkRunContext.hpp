@@ -217,6 +217,24 @@ namespace GnssProcessor {
         bool zwd_in_block{};
         bool zwd_seam_on{};    ///< network.zwd_seam_reseed: post-resume ZWD re-seed window (SPEC_synthetic_minimum_network §17 finding 3).  NOT fingerprinted (forward-only resume response policy).
         int  zwd_seam_epochs{};   ///< network.zwd_seam_reseed_epochs: seam-window horizon in emitted epochs.
+        double zwd_seam_q{};   ///< network.zwd_seam_reseed_q (RS-10b, SPEC_event_harness §21.21): the SEAM window's own RW process noise (m²/s).  Negative (the -1 default) = unset ⇒ the seam fold borrows @ref zwd_q, byte-identical to the pre-card build.  NOT fingerprinted — which is the point: @ref zwd_q is, so the response's only weight could not be varied on a resume leg.  Read through @ref zwdQEff, never directly at a fold site.
+        /**
+         * @brief The ZWD carry's effective RW process noise (m²/s) for one fold.
+         *
+         * The single place the RS-10b override is resolved, so every ZWD fold site
+         * (the B9 diagonal row, the B9-in-block column, and the prior-residual
+         * census's @c fold_var, which must mirror what was folded or the `zwd`
+         * family's σ̂₀ is computed against a variance no row ever used) agrees.
+         *
+         * @param seam_live  True iff the post-resume seam window is open this epoch
+         *                   (@c ctx.carry.zwd_seam_ep_left > 0).
+         * @return @ref zwd_seam_q when the window is live AND the knob is armed
+         *         (> 0); @ref zwd_q — @c network.zwd_carry_q, the continuous carry's
+         *         fingerprinted parameter — in every other case.
+         */
+        double zwdQEff(bool seam_live) const {
+            return (seam_live && zwd_seam_q > 0.0) ? zwd_seam_q : zwd_q;
+        }
         bool zwd_capture{};    ///< Snapshot-armed run (state_snapshot_path non-empty): record + harvest the per-station ZWD posterior every processed epoch so EVERY snapshot carries Z rows — read-only w.r.t. the solve (no inject; capture only).
         double amb_seam_reinflate_var{};  ///< network.amb_seam_reinflate_var_m2: one-shot variance ADD (m²) on every restored leveling carry at a warm resume (STABILITY target 2 leg C).  NOT fingerprinted (forward-only resume response policy).  0 = OFF.
         bool   resume_frame_restore{};    ///< network.resume_frame_restore (SPEC_synthetic_minimum_network §18.10): at a warm resume, restore the serialized FRAME state — phase-anchor incumbents + sticky pin targets, the Q3 clock-anchor per-sat state, the CLK-R held frame — so the first post-resume election/fold/emit continue the pre-seam realization instead of re-pinning at cold seeds.  NOT fingerprinted (forward-only resume response policy).  OFF = byte-identical resume (rows parsed into maps nothing reads).

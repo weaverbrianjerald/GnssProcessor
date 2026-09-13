@@ -2261,7 +2261,9 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   carry_cpl_shmarg = ctx.knobs.carry_cpl_shmarg; // Card 1d-SH: fully marginalize VtecSh coupling terms (GM border ≠ RW κ model — severs the amb↔SH carry feedback) — requires carry_cpl_cond (enforced at load)
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // Card 1g: widen the reinit feed to the realization-step sources and honour it with κ off — requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // B9: carry per-station ZWD across epochs
-    const double zwd_q         = ctx.knobs.zwd_q;                // B9: ZWD carry random-walk process noise (m²/s)
+    // B9: the ZWD carry's random-walk process noise (m²/s).  RS-10b retired the bare
+    // `zwd_q` alias here — both fold sites read `zwd_q_eff` below instead, so a seam
+    // window's own q cannot be missed at one of them.
     // Seam-scoped ZWD re-seed + unconditional Z-row capture (§17 finding 3).
     // zwd_seam_live: the post-resume inject window is open — run the exact B9 fold.
     // zwd_capture: snapshot-armed run — RECORD R.pl_zwd for the harvest (no inject).
@@ -2269,6 +2271,17 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // serially at the post-solve harvest).
     const bool   zwd_seam_live = ctx.carry.zwd_seam_ep_left > 0;
     const bool   zwd_capture   = ctx.knobs.zwd_capture;
+    // RS-10b (docs/SPEC_event_harness.md §21.21): the ZWD carry's EFFECTIVE RW q for
+    // this epoch's folds.  network.zwd_carry_q is in the warm-resume fingerprint (a
+    // continuous carry q must cold-start), while the seam response that borrowed its
+    // weight is deliberately not — so the seam window's stiffness was untunable on a
+    // resume leg.  network.zwd_seam_reseed_q (default -1 = unset) replaces it, and
+    // ONLY while the window is live: a continuous carry_zwd row of a non-resumed epoch
+    // never sees it, and an unset knob leaves this exactly `zwd_q` (byte-identical).
+    // Resolved ONCE here, off the same `zwd_seam_live` the fold gates read, so the
+    // diagonal B9 row, the B9-in-block column and the harvest's prior-residual census
+    // cannot disagree about which q was folded.
+    const double zwd_q_eff     = ctx.knobs.zwdQEff(zwd_seam_live);
     // B9-in-block live predicate (network.carry_zwd_in_block): the carried ZWD column
     // joins the F3 whitened block instead of folding as a diagonal coupling row outside
     // it.  Conjoined with pl_blk_on, so a station-epoch that takes the F1 / per-column
@@ -3582,7 +3595,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                             if (zgap <= pl_max_gap_s) {
                                                 const double zvar_eff =
                                                     zit->second.var
-                                                    + zwd_q * std::max(0.0, zgap);
+                                                    + zwd_q_eff * std::max(0.0, zgap);
                                                 if (zvar_eff > 0.0) {
                                                     bc.push_back(LocalBlockCol{
                                                         zcol, x_lin(ztidx), &zit->second,
@@ -3791,7 +3804,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                     const double zgap = pl_now_s - zit->second.last_seen_s;
                                     if (zgap <= pl_max_gap_s) {
                                         const double zvar_eff =
-                                            zit->second.var + zwd_q * std::max(0.0, zgap);
+                                            zit->second.var
+                                            + zwd_q_eff * std::max(0.0, zgap);
                                         if (zvar_eff > 0.0) {
                                             if (carry_cpl_cond) {
                                                 cb.buildCplRow(zcol, x_lin(tropo_idx),

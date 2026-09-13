@@ -3747,6 +3747,24 @@ namespace GnssProcessor {
             jval<bool>(json, "network.zwd_seam_reseed", "zwd_seam_reseed", false);
         network_zwd_seam_reseed_epochs_ =
             jval<int>(json, "network.zwd_seam_reseed_epochs", "zwd_seam_reseed_epochs", 480);
+        // RS-10b (docs/SPEC_event_harness.md §21.21): the seam window's OWN stiffness.
+        // network.zwd_carry_q is IN the warm-resume fingerprint (a continuous carry q
+        // must cold-start), while the seam response that borrowed its weight
+        // deliberately is not — so the one knob this response exists to tune could not
+        // be varied on a resume leg at all.  Negative (the -1 default) = borrow
+        // zwd_carry_q, i.e. byte-identical when unset; positive = used instead, and
+        // ONLY inside the live seam window.  Not fingerprinted, same exemption class
+        // as zwd_seam_reseed itself.
+        network_zwd_seam_reseed_q_ =
+            jval<double>(json, "network.zwd_seam_reseed_q", "zwd_seam_reseed_q", -1.0);
+        if (std::isnan(network_zwd_seam_reseed_q_))
+            throw std::runtime_error("network.zwd_seam_reseed_q must be a number "
+                                     "(> 0 to arm, negative to borrow network.zwd_carry_q)");
+        if (network_zwd_seam_reseed_q_ == 0.0)
+            throw std::runtime_error("network.zwd_seam_reseed_q must be > 0 when set (0 arms a "
+                                     "window whose variance never inflates while reading as "
+                                     "armed); use a negative value (the -1 default) to borrow "
+                                     "network.zwd_carry_q");
         network_amb_seam_reinflate_var_m2_ =
             jval<double>(json, "network.amb_seam_reinflate_var_m2",
                          "amb_seam_reinflate_var_m2", 0.0);
@@ -10211,13 +10229,25 @@ namespace GnssProcessor {
                 log->info("Network (ZWD seam re-seed): network.carry_zwd is ALSO on — B9 already "
                           "injects on every epoch, so the seam window is subsumed (its counters "
                           "still tick during the post-resume horizon).");
+            // RS-10b (§21.21): the seam q may now be the window's own, decoupled from
+            // the fingerprinted continuous carry q.  Report which one is live and where
+            // it came from — this is the ON-path telemetry for the bracket.
+            const bool   seam_q_armed = network_zwd_seam_reseed_q_ > 0.0;
+            const double seam_q_eff   = seam_q_armed ? network_zwd_seam_reseed_q_
+                                                     : network_zwd_carry_q_;
             log->info("Network (ZWD seam re-seed): armed — after a warm resume that restores Z "
                       "rows, the B9 ZWD inject+stash runs for {} emitted epoch(s) with RW q "
-                      "{:.3e} m²/s, then retires (the station filter re-establishes its own "
+                      "{:.3e} m²/s ({}), then retires (the station filter re-establishes its own "
                       "memory; continuous epochs NEVER carry — that path is falsified).  "
                       "Deliberately NOT in the warm-resume fingerprint (forward-only resume "
                       "response policy).",
-                      network_zwd_seam_reseed_epochs_, network_zwd_carry_q_);
+                      network_zwd_seam_reseed_epochs_, seam_q_eff,
+                      seam_q_armed
+                          ? "network.zwd_seam_reseed_q — the SEAM's own stiffness, RS-10b; "
+                            "network.zwd_carry_q is untouched and still governs any continuous "
+                            "carry row"
+                          : "inherited from network.zwd_carry_q — network.zwd_seam_reseed_q "
+                            "unset");
         }
         if (network_amb_seam_reinflate_var_m2_ != 0.0) {
             if (network_amb_seam_reinflate_var_m2_ < 0.0) {

@@ -428,6 +428,7 @@ add_executable(gnss_tests
     tests/test_windup_restart_response_config.cpp
     tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
+    tests/test_zwd_seam_reseed_q.cpp
     tests/test_carry_zwd_in_block.cpp
     tests/test_carry_iono_in_block.cpp
     tests/test_carry_rx_clock_in_block.cpp
