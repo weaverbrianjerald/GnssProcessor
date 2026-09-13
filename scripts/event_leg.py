@@ -15,10 +15,21 @@ Three subcommands:
     ``n_emitted`` — ``NetworkRunContext.cpp:2045-2047``).
 
 ``make-leg``
-    Copy ONE ``.epNNNN`` snapshot into ``runs/evleg_<name>/seed.txt`` (never the
-    seed's live file — a killed leg must not be able to destroy the state it
-    resumed from), derive the resume config from the seed config, and arm exactly
-    one ``network.inject`` event at ``snapshot_tow + at_ep*30`` s.
+    Copy ONE ``.epNNNN`` snapshot into the leg dir TWICE — ``seed.txt``, the
+    PRISTINE record the exe is never pointed at, and ``state_snapshot.txt``, which
+    ``network.state_snapshot_path`` names and the run may overwrite — then derive
+    the resume config from the seed config and arm exactly one ``network.inject``
+    event at ``snapshot_tow + at_ep*30`` s.  Never the seed run's live file: a
+    killed leg must not be able to destroy the state it resumed from.
+
+    The two copies close the SNAPSHOT-OVERWRITE TRAP *by construction*: the exe
+    never reads and writes the same file.  Historically both roles were the one
+    file, and since the producer's FIRST snapshot write is unconditional
+    (``NetworkRunContext.cpp`` — the write fires while ``last_snapshot_write_s <
+    0.0``, whatever ``state_snapshot_interval_s`` says) a run left its OWN second
+    epoch in ``seed.txt``, so any relaunch on the same ``leg.json`` was refused.
+    ``seed.txt``'s sha256 goes into ``leg_meta.json`` as ``snapshot_sha256``; only
+    ``state_snapshot.txt`` is disposable, and ``rerun`` restores just that one.
 
 ``null``
     The same leg with ``network.inject`` absent.  Every event leg is graded
@@ -46,6 +57,7 @@ against the seed's converged 0.008 m; ``--no-zwd-seam-reseed`` for old-leg A/Bs)
 default ``--at-ep 10`` puts the event safely past that transient.
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -73,6 +85,15 @@ DEFAULT_EXE = os.path.join(REPO, "build", "x64-Release", "gnss_processor.exe")
 # ---------------------------------------------------------------- utilities
 def _fwd(p):
     return os.path.abspath(p).replace("\\", "/")
+
+
+def _sha256(path):
+    """sha256 of a file, streamed (a field snapshot runs to ~100 MB)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def read_snapshot_header(path):
@@ -282,10 +303,22 @@ def _leg_common(args, event_json):
 
     legdir = os.path.join(REPO, "runs", f"evleg_{args.name}")
     os.makedirs(os.path.join(legdir, "logs"), exist_ok=True)
-    leg_snap = os.path.join(legdir, "seed.txt")
+    # TWO copies, because THE EXE MUST NEVER READ AND WRITE THE SAME FILE.  The
+    # producer's first snapshot write is unconditional — NetworkRunContext.cpp
+    # fires it while `last_snapshot_write_s < 0.0`, whatever
+    # state_snapshot_interval_s says — so whatever `state_snapshot_path` names
+    # holds the LEG's own second epoch the moment the run emits, and a relaunch on
+    # the same leg.json resumes from a snapshot that already contains the target
+    # epoch (warmResumeAllowed's non-positive-age refusal).  Point the exe at the
+    # disposable copy and keep the pristine one out of its reach; `rerun` then only
+    # has to restore state_snapshot.txt.
+    pristine = os.path.join(legdir, "seed.txt")            # never handed to the exe
+    leg_snap = os.path.join(legdir, "state_snapshot.txt")  # the exe may overwrite it
+    shutil.copyfile(snap_src, pristine)
     shutil.copyfile(snap_src, leg_snap)
+    snap_sha = _sha256(pristine)
 
-    week, tow, n_emitted, fingerprint = read_snapshot_header(leg_snap)
+    week, tow, n_emitted, fingerprint = read_snapshot_header(pristine)
 
     cfg, _ = _flatten(seed_cfg_path)
     anchor_s = fixture_first_obs_s(cfg)
@@ -298,7 +331,9 @@ def _leg_common(args, event_json):
     net["state_snapshot_path"] = _fwd(leg_snap)
     net["state_snapshot_require"] = True
     net["state_snapshot_keep_history"] = False
-    net["state_snapshot_interval_s"] = 1.0e9      # never overwrite the leg's seed
+    # Suppresses every write but the FIRST, which is unconditional; that one lands
+    # on the disposable copy above, never on seed.txt.
+    net["state_snapshot_interval_s"] = 1.0e9
     net["resume_frame_restore"] = True
     net["resume_coupling_restore"] = True
     # RS-2 (SPEC_event_harness §21.4): re-base the restored invariant DD branch onto THIS
@@ -377,6 +412,7 @@ def _leg_common(args, event_json):
     cfg_path = _write(cfg, os.path.join(legdir, "leg.json"))
     meta = {
         "legdir": legdir, "seed_run": seed_run, "snapshot": snap_src,
+        "snapshot_sha256": snap_sha, "leg_snapshot": _fwd(leg_snap),
         "week": week, "snapshot_tow": tow, "n_emitted": n_emitted,
         "fingerprint": fingerprint, "start_offset_hours": offset_h,
         "fixture_first_obs_s": anchor_s,
@@ -429,21 +465,30 @@ def cmd_null(args):
 
 # ------------------------------------------------------------------- rerun
 def cmd_rerun(args):
-    """Re-seed a leg from its recorded snapshot and run it again.
+    """Restore a leg's resume snapshot from a pristine copy and run it again.
 
-    ⚠ THE SNAPSHOT-OVERWRITE TRAP (SPEC_warm_resume_event_card §0.4).  A leg
-    WRITES its own snapshot at its first emitted epoch —
-    `state_snapshot_interval_s` does not suppress that first write — so after one
-    run `seed.txt` holds the leg's OWN second epoch, and relaunching the exe on
-    the same `leg.json` resumes to an epoch the snapshot already contains
-    (`warmResumeAllowed`'s non-positive-age refusal).
+    THE SNAPSHOT-OVERWRITE TRAP IS CLOSED BY CONSTRUCTION (2026-09-12).  make-leg
+    lays down TWO copies of the seed snapshot and points the exe only at the
+    disposable `state_snapshot.txt`, so the exe never reads and writes the same
+    file and `seed.txt` stays pristine for the life of the leg; this command has to
+    restore only the copy the run consumed.
 
-    Since SPEC_event_harness §11.1 that refusal is a CLEAN refusal: one error line
-    naming the reason and pointing here, and exit code 1.  Before that fix it was
-    a `COLD START` warning followed by a 0xC0000409 fast-fail with the reason
-    printed nowhere, which is how a relaunched leg could read as a cold one.
-    Either way the leg does not run: never invoke the exe on an existing
-    `leg.json`.  Use this, which restores the pristine copy first.
+    What it was: both roles were the one file.  A leg WRITES its own snapshot at
+    its first emitted epoch — `state_snapshot_interval_s` does not suppress that
+    first write — so after one run `seed.txt` held the leg's OWN second epoch and
+    a relaunch on the same `leg.json` resumed to an epoch the snapshot already
+    contained (`warmResumeAllowed`'s non-positive-age refusal; a clean one-line
+    refusal + exit 1 since SPEC_event_harness §11.1, before that a `COLD START`
+    warning and a 0xC0000409 fast-fail with the reason printed nowhere, which is
+    how a relaunched leg could read as a cold one).  Still never invoke the exe on
+    an existing `leg.json` by hand — use this.
+
+    Sources, in order: `leg_meta.json`'s `snapshot` (the seed run's own `.epNNNN`),
+    else the leg's `seed.txt`.  Both are verified against the recorded
+    `snapshot_sha256` and the command refuses if neither pristine copy verifies.
+    `seed.txt` is never written.  The restore target is read from the leg's own
+    `leg.json` (`network.state_snapshot_path`), so a leg generated before the split
+    — whose exe-facing file IS `seed.txt` — still reruns, with a warning.
     """
     legdir = args.legdir
     if not os.path.isabs(legdir):
@@ -453,12 +498,50 @@ def cmd_rerun(args):
         raise SystemExit(f"FATAL: no leg_meta.json in {legdir}")
     with open(meta_path, encoding="utf-8") as fh:
         meta = json.load(fh)
-    src = meta["snapshot"]
-    if not os.path.isfile(src):
-        raise SystemExit(f"FATAL: the leg's source snapshot {src} is gone")
-    shutil.copyfile(src, os.path.join(legdir, "seed.txt"))
     cfg_path = os.path.join(legdir, "leg.json")
-    print(f"re-seeded {legdir}/seed.txt from {os.path.basename(src)}")
+    if not os.path.isfile(cfg_path):
+        raise SystemExit(f"FATAL: no leg.json in {legdir}")
+    with open(cfg_path, encoding="utf-8") as fh:
+        leg_cfg = json.load(fh)
+
+    # Restore whatever the leg's OWN config points the exe at.
+    dst = (leg_cfg.get("network", {}).get("state_snapshot_path")
+           or os.path.join(legdir, "state_snapshot.txt"))
+    dst = os.path.abspath(dst)
+    pristine = os.path.join(legdir, "seed.txt")
+    if os.path.abspath(pristine) == dst:
+        print("WARNING: this leg predates the two-copy layout - its exe-facing "
+              "snapshot IS seed.txt, so the restore overwrites the pristine copy. "
+              "Re-generate the leg with make-leg / null to get the split.")
+
+    want = meta.get("snapshot_sha256")
+    tried, use = [], None
+    for cand in (meta.get("snapshot"), pristine):
+        if not cand or not os.path.isfile(cand):
+            tried.append(f"{cand}: missing")
+            continue
+        if want is None:
+            if os.path.abspath(cand) == os.path.abspath(pristine):
+                tried.append(f"{cand}: no snapshot_sha256 in leg_meta.json and this "
+                             "leg predates the two-copy split, so its seed.txt "
+                             "cannot be told from the run's own overwrite")
+                continue
+            use = cand            # pre-2026-09-12 leg: the seed run's .epNNNN only
+            break
+        got = _sha256(cand)
+        if got == want:
+            use = cand
+            break
+        tried.append(f"{cand}: sha256 {got[:16]}... != recorded {want[:16]}...")
+    if use is None:
+        raise SystemExit("FATAL: no verified pristine copy of this leg's snapshot:\n  "
+                         + "\n  ".join(tried)
+                         + "\n(re-generate the leg with make-leg / null)")
+
+    if os.path.abspath(use) != dst:
+        shutil.copyfile(use, dst)
+    print(f"re-seeded {dst} from {use}"
+          + ("" if want is None else f"  (sha256 {want[:16]}... verified)"))
     return _run(args.exe, cfg_path, legdir)
 
 
