@@ -396,8 +396,21 @@ def _leg_common(args, event_json):
     # from +1 on.  Every leg generated before this date graded ZWD (and the
     # consumer vertical it feeds) on that restart.  --no-zwd-seam-reseed
     # reproduces the old posture for a like-for-like A/B against an old leg.
-    if not getattr(args, "no_zwd_seam_reseed", False):
+    # RS-10 (SPEC_event_harness §21.21, 2026-09-13): the reseed is only right where the
+    # continuous run CARRIES the ZWD (phase_leveling_local_block or carry_zwd).  On a
+    # lineage where the ZWD is a per-epoch white sink (the field golden: no F3 block, no
+    # carry_zwd) the Z rows are exact but the B9 prior at q 1e-9 is ~4000x too stiff for
+    # a channel whose own epoch step is 0.11 m p50 (zwd prior sigma0 11, refused), and
+    # from +2 the harvest turns it into the FALSIFIED diagonal ZWD carry for 480 epochs
+    # (ZWD leg-seed 0.29 -> 1.34 m over the hour, satellite-clock contrast p95 10.3 vs
+    # 5.4).  Arm it only where the lineage carries the ZWD; --extra still overrides.
+    zwd_carried = bool(net.get("phase_leveling_local_block", False)) or bool(net.get("carry_zwd", False))
+    if getattr(args, "no_zwd_seam_reseed", False):
+        pass
+    elif zwd_carried:
         net["zwd_seam_reseed"] = True
+    else:
+        net["zwd_seam_reseed"] = False
     net["product_output_path"] = _fwd(os.path.join(legdir, "products.txt"))
     net["write_run_manifest"] = True
     net["trace_dd_fractional"] = True
@@ -478,6 +491,10 @@ def _leg_common(args, event_json):
     if args.run:
         return _run(args.exe, cfg_path, legdir)
     return 0
+    if not getattr(args, "no_zwd_seam_reseed", False) and not zwd_carried:
+        print("  zwd             zwd_seam_reseed OFF - the seed's lineage carries no ZWD memory "
+              "(neither phase_leveling_local_block nor carry_zwd); RS-10")
+
 
 
 def cmd_make_leg(args):

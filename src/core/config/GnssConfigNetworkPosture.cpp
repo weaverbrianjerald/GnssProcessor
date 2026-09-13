@@ -401,11 +401,15 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.state_snapshot_rxcb_lin_capture",
               "carry the rx-CB carry's code-bias linearization point so a warm resume judges the "
               "restored carry against the writer's frame, not one epoch of resume code (RS-9)" },
-            { warm && network_phase_leveling_,
+            // RS-10 (SPEC_event_harness s21.21): only where the lineage CARRIES the ZWD (the F3
+            // station block or carry_zwd).  On a white-sink ZWD (the field golden) the B9 prior
+            // is ~4000x too stiff and the harvest turns it into the falsified diagonal carry.
+            { warm && (network_phase_leveling_local_block_ || network_carry_zwd_),
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
               "warm-resume ZWD no-restart (h6 truth rms 0.124 vs cold 0.390); settled h9-12 "
-              "consumer 0.134 vs no-Z warm 0.278; NOT fingerprinted (resume response policy)" },
+              "consumer 0.134 vs no-Z warm 0.278; NOT fingerprinted; OFF where the lineage carries "
+              "no ZWD (RS-10: zwd prior sigma0 11, ZWD leg-seed 0.29 -> 1.34 m by +60)" },
             // --- SCOPED tier: QC, RAIM and SLIP knobs ---------------------------------
             { estimate_network_sat_code_bias_ && !warm,
               network_code_bias_disc_jump_test_,
