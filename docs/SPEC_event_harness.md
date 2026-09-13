@@ -6041,3 +6041,72 @@ run-end line; `network_if_slip.csv` rows for the additional chains' reference ar
   fix-off legs reproduce FP-1's PIN legs' `products.txt` byte-for-byte (same posture, new binary); suite green.
 Passing F1–F4 re-opens the FP-1 pin (G-A..G-G re-run on the fixed posture, §20's bars); failing F1 names the
 flood's true owner (the empirical gate on wide chains) and the pin stays an exception with this mechanism.
+
+## 23. D5 v5 CARRIED-ONLY on the field (`network.carry_invariant_innov_carried_only`) — the born-chord flags are the churn engine and removing them costs nothing on the wire (2026-09-13; pre-registered in the worker brief before any leg was read, results ~12:30 local; worker on worktree-agent-abad026e4a52148da, exe `gnss_processor_rs7.exe` 23C628B3…; manager grade)
+
+**Why.**  The Card-4 D5 innovation gate standardizes a chord's innovation against Cov(v), the H0 covariance about
+the CARRIED prior; a chord BORN this epoch has the diffuse fresh-chord prior (√var = 1000 m exactly), so there is no
+hypothesis to test, its "reset" is a no-op and the flag's only lasting effect is the funnel entry that re-borns it
+next epoch — the loader's 2026-08-02 measurement (95.3 % of all D5 flags were born chords).  v5 applies v2's
+accumulator exclusion to the DECISION.  Built default-OFF, never armed on the field golden, no ledger row (§20.1's
+hygiene item).  NOT a warm-resume fingerprint token (the carry family contributes `carry:inv` and `carry:pdsafe`
+only; both ON legs warm-resumed with the carry restored; the ON twin's ep0604 fingerprint is v5's
+`545b8bdd2b638231`), so the knob is A/B-able on legs from one snapshot.
+
+**Pre-registered gates (the brief).**  Smoke pair; legs `d5v5_{null,e3}_{off,on}` (60 epochs from `v5` ep0604, E3 =
+the equal-count slip at GOPE/G24): V1 identity on E3 (the injected chords flagged / re-tapped identically, the T0/T1
+rows identical, bands freed identical); V2 the mechanism over +6..+60 (born-chord flags ON = 0 with the born-skipped
+counter > 0, carried flags ±10 %, births and re-taps ON ≤ OFF, chord lifetime ON ≥ OFF); V3 no harm (clock contrast
+±0.02 m, PB wire ±0.01, ZWD ±0.02, consumer de-biased 3D mean +30..+60 ±0.03, withheld equal, a₀₀ ±0.5 TECU); V4 the
+6 h twin `evseed_field6h_v5d5` vs `v5` (flags down by the born share, births, carried DDs, `attrib_arc` not up > 10 %,
+withheld equal or fewer, consumer de-biased settled h3–6 p50 / rms not worse than 5 %, `pbstep` not worse).
+
+**Smoke.**  OFF `87a33bf0…` (the certified hash); ON `6439e2bb…` — every payload kind moves (B 1690/2595 rows, worst
+0.058 m; C 415/640, 0.011 m; P 1755/2700, 0.57 m in the 20-epoch ignition; U 1.4e-5 m), E and S identical, no record
+added or dropped; D5 flags 22 → 10 = 12 born + 10 carried → 0 born + 10 carried exactly.
+
+**Legs — V1 / V2 / V3 PASS on every bar.**  All four 61/61 emitted, 0 withheld, warm-resumed; `evleg_d5v5_null_off`
+byte-identical (`c45e52a0…`) to another worker's `evleg_fp1_null_off`.  V1: the five injected-event rows verbatim
+identical between arms (INJECT ×2; `T0_mw_detect refloat L2W;L5X`; `T1_if_slip refloat L1C;L2W`; MDB); event − null =
++2 births / +2 slip refloats on both arms — and D5 never flags the injected chord on either arm, the raw layer catches
+it in-epoch.  V2 (null, +6..+60): born flags **28 → 0**, carried **10 → 10**, births 294 → 268, re-taps 38 → 10,
+born-skipped 353 (= the ON arm's births — the counter counts every born row before the threshold test, ~7–8 % of
+which would have flagged), carried DDs at run end 759 = 759, carry-side mean chord lifetime (Little's law) 122 → 131
+epochs.  The two populations separate perfectly: the 28 born flags at √var = 1000.000 m with median |v| 69.4 km; the
+10 carried at √var 0.30–1.06 m, median |v| 8.9 m.  ⚠ `network_dd_fractional.csv`'s chord set is visibility-determined
+(set-identical across arms), so a lifetime read from it passes by construction — the carry-side substitute is the
+instrument.  V3 (null): clock contrast +0.0035 m, PB wire −0.0007, ZWD −0.0009, consumer de-biased +0.0021, a₀₀
++0.0012 TECU, withheld 0 = 0; the E3 pair the same to three digits (the event does not amplify the knob's wire
+effect).  Direct arm-to-arm consumer 3D separation mean 0.39 m / max 2.12 m on a 7–9 m float-only consumer —
+reported, not gated.
+
+**V4 the twin (720/720 both; fingerprint unchanged).**
+
+| | v5 (OFF) | twin (ON) | |
+|---|---|---|---|
+| D5 flags / re-taps | 730 / 730 | **143 / 143** | −80.4 %; 730 − 589 = 141 predicted, 143 observed |
+| born / carried flags | 589 / 141 | **0 / 143** | +1.4 % carried |
+| chord births; slip refloats | 9932; 1902 | 9362; **1332** | −5.7 %; −30.0 % |
+| carried DD at run end; marginalizations | 758; 5710 | 758; 5710 | identical |
+| withheld epochs; a₀₀ median | 0; 31.281 | 0; 31.250 | equal; −0.03 TECU |
+| `pbstep` frac > thr; p90 max | 0.1181; 0.2570 m | 0.1125; **0.0571 m** | better (4.5×) |
+| `cb_disc` / `clk_disc` / shocks / `pb_reset` | 590 / 6 / 600 / 29 | 590 / 6 / 600 / 30 | R, E, S records identical |
+| consumer de-biased settled h3–6 p50 / rms | 5.495 / 6.163 | 5.785 / 6.980 | **+5.3 % / +13.3 % — FAIL (bar 5 %)** |
+
+The twin's wire: clock contrast |ON − OFF| p50 0.014 / p95 0.123 m; phase bias p50 0.31 m with a tail that is ONE
+satellite — every one of the 731 rows > 20 m is G11 (L1C 620, L2W 111; 389.2 L1 cycles, not an integer): an
+ambiguity LEVEL realized differently between two independent cold starts, invisible to the datum-invariant
+between-satellite reading (`pbstep`, better on ON) and absent on the warm legs, which share a realization (PB p50
+0.0007 m).  The consumer's hourly series moves in both directions (ON better in h1 −29 % and h3 −36 %, worse in
+h4–h6) on a float-only consumer at ~6.5 m raw error — single-realization wander, exactly the confound standing
+invariant #5 names, and the reason the V4 consumer bar is not read as harm.
+
+**Decision.**  RECOMMEND_SCOPED (regime: `carry_invariant` with the D5 gate); the mechanism is proven on the field
+and every wire-side instrument is flat or better.  The field golden pin is DEFERRED to a same-realization consumer
+grade, pre-registered here: two 240-epoch null legs from `v5` ep0604 (`d5v5_long_{off,on}`; both arms share the
+seed's realization up to the seam, so the consumer difference isolates the knob) — consumer de-biased 3D mean over
++120..+240 ON within 5 % of OFF (each arm de-biased by its own window median), the direct arm-to-arm separation
+reported, `pbstep` on the leg products not worse, withheld equal, clock contrast / PB wire / ZWD p50 over +120..+240
+within the V3 bars.  PASS ⇒ pin on `golden_field_gps_dual` (its certified smoke hash moves — every payload kind, no
+structural change — and is re-recorded at that certification); FAIL ⇒ the exception stands with the consumer number.
+Graders merged: `scripts/d5v5_grade.py`, `d5v5_prodiff.py`, `d5v5_seam_ab.py`.
