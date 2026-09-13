@@ -7006,3 +7006,35 @@ model is right, its parameterization let the ZWD eat the inconsistency); A6 movi
 1/sin(el) station pattern names the inconsistency as tropospheric in shape (then the a-priori tropo model of the producer path is the
 suspect); A8 crossing the bars with the full-network posture names the coupling (datum, pins, the global field) and A8 failing them
 names the per-station model itself.
+
+**§24.8 extension READ (2026-09-14 ~07:40; worker 98c16e1 / 9247d92).**  A6 / A6b (ZWD carry q 1e-8 / 1e-7): the carry pins the cold sink value
+(WROC −9.7 m at epoch 8, σ 0.45 → 0.09 m) and the solve DIVERGES at epoch 102 (a00 → 698 TECU by epoch 125, 136 of 242 emissions withheld, ZWD
++65 km at POTS by hour 2) — the per-epoch sink is load-bearing: it absorbs a real, metre-level, station-common inconsistency EVERY epoch, and
+closing it without removing the source breaks the solve.  A7 (`estimation.zwd_constraint`) is byte-identical to A0 — the knob is read only by the
+RT engine, not by any network seam.  A8 (three stations WROC / GOP6 / FFMJ, datum WROC): code rms p50 **1.66 m** (halved), declared-arc D_phase
+**0.32 m** (under the bar; tracking arcs 2.20 — 120 declared re-realizations per hour carry the motion), and the same three stations' ZWD sink
+DEEPENS to −7.0 / −3.3 / −6.2 m (A0: −1.8 / +0.7 / +3.7).  **The inconsistency is present at epoch 1 (WROC ZWD −9.2 m before any carry, datum or gate
+acts), invariant to every estimation-side knob and to network size, and absent in a standalone PPP of the same files.**  No arm pushes a
+tropo-shaped (a + b/sin el) pattern into the residuals (0.1–10 % in every arm).
+
+**What is left standing, and the pre-registered second extension.**  The standalone PPP differs from the network's station model in exactly two
+things the arms have not touched: it applies CODE's OSB to its code rows and it estimates the per-LOS ionosphere FREELY (`ionosphere_q` 1e-2, no
+field), whereas the network ties every per-LOS ionosphere to a degree-8 global SH field within `representation_sigma_tecu` 5 (0.8 m on L1) and
+estimates its own satellite code biases against that field's datum (A2x showed the two are one object: remove the code-bias states and the field
+collapses).  A representation error of tens of TECU at an isolated site (the field cannot follow the real VTEC over an ocean or a pole; the
+"level" cards measured −4…−15 TECU even in the mean) leaves, after the tie, a residual whose dispersive part the tied deviation state cannot fully
+absorb and whose band-MEAN part is mapping-shaped and station-common — which is what the ZWD sink takes (10 TECU ≈ 2.4 m band-mean at zenith,
+the right sign and order), the leftover being a per-LOS level that no longer looks dispersive.  A3 (the tie replaced by the GIM) was the one
+mover.  Arms (cold 2 h, one change each vs A0, the same reads and bars, plus the cold consumer's 3D at 1 h and 2 h):
+
+| arm | change | what it tests |
+|---|---|---|
+| A10 | `estimation.global_vtec_sh.representation_sigma_tecu: 50` | let the per-LOS deviation absorb the representation error (the tie 10× looser) |
+| A10b | the same at 20 | the stiffness axis |
+| A11 | `estimation.global_vtec_sh.max_degree: 15` (+ `layer2_max_degree` 8) | a field that can follow the VTEC |
+| A9 | `network.estimate_iono_sh: false` + `network.external_sat_code_bias: true` (+ `estimate_sat_code_bias: false`, `model_corrections.enable_code_phase_bias: true`) | the PPP posture at the station level: CODE's OSB and a free per-LOS ionosphere — if the loader keeps the field on, record it and drop |
+
+Frozen reading: A10 / A10b crossing the bars names the tie's stiffness as the mechanism and the fix is a posture change with the level
+instruments re-graded; A11 crossing them names the field's resolution; A9 crossing them while A10 / A11 do not names the coupled code-bias +
+field datum (W6) itself; none crossing them exonerates the ionosphere representation and the remaining suspect is the modeled observable
+of the network path (the row-by-row modeled-value diff the worker proposed).
