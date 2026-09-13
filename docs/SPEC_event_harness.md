@@ -6020,6 +6020,15 @@ ZWD ≤ 0.60, contrast p95 ≤ 6.0), R3' wire within the six-leg scatter, C' the
 p50 ≤ 9.5 m (the ON arm's levels) with k 33–60 not worse than either arm.  A q that holds both ends re-arms the reseed on
 this lineage at that q; if neither does, the trade is decided by the stateful splice, not by the in-run consumer.
 
+**The bracket could not run, and why is the finding (RS-10b pre-registered).**  `rs10_null_q4` was REFUSED at the resume:
+`network.zwd_carry_q` is IN the warm-resume fingerprint (`NetworkRunContext.cpp:743`, under "carry q's … must COLD-start"),
+while `zwd_seam_reseed` / `_epochs` are deliberately not — the seam response's only weight is borrowed from a continuous-run
+carry parameter, so the one knob a resume response exists to tune is the one that cannot be tuned on a resume leg, which is
+why 1e-9 was never questioned on this lineage.  RS-10b: `network.zwd_seam_reseed_q` (default −1 = use `zwd_carry_q`,
+byte-identical when unset; read only inside the seam window; NOT fingerprinted, like every RS-x response knob), then the
+bracket exactly as pre-registered above on the v7 seed (`rs10b_null_{on,q4,q2}`; the ON leg must reproduce `rs9_null_lin`
+byte-for-byte on the new binary).
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
