@@ -132,6 +132,15 @@ namespace GnssProcessor {
               Tier::ON, false, "network.carry_invariant_innov_k",
               "k=4 (sweep flat over 4-30) is right ONLY with innov_calibrate; on raw formal "
               "Cov(v) the field value is k=10" },
+            // --- D5 v5 (SPEC_event_harness s23, 2026-09-13): only CARRIED chords are gated - a
+            //     born chord has no H0 (diffuse prior) and its flag only re-borns it (the churn
+            //     engine: 589 of 730 D5 flags over 6 h on the field).  Field pin deferred to
+            //     the s23 same-realization long-leg consumer grade.
+            { network_carry_invariant_innov_gate_,
+              network_carry_invariant_innov_carried_only_,
+              Tier::SCOPED, false, "network.carry_invariant_innov_carried_only",
+              "gate CARRIED chords only: born-chord D5 flags 589 -> 0 over 6 h (carried 141 -> 143), "
+              "slip refloats -30 %, pbstep p90 0.257 -> 0.057 m, wire flat (D5 v5, s23)" },
             { network_carry_invariant_,
               network_carry_invariant_qz_ >= 5e-5 && network_carry_invariant_qz_ <= 2e-4,
               Tier::ON, false, "network.carry_invariant_qz",
@@ -384,6 +393,14 @@ namespace GnssProcessor {
               "carry the rx-CB carry + the T5 iono deviation carry in the snapshot so a warm resume "
               "continues the station layer's memory: the SH a00 seam transient +4.6 -> +0.4 TECU, "
               "receiver clocks at +1 1.21 -> 0.91 m (RS-6a)" },
+            // --- RS-9 (SPEC_event_harness s21.18/s21.19): WRITE half - the rx-CB carry's
+            //     linearization point (RL rows beside RC) rides the snapshot.  Write side only,
+            //     products byte-identical; requires state_snapshot_station_capture.
+            { !nc.state_snapshot_path.empty() && nc.state_snapshot_station_capture,
+              nc.state_snapshot_rxcb_lin_capture,
+              Tier::SCOPED, false, "network.state_snapshot_rxcb_lin_capture",
+              "carry the rx-CB carry's code-bias linearization point so a warm resume judges the "
+              "restored carry against the writer's frame, not one epoch of resume code (RS-9)" },
             { warm && network_phase_leveling_,
               network_zwd_seam_reseed_,
               Tier::SCOPED, false, "network.zwd_seam_reseed",
@@ -839,6 +856,15 @@ namespace GnssProcessor {
               "restore the rx-CB carry + the T5 deviation carry at a warm resume: a00 transient "
               "+4.6 -> +0.4 TECU, +2 clock contrast 0.44 -> 0.29 m, receiver clocks 1.21 -> 0.91 m; "
               "the code-bias level and the rx-CB gate share do not move (RS-6a)" },
+            // --- RS-9 (SPEC_event_harness s21.18/s21.19): READ half - restore the rx-CB frame at
+            //     the seam.  Forward-only resume policy, not fingerprinted; requires
+            //     resume_station_restore.
+            { warm && network_resume_station_restore_,
+              network_resume_rxcb_lin_restore_,
+              Tier::SCOPED, false, "network.resume_rxcb_lin_restore",
+              "restore each station's code-bias linearization point at a warm resume: rx-CB withheld "
+              "share 26.3 -> 9.8 % (the seed's 11.0), the 11 defect-created stations back to folding, "
+              "receiver clocks at +1 0.93 -> 0.82 m (RS-9)" },
             // --- RTA-4 serialize_disc_counters (first ledger row 2026-09-12, RS-4): the per-key
             //     discontinuity counters reach the wire (optional P/B/C fields).  Outputs-only;
             //     changes product bytes, so the goldens pin it only with a recorded re-baseline.

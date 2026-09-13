@@ -20,6 +20,7 @@
 #include "logging/LogManager.hpp"
 #include "common/PppTypes.hpp"
 #include <Eigen/Dense>
+#include <cmath>
 #include <map>
 #include <optional>
 #include <string>
@@ -204,6 +205,107 @@ public:
         double last_offset_m = 0.0;  ///< the most recent median offset (m of L1 slant GF).
     };
 
+    // -------------------------------------------------------------------
+    // RS-9 — the code-bias LINEARIZATION POINT restore
+    // (docs/SPEC_event_harness.md §21.18)
+    // -------------------------------------------------------------------
+
+    /**
+     * @brief Install the writer's code-bias linearization points for this
+     *        station, to be used INSTEAD of @ref initializeCodeBiases' one-shot
+     *        median seed on the station's first processed epoch.
+     *
+     * WHY.  @ref initializeCodeBiases seeds @c x(cb) ONCE, from ONE epoch of
+     * code, behind the one-shot @c isCodeBiasInitialized() latch, and nothing
+     * ever writes it back.  That value is a pure LINEARIZATION POINT for the
+     * solve (a code bias enters linearly, so shifting it is an exact solve
+     * no-op — project_network_xlin_invariance), but it is also the reference the
+     * network producer's rx-CB carry inject gate measures its innovation
+     * against (@c cb_innov_raw = @c value_abs − @c x_lin(cb), the 5.13 m bar at
+     * @c ApplicationNetworkAssembly.cpp:3954).  On a warm resume that reference
+     * is re-derived from the RESUME epoch's code while the carry's numerator is
+     * restored from the snapshot, so 17 of 61 field stations sat outside the bar
+     * every epoch of a leg against the continuous run's 7 (§21.18(a)/(b)) and
+     * lost their receiver-DCB memory for the whole leg.  Restoring the frame the
+     * gate judges against is the re-coupling edge RS-6 left open (invariant #7).
+     *
+     * Contract: a key PRESENT here is seeded to @p overrides' value and counted
+     * in @c applied.  A key the loop reaches that is NOT present simply takes
+     * today's median seed and is NOT counted anywhere — the RL rows pair 1:1
+     * with the RC rows, so an absent key is one with no rx-CB CARRY, whose
+     * @c x_lin the inject gate therefore never reads (a field station holds
+     * @c GPS_DCB, which is carried, and @c GPS_IFB5, which is not).  @c uncovered
+     * is the invariant-#4 tripwire for the case that WOULD matter: a key that has
+     * a carry, and whose restored reference could not be applied (a non-finite
+     * value, or a state index this run does not hold).  It should read 0.
+     *
+     * Install BEFORE the station's first @c computeMeasurementUpdate; it is read
+     * only under the one-shot latch, so a later install is inert by construction.
+     *
+     * @param overrides  CB state key ("GPS_DCB", "GPS_IFB5", …) → the writer's
+     *                   @c x_lin for that state, in metres.
+     * @param applied    Optional out-slot incremented per covered key seeded.
+     * @param uncovered  Optional out-slot incremented per COVERED key that could
+     *                   not be seeded (see above) — never for an absent key.
+     *
+     * @note The two out-slots are RAW pointers on purpose: the network producer
+     *       runs @c computeMeasurementUpdate inside an OpenMP parallel-for over
+     *       stations, so each station is handed a pointer to its OWN element of
+     *       a driver-owned, never-resized vector — distinct objects, no race and
+     *       no atomics.  The driver sums them serially at the run-end readout.
+     */
+    void setCodeBiasSeedOverride(std::map<std::string, double> overrides,
+                                 long long* applied = nullptr,
+                                 long long* uncovered = nullptr) {
+        code_bias_seed_override_ = std::move(overrides);
+        cb_seed_override_applied_ = applied;
+        cb_seed_override_uncovered_ = uncovered;
+    }
+    /// Entries installed by @ref setCodeBiasSeedOverride (0 = nothing restored).
+    std::size_t codeBiasSeedOverrideSize() const { return code_bias_seed_override_.size(); }
+
+    /**
+     * @brief The RS-9 seed decision for ONE code-bias key.
+     *
+     * STATIC and free of member state on purpose: the rule is what a unit test
+     * must be able to pin, and constructing a @c StateInitializer drags in
+     * @c PppModel → @c ProductParser + @c RinexParser, a chain no test at this
+     * tier builds.  @ref initializeCodeBiases calls exactly this.
+     *
+     * @param overrides  The installed map (empty ⇒ always @c std::nullopt, which
+     *                   is the whole pre-card path).
+     * @param key        CB state key being seeded.
+     * @return The writer's @c x_lin when the key is covered by a FINITE entry;
+     *         @c std::nullopt otherwise, and the caller takes today's one-epoch
+     *         median seed.  A non-finite entry is refused rather than trusted —
+     *         the parser already refuses one, so this is belt-and-braces against
+     *         a future producer of the map.  Use @ref codeBiasSeedOverrideCovers
+     *         to tell the two @c nullopt cases apart: an ABSENT key is a key with
+     *         no carry (nothing reads its reference), while a PRESENT-but-refused
+     *         one is the counted failure.
+     */
+    static std::optional<double> resolveCodeBiasSeedOverride(
+        const std::map<std::string, double>& overrides, const std::string& key) {
+        if (overrides.empty()) return std::nullopt;
+        const auto it = overrides.find(key);
+        if (it == overrides.end() || !std::isfinite(it->second)) return std::nullopt;
+        return it->second;
+    }
+
+    /**
+     * @brief Does the installed map carry a reference for @p key at all?
+     *
+     * The population @c uncovered is measured against.  The RL rows pair 1:1 with
+     * the RC rows, so "present in the map" is exactly "this key has an rx-CB carry
+     * entry", which is exactly "the inject gate will difference something against
+     * this key's @c x_lin".  A key the seeding loop reaches that is ABSENT here is
+     * therefore not a miss — it is a code-bias family nothing carries.
+     */
+    static bool codeBiasSeedOverrideCovers(const std::map<std::string, double>& overrides,
+                                           const std::string& key) {
+        return overrides.find(key) != overrides.end();
+    }
+
     /// Install this epoch's frame (consumed once by the next state pre-pass).
     void setIonoSeedFrame(IonoSeedFrame frame) {
         iono_seed_frame_ = std::move(frame);
@@ -292,6 +394,13 @@ private:
     bool               iono_seed_frame_armed_ = false;
     bool               iono_seed_offset_logged_ = false;   ///< cold-start one-shot log latch.
     IonoSeedFrameStats iono_seed_stats_{};
+
+    // RS-9 state (§21.18).  Empty by default, so every run that does not arm
+    // network.resume_rxcb_lin_restore takes the pre-card path with no branch
+    // taken and no counter touched.
+    std::map<std::string, double> code_bias_seed_override_{};
+    long long* cb_seed_override_applied_   = nullptr;  ///< station-owned out-slot (see setCodeBiasSeedOverride).
+    long long* cb_seed_override_uncovered_ = nullptr;  ///< ditto.
 };
 
 } // namespace GnssProcessor

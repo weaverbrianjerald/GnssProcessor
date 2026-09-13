@@ -1589,6 +1589,16 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.state_snapshot_signal_capture ? "true" : "false",
                                      config_.networkResumeSignalCanonRestore() ? "true" : "false")
                        : std::string())
+               // RS-9 (SPEC_event_harness §21.18): the code-bias linearization-point
+               // halves — the reference the rx-CB inject gate judges the RS-6-restored
+               // carry against — on the same armed-only discipline as the pairs above.
+               << ((nc.state_snapshot_rxcb_lin_capture
+                    || config_.networkResumeRxCbLinRestore())
+                       ? fmt::format("\"state_snapshot_rxcb_lin_capture\":{},"
+                                     "\"resume_rxcb_lin_restore\":{},",
+                                     nc.state_snapshot_rxcb_lin_capture ? "true" : "false",
+                                     config_.networkResumeRxCbLinRestore() ? "true" : "false")
+                       : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
                << fmt::format("\"state_snapshot_resume_shock_m\":{},",
                               nc.state_snapshot_resume_shock_m)

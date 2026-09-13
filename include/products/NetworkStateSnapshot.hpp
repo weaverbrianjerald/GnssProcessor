@@ -83,6 +83,9 @@
  *   PF,<sat|signal>,<mean>,<var>,<last_seen_s>           # RS-5: PB emit filter posterior
  *   PS,<const>,<sum_log_e2>,<n_eff>                      # RS-5: PB filter step accumulator
  *   CN,<station_idx>,<cons>,<band>,<C|L>,<signal>        # RS-8: canonical-signal latch
+ *   RC,<station_idx>,<cb_key>,<value_abs>,<var>,<last_seen_s>  # RS-6: rx-CB carry
+ *   SD,<station|sat>,<dev>,<var>,<var_ss>,<t_s>          # RS-6: T5 per-LOS deviation carry
+ *   RL,<station_idx>,<cb_key>,<x_lin>                    # RS-9: code-bias linearization point
  *   EMITTER,v1,...                                      # emitter blob (verbatim,
  *   ...                                                 #  NetworkProductEmitter::serializeState)
  *   EEND
@@ -127,6 +130,14 @@
  * re-decided it from the resume epoch's counts instead (measured: GAMB00PYF L2X→L2W,
  * CPVG00CPV L2W→L2X), which changed the tracker set, dropped an eq34 component's datum
  * receiver and stepped six phase-bias families ~25 m at the seam.
+ * The RS-6 STATION-LAYER records (@c RC / @c SD, §21.13) and the RS-9 code-bias
+ * LINEARIZATION-POINT record (@c RL, §21.18) follow the same precedent — format-forward
+ * rows under the existing header, each behind its own capture knob
+ * (@c network.state_snapshot_station_capture, @c network.state_snapshot_rxcb_lin_capture),
+ * neither in the fingerprint.  @c RL is the REFERENCE the @c RC entry's inject gate
+ * differences against; a resume that restored one without the other judged a restored
+ * value against a linearization point re-derived from the resume epoch's code, which is
+ * what refused 17 of 61 field stations for a whole leg (§21.18).
  *
  * This module is entirely OUTSIDE the @c NetworkProductIO replay path: product
  * files know nothing of snapshots and replay reproduces every discontinuity
@@ -522,6 +533,25 @@ struct NetworkStateSnapshot {
     /// by the roster fields inside the config fingerprint, exactly as for
     /// @ref local_carry / @ref zwd_carry.
     std::map<std::pair<int, std::string>, Local> rx_cb_carry;
+    /// RS-9 (SPEC_event_harness §21.18): (station roster index, CB state key) ->
+    /// the station @c StateManager's code-bias LINEARIZATION POINT @c x_lin(cb),
+    /// in metres (@c RL rows, written beside each @c RC row under
+    /// @c network.state_snapshot_rxcb_lin_capture).
+    ///
+    /// The RC row carries the rx-CB carry's NUMERATOR; this is the REFERENCE its
+    /// inject gate differences against (@c cb_innov_raw = @c value_abs −
+    /// @c x_lin(cb), @c ApplicationNetworkAssembly.cpp:3954), seeded ONCE per
+    /// station by @c StateInitializer::initializeCodeBiases behind a one-shot
+    /// latch and never written back.  Restoring one without the other is what
+    /// left 17 of 61 field stations outside the gate's fixed 5.13 m bar for a
+    /// whole leg against the continuous run's 7 (§21.18).  Its OWN map and its
+    /// OWN knob, not a fourth field of @ref Local: this is a property of the
+    /// station's STATE VECTOR, not of the carry entry — a station can have a
+    /// linearization point with no carry (the carry is cold) and the row must
+    /// still travel.  Not folded into @ref hasStationState for the same reason
+    /// the emit / datum halves keep their own predicates: an absent RL block
+    /// must read as INERT for the RL restore alone.
+    std::map<std::pair<int, std::string>, double> rx_cb_lin;
     /// One T5 deviation carry — a POD mirror of the driver's @c ShDevCarry, as
     /// @ref Osc mirrors @c ClockOsc: the snapshot module names no engine type.
     /// All four members are scalars, so the @c SD row is the whole struct in

@@ -734,6 +734,43 @@ void StateInitializer::initializeCodeBiases(const std::vector<PppObservation>& o
 
     Eigen::VectorXd x_updated = x;
     for (const auto& [key, sv] : samples) {
+        // --- RS-9 (docs/SPEC_event_harness.md §21.18) ------------------------
+        // A warm resume that restored this station's rx-CB carry restored the
+        // carry's NUMERATOR and left the reference it is judged against cold:
+        // the inject gate's statistic is |value_abs − x_lin(cb)| against a fixed
+        // 5.13 m bar, and x_lin(cb) is exactly the one-shot seed computed below
+        // — from the RESUME epoch's code instead of the writer's first epoch.
+        // With the override installed, the covered key takes the writer's
+        // linearization point and the seed below is not computed at all.  An
+        // EXACT solve no-op by construction (a code bias enters linearly, so an
+        // x_lin shift is absorbed by the state; project_network_xlin_invariance)
+        // — the only consumer of the value is the gate.  network.rx_code_bias_
+        // datum is the one mechanism whose RHS also reads x_lin (η = λ(0 −
+        // x_lin)); the loader refuses that pair, so it cannot be reached here.
+        // Scoped to the keys the map CARRIES a reference for.  The RL rows pair 1:1
+        // with the RC rows, so a key absent here is one with no rx-CB carry — the
+        // gate never differences anything against its x_lin, and it simply takes
+        // today's seed (a GPS L1/L2/L5 station holds GPS_DCB, carried, and
+        // GPS_IFB5, not).  `uncovered` therefore counts only the case that WOULD
+        // matter — a carried key whose restored reference could not be applied —
+        // and must read 0.
+        if (codeBiasSeedOverrideCovers(code_bias_seed_override_, key)) {
+            bool seeded = false;
+            const auto ovr = resolveCodeBiasSeedOverride(code_bias_seed_override_, key);
+            if (ovr.has_value()) {
+                const int ov_idx = state_manager_.getCodeBiasIndex(key);
+                if (ov_idx >= 0 && ov_idx < static_cast<int>(x_updated.size())) {
+                    x_updated(ov_idx) = *ovr;
+                    if (cb_seed_override_applied_) ++*cb_seed_override_applied_;
+                    log->info("{}RS-9: code bias {} seeded from the RESTORED "
+                              "linearization point: {:.6f} m (the one-epoch code "
+                              "median is NOT used)", epoch_prefix, key, *ovr);
+                    seeded = true;
+                }
+            }
+            if (seeded) continue;
+            if (cb_seed_override_uncovered_) ++*cb_seed_override_uncovered_;
+        }
         std::vector<double> estimates;
         estimates.reserve(sv.size());
         for (const auto& s : sv) {

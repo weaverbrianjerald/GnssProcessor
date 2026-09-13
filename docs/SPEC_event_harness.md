@@ -4672,6 +4672,66 @@ identified and on the lanes the rule targets).
   then the field pin rides on a seed that can warm-resume (DEFECT 1's card).
 - Both defects are HARNESS findings of the kind the field seed exists for: neither is visible on the sim (the
   sim's S2 leg injected on a non-reference satellite; the sim golden resumes through the F3 coupling path).
+
+### 20.2 RESULTS — FP-1, the §20 matrix on the warm-resuming seed: defect 1 is cured, every identity row reproduces, and the pin is REFUSED by a defect the gates could not see — the reference-slip fan-out (2026-09-13 ~11:30 local; worker on worktree-agent-a8ac220a59ca83a04, exe `gnss_processor_rs7.exe` 23C628B3… = main's producer after RS-7, seed `evseed_field6h_v5` ep0604, legs `runs/evleg_fp1_*`; manager grade)
+
+**Legs.**  {null, E1, E2, E3/G24, E3/G25} × {OFF, PIN = scope + pairs `all` + the §22 clause}; the E5 pair was not
+run (slot contention; F3's door is not what decides this card).  Every leg 61/61 emitted, 0 withheld, no cold start,
+products + 61 consumer rows — **§20.1's defect 1 is cured on v5**, and G-B / G-C / G-D are readable on the field for
+the first time.
+
+**G-A PASS on every pre-registered row.**  E1 PIN → `{L5X}` (`iftd(L1C+L5X)=ref_arc;iftd(L2W+L5X)=ref_arc`); E2 PIN →
+`all` (`no_exoneration`, the clause's named cost); E3/G24 PIN → `all reason=no_exoneration` with both L5 pairs
+`ref_arc` (§22.4 B2 verbatim — the trap closed); E3/G25 PIN → `all` via `iftd(L1C+L5X)=flagged` (the (1,5) veto).
+PIN null run-end `narrowed 7 (bands kept 14), all-band 44 (no exoneration 34 / inconsistent 9 / anchor co-locate 1),
+IF-TD vetoes 0, ref-arc refusals 6 [L1C_L5Q 1, L1C_L5X 1, L1W_L5X 2, L2W_L5Q 2]` = §22.4's null to the pair; OFF null
+`narrowed 1, inconsistent 15, ref-arc refusals 0 [would-narrow 1]`.  T4 attribution 0 on every leg (structural on
+`carry_invariant`), so the wrong-narrowing tripwire cannot fire on this lineage.
+
+**The blocker — the reference-slip fan-out (§22.6).**  GOPE's chains from `is_ref`: (L1C,L2W) → G12 all leg; both
+L5 chains → **G24 for k ∈ [−9, +41]**, handing to G25 at +42.  An IF-TD sample is `dOMC(sat) − dOMC(ref)`, so the
+injected slip reads `abs_dev = 0.000000` on G24's own L5 rows and full-size on everyone else's:
+
+| leg | G24's own L5 rows | other satellites flagged → refloats | E3/G25 control (G25 not a reference) |
+|---|---|---|---|
+| E1 PIN (L5X −99) | 0.000000 ×2 | **6** (G11 / G25 / G32 × both L5 chains; 31.8 m at 253–292×, 283.9 m at 605–1580× the threshold) → 6 | — |
+| E2 PIN (L1C +37) | 0.000000 ×2 | **3** ((1,5) only — an L1C slip leaves IF(L2W,L5X) alone) → 3 | — |
+| E3/G24 PIN | 0.000000 ×2 | **6** (3.16 m at 25–29×, 83.2 m at 177–463×) → 6 | G25's own rows 3.15 / 83.2 m flagged, **0** collateral |
+| every OFF arm | — | 0 | 0 |
+
+No backstop: card R's reference gate reads `3600 opp, 1 flag` identically on all four legs (it tests the first chain
+only), T4 is 0, and the collateral satellites have no `T0_band_scope` row to narrow.  Cost: blast radius at k = 0 OFF
+1 product key (`P/G24/L5X`), PIN 2 — the extra is `P/G32/L1C`, an innocent satellite's phase bias re-realized
+network-wide by **13.71 / 13.73 / 13.73 m** on E1 / E2 / E3g24 (declared — disc 1 → 2, σ 0.039 → 0.449 m — so the
+declaration edge holds, but the response is wrong); GOPE ZWD at +45 2.02 m PIN vs 0.25 OFF on E1; consumer mean
+|Δ3D| over +30..+50 E1 4.71 vs 0.98, E2 3.16 vs 1.18, E3g24 2.80 vs 2.43 — OFF recovers by +15, PIN does not.  Field
+exposure: 12.7 % of IF-TD samples sit on a reference arc, 25.9 % of (station, satellite) arcs are a chain reference
+at least once over 6 h, and of 149 flagged rows zero are on a reference arc (the detector cannot flag there); under
+`all` the exposure roughly triples (§22.4: 107 of 507 arcs).
+
+| event | G-A | G-B | G-C | G-D | fan-out PIN / OFF |
+|---|---|---|---|---|---|
+| E1 | PASS | FAIL (clk, zwd) | FAIL (PB L2X) | FAIL (4.71 vs 0.98 + 1.99) | 2 / 0 |
+| E2 | PASS | FAIL (zwd) | PASS | PASS (3.160 vs bar 3.168) | 1 / 0 |
+| E3/G24 | PASS | FAIL (zwd) | FAIL (PB L1C / L1W / L5Q) | PASS | 2 / 0 |
+| E3/G25 | PASS | PASS | PASS | PASS | 0 / 0 |
+
+**G-E fails its numeric bars for a defensible reason — the counter-weight.**  Withheld 0 / 0, `attrib_arc` 0 / 0,
+but wire CLK max |Δ| 0.088 m (bar 0.02) and consumer max |Δ3D| 4.43 m (bar 0.03).  The floor series is EXACTLY zero
+on every channel through k = +38; at +39 (tow 278790) JPLM00USA/G10 shows `L1C/L5Q dd = 5.046 m` against a 0.109 m
+threshold on a 189-sample mature pool → flagged and refloated in PIN, while in OFF the same dd appears with
+`count = 0, med = dd, abs_dev = 0, flagged = 0`: G10 lost L2W that epoch, its "first pair" rotated to (L1C,L5Q), and
+the new chain restarted with the slipped sample as its own origin.  Every other satellite at JPLM is quiet (≤ 0.004 m)
+and the reference G28 is quiet: **a real 46σ slip that `all` catches and `first` structurally cannot** — a
+pool-restart blind spot at pair rotation, the second defect this card names (under `first` the additional chains'
+histories do not exist; under `all` they are warm).
+
+**Decision.**  Scope + pairs `all` + the clause stay FIELD EXCEPTIONS with the fan-out as the mechanism (the manifest
+texts are rewritten through the generator; the ledger rows carry this section); G-G not run.  The pin is re-run
+(§20's bars on the fixed posture) once REF-FAN (§22.6) passes F1–F4 — and the pair-rotation blind spot is the
+argument FOR `all` once the fan-out is closed.  Graders merged: `scripts/fp1_gate_table.py`,
+`scripts/fp1_refslip_census.py`.
+
 ## 21. THE FIELD WARM-RESUME SEAM (card RS-2) — the restored invariant DD branch is folded in the WRITER's linearization frame; §20.1's "Card 1f is the prerequisite" is WITHDRAWN (pre-registered 2026-09-12 ~07:30 local, manager; before any new leg is read)
 
 ### 21.1 What §20.1 called DEFECT 1, re-read from the instruments the legs already wrote
@@ -5752,6 +5812,75 @@ epochs, one exe, every other RS restore at the harness default; `resume_border_r
 * **R4 the rider:** the seed's run-end line names its 7 permanently-refused stations; the lin leg names the same 7;
   the ctl leg names 17.
 
+### 21.19 RESULTS — RS-9 closes the rx-CB frame (withheld share 26.3 % → 9.8 %, the seed's 11.0 %); the pooled 60-epoch leg − seed bars are RETIRED as seam instruments (they measure realization divergence); RS-10 pre-registered (2026-09-13 ~13:20 local; worker on worktree-agent-aac1e6222abdfe75f `3b6459f`+, merged; manager grade)
+
+**Build.**  `RL,<station idx>,<cb key>,<x_lin>` rows paired 1:1 with the RC rows (61 on this lineage — the carried
+`GPS_DCB`; the uncarried `GPS_IFB5` never reaches the gate) under `network.state_snapshot_rxcb_lin_capture`;
+`network.resume_rxcb_lin_restore` stashes the map at the RS-6 restore and seeds each station's first-epoch code-bias
+linearization point to the writer's value (`StateInitializer::resolveCodeBiasSeedOverride`, `markCodeBiasInitialized`
+for covered keys); counters + run-end line; the rider on the always-on rx-CB line names the stations that withheld
+> 90 % of their epochs ("carried NOTHING").  Cold smoke `87a33bf0…` knobs absent AND armed (the ON snapshot gains
+exactly 61 RL rows); seeds `v7` / `v7raw` = the v5 recipes + the write knob, products byte-identical to `v5` /
+`v5raw`, ep0604 at the same tow, fingerprint `545b8bdd2b638231`; `rs9_raw_ctl` / `rs9_null_ctl` `products.txt`
+byte-identical to `rs7_raw_ctl` / `rs7_null_ctl`; Debug suite 2035 / 277 / 0 failed.  ⚠ The per-key "seeded from the
+RESTORED linearization point" line goes to the `state_initializer` logger, 0 bytes on this posture (the §21.16
+family); the counters are the instrument.
+
+**R1 PASS — the frame was the mechanism.**  rx-CB withheld share over k = 1..60 (`scripts/rs9_census.py`, which
+reproduces §21.18's 403/3660): seed **11.01 %**; ctl **26.31 %** (= `rs7_raw_ctl` to the row); **lin 9.78 %** — 94 % of
+the 15.3-point gap closed, 1.2 points BELOW the seed (the ±1 band missed on the favourable side).  Withholding sets
+(≥ 75 % of the window): seed 7, ctl 17, **lin 6** — every one of the 11 stations the defect created (KRGG GUAM SGOC
+BOR1 SOLO MAJU COCO CUSV HKSL SCTB, CAS1 55 → 7) is back to 0/60; shared with the seed 5, only-leg 1 (OAFA00ARG),
+only-seed 2 (CPVG00CPV, LCK400IND) — OAFA and CPVG are exactly §21.16's canonical-signal stations (RS-8, another
+branch), LCK4 sits at 46/60 on the seed and 13/60 on the leg.  **R4 PASS:** the rider names 6 on the seeds (CPVG GAMB
+GOPE KOKV LMMF MRO1 — LCK4 is 77 % over the window, under 90 % over 6 h), 16 on the ctl legs, 6 on the lin legs (GAMB
+GOPE KOKV LMMF MRO1 OAFA).  Both arms restore identically at the RS-6 layer (61 rx-CB entries, 467 deviation
+entries): the frame is the only difference.
+
+**R2 — every pooled bar fails again, and the way it fails retires the bars.**  With 11 stations returned to folding:
+W6 code bias pooled p50 0.460 → **0.545** (worse), clock contrast pooled 1.651 → 1.697 (worse; p95 9.11 → 8.93), ZWD
+0.659 → 0.653 (flat), receiver clocks at +1 0.934 → 0.819 (12 % better), raw PB at +1 1.496 → 1.373 (8 % better), PB
+wire 0.000 unchanged, a₀₀ +0.43 → +0.38, births / D5 / eq34 rerefs unchanged; the stateful consumer's code
+re-references at the seam 22 → 24, phase resets 0 on both, cold-consumer settled 3D 11.79 vs 11.75 m.  The rx-CB
+withheld population was therefore NOT what drives the pooled code-bias / clock / ZWD residual, and the RS-7 control's
+own series says what does (`rs7_null_ctl/seam_grade.json`, leg − seed p50 by epoch):
+
+| leg − seed p50 | +1 | +2 | +5 | +30 | +60 |
+|---|---|---|---|---|---|
+| clock contrast | 0.31 | 0.29 | 0.53 | 1.42 | 2.85 m |
+| W6 code bias | 0.086 | 0.152 | 0.268 | 0.44 | 0.67 m |
+| ZWD | 0.30 | 0.30 | 0.40 | 0.56 | 1.35 m |
+| PB wire (DD-invariant) | 0.000 | 0.001 | 0.003 | 0.048 | 0.118 m |
+| a₀₀ | +0.43 | +0.18 | +0.13 | −1.53 | −1.19 TECU |
+
+Every shared channel — including the DD-invariant phase-bias wire and the SH a₀₀ — diverges roughly linearly from a
+near-identical state on identical data: two realizations of a weak-datum, random-walk shared parameterization walking
+apart as their gate decisions differ, the chain-datum churn the literature leaves unsolved (project_ppprtk_literature
+_pack).  The 60-epoch pooled bars of §21.13/§21.14 (CB ≤ 0.10, clock contrast ≤ 0.5, ZWD ≤ 0.32) therefore graded
+DIVERGENCE, not the seam — which is why RS-7 and RS-9 could each close their own mechanism exactly and leave those bars
+untouched.  **From here the seam is graded at the SEAM EPOCH (+1 / +2 against the seed's own per-epoch step) and by
+consumer instruments (the stateful splice's re-references at the seam; the cold-consumer replay), never by pooled
+leg − seed levels over a window.**  On those instruments the seam's remaining cost is two items: the ZWD step at +1
+(0.30 m p50 with `zwd_seam_reseed` ARMED, which should have pinned it to the writer's value) and the 22–24 code-bias
+re-references the stateful consumer takes at the seam.
+
+**Decision.**  Both RS-9 knobs RECOMMEND_SCOPED: the write knob pinned on both goldens (write side, byte-identical;
+requires `state_snapshot_station_capture`, pinned), the read knob harness-armed on every leg.  `n_resume_rxcb_lin_
+uncovered` counts only keys that have a carry (0 here).  The next harness seed (v8) carries CN + RL rows once RS-8
+merges.
+
+**RS-10 pre-registered — a CENSUS, no new run, on `rs9_null_lin` / `rs9_raw_lin` vs `v7` / `v7raw`.**  (a) The ZWD
+seam step: per station at +1 and +2, the leg's ZWD vs the seed's, the snapshot's Z-row values vs the seed's ZWD trace
+at ep0604/0605, and the leg's ZWD linearization point / a-priori vs the writer's (`zwd_seam_reseed` injects the Z rows
+as B9 priors at q 1e-9 — in which frame, correction or absolute?); the same for the receiver clocks at +1 (0.82 m p50
+— per-epoch white, so 0.82 m is the seam's per-station re-split at +1); is the 0.30 m the RS-9 family again (a
+re-seeded `x_lin` for ZWD), a datum-sink restart, or the reseed acting in the wrong frame?  (b) The seam
+re-references: which 22 (sat, signal) keys the consumer re-references, whether each is DECLARED (B-record disc
+counter / code jump test) and its |Δ| at +1 leg − seed, against the seed's own per-epoch code-bias step; whether they
+are the time-linked code-bias datum's per-key re-seed (RS-3 restored the CBP map with the latch false — did those keys
+re-seed?), the W6 set-mean realization, or the receiver side.  Deliverable: mechanism, the smallest increment, and
+its seam-epoch bar (ZWD at +1 within 3× the seed's own step; consumer code re-references at the seam ≤ 5).
+
 ## 22. THE REFERENCE-ARC CLAUSE for the common-band scope (`network.cycle_slip.common_band_ref_arc`) — the §20.1 fix stub, pre-registered (2026-09-12 ~08:00 local, manager; before any leg is read)
 
 ### 22.1 The defect, restated from the code
@@ -5981,3 +6110,72 @@ run-end line; `network_if_slip.csv` rows for the additional chains' reference ar
   fix-off legs reproduce FP-1's PIN legs' `products.txt` byte-for-byte (same posture, new binary); suite green.
 Passing F1–F4 re-opens the FP-1 pin (G-A..G-G re-run on the fixed posture, §20's bars); failing F1 names the
 flood's true owner (the empirical gate on wide chains) and the pin stays an exception with this mechanism.
+
+## 23. D5 v5 CARRIED-ONLY on the field (`network.carry_invariant_innov_carried_only`) — the born-chord flags are the churn engine and removing them costs nothing on the wire (2026-09-13; pre-registered in the worker brief before any leg was read, results ~12:30 local; worker on worktree-agent-abad026e4a52148da, exe `gnss_processor_rs7.exe` 23C628B3…; manager grade)
+
+**Why.**  The Card-4 D5 innovation gate standardizes a chord's innovation against Cov(v), the H0 covariance about
+the CARRIED prior; a chord BORN this epoch has the diffuse fresh-chord prior (√var = 1000 m exactly), so there is no
+hypothesis to test, its "reset" is a no-op and the flag's only lasting effect is the funnel entry that re-borns it
+next epoch — the loader's 2026-08-02 measurement (95.3 % of all D5 flags were born chords).  v5 applies v2's
+accumulator exclusion to the DECISION.  Built default-OFF, never armed on the field golden, no ledger row (§20.1's
+hygiene item).  NOT a warm-resume fingerprint token (the carry family contributes `carry:inv` and `carry:pdsafe`
+only; both ON legs warm-resumed with the carry restored; the ON twin's ep0604 fingerprint is v5's
+`545b8bdd2b638231`), so the knob is A/B-able on legs from one snapshot.
+
+**Pre-registered gates (the brief).**  Smoke pair; legs `d5v5_{null,e3}_{off,on}` (60 epochs from `v5` ep0604, E3 =
+the equal-count slip at GOPE/G24): V1 identity on E3 (the injected chords flagged / re-tapped identically, the T0/T1
+rows identical, bands freed identical); V2 the mechanism over +6..+60 (born-chord flags ON = 0 with the born-skipped
+counter > 0, carried flags ±10 %, births and re-taps ON ≤ OFF, chord lifetime ON ≥ OFF); V3 no harm (clock contrast
+±0.02 m, PB wire ±0.01, ZWD ±0.02, consumer de-biased 3D mean +30..+60 ±0.03, withheld equal, a₀₀ ±0.5 TECU); V4 the
+6 h twin `evseed_field6h_v5d5` vs `v5` (flags down by the born share, births, carried DDs, `attrib_arc` not up > 10 %,
+withheld equal or fewer, consumer de-biased settled h3–6 p50 / rms not worse than 5 %, `pbstep` not worse).
+
+**Smoke.**  OFF `87a33bf0…` (the certified hash); ON `6439e2bb…` — every payload kind moves (B 1690/2595 rows, worst
+0.058 m; C 415/640, 0.011 m; P 1755/2700, 0.57 m in the 20-epoch ignition; U 1.4e-5 m), E and S identical, no record
+added or dropped; D5 flags 22 → 10 = 12 born + 10 carried → 0 born + 10 carried exactly.
+
+**Legs — V1 / V2 / V3 PASS on every bar.**  All four 61/61 emitted, 0 withheld, warm-resumed; `evleg_d5v5_null_off`
+byte-identical (`c45e52a0…`) to another worker's `evleg_fp1_null_off`.  V1: the five injected-event rows verbatim
+identical between arms (INJECT ×2; `T0_mw_detect refloat L2W;L5X`; `T1_if_slip refloat L1C;L2W`; MDB); event − null =
++2 births / +2 slip refloats on both arms — and D5 never flags the injected chord on either arm, the raw layer catches
+it in-epoch.  V2 (null, +6..+60): born flags **28 → 0**, carried **10 → 10**, births 294 → 268, re-taps 38 → 10,
+born-skipped 353 (= the ON arm's births — the counter counts every born row before the threshold test, ~7–8 % of
+which would have flagged), carried DDs at run end 759 = 759, carry-side mean chord lifetime (Little's law) 122 → 131
+epochs.  The two populations separate perfectly: the 28 born flags at √var = 1000.000 m with median |v| 69.4 km; the
+10 carried at √var 0.30–1.06 m, median |v| 8.9 m.  ⚠ `network_dd_fractional.csv`'s chord set is visibility-determined
+(set-identical across arms), so a lifetime read from it passes by construction — the carry-side substitute is the
+instrument.  V3 (null): clock contrast +0.0035 m, PB wire −0.0007, ZWD −0.0009, consumer de-biased +0.0021, a₀₀
++0.0012 TECU, withheld 0 = 0; the E3 pair the same to three digits (the event does not amplify the knob's wire
+effect).  Direct arm-to-arm consumer 3D separation mean 0.39 m / max 2.12 m on a 7–9 m float-only consumer —
+reported, not gated.
+
+**V4 the twin (720/720 both; fingerprint unchanged).**
+
+| | v5 (OFF) | twin (ON) | |
+|---|---|---|---|
+| D5 flags / re-taps | 730 / 730 | **143 / 143** | −80.4 %; 730 − 589 = 141 predicted, 143 observed |
+| born / carried flags | 589 / 141 | **0 / 143** | +1.4 % carried |
+| chord births; slip refloats | 9932; 1902 | 9362; **1332** | −5.7 %; −30.0 % |
+| carried DD at run end; marginalizations | 758; 5710 | 758; 5710 | identical |
+| withheld epochs; a₀₀ median | 0; 31.281 | 0; 31.250 | equal; −0.03 TECU |
+| `pbstep` frac > thr; p90 max | 0.1181; 0.2570 m | 0.1125; **0.0571 m** | better (4.5×) |
+| `cb_disc` / `clk_disc` / shocks / `pb_reset` | 590 / 6 / 600 / 29 | 590 / 6 / 600 / 30 | R, E, S records identical |
+| consumer de-biased settled h3–6 p50 / rms | 5.495 / 6.163 | 5.785 / 6.980 | **+5.3 % / +13.3 % — FAIL (bar 5 %)** |
+
+The twin's wire: clock contrast |ON − OFF| p50 0.014 / p95 0.123 m; phase bias p50 0.31 m with a tail that is ONE
+satellite — every one of the 731 rows > 20 m is G11 (L1C 620, L2W 111; 389.2 L1 cycles, not an integer): an
+ambiguity LEVEL realized differently between two independent cold starts, invisible to the datum-invariant
+between-satellite reading (`pbstep`, better on ON) and absent on the warm legs, which share a realization (PB p50
+0.0007 m).  The consumer's hourly series moves in both directions (ON better in h1 −29 % and h3 −36 %, worse in
+h4–h6) on a float-only consumer at ~6.5 m raw error — single-realization wander, exactly the confound standing
+invariant #5 names, and the reason the V4 consumer bar is not read as harm.
+
+**Decision.**  RECOMMEND_SCOPED (regime: `carry_invariant` with the D5 gate); the mechanism is proven on the field
+and every wire-side instrument is flat or better.  The field golden pin is DEFERRED to a same-realization consumer
+grade, pre-registered here: two 240-epoch null legs from `v5` ep0604 (`d5v5_long_{off,on}`; both arms share the
+seed's realization up to the seam, so the consumer difference isolates the knob) — consumer de-biased 3D mean over
++120..+240 ON within 5 % of OFF (each arm de-biased by its own window median), the direct arm-to-arm separation
+reported, `pbstep` on the leg products not worse, withheld equal, clock contrast / PB wire / ZWD p50 over +120..+240
+within the V3 bars.  PASS ⇒ pin on `golden_field_gps_dual` (its certified smoke hash moves — every payload kind, no
+structural change — and is re-recorded at that certification); FAIL ⇒ the exception stands with the consumer number.
+Graders merged: `scripts/d5v5_grade.py`, `d5v5_prodiff.py`, `d5v5_seam_ab.py`.

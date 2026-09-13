@@ -2127,6 +2127,25 @@ namespace GnssProcessor {
         /// writes into the snapshot alone, so the writer's products and every trace stay
         /// byte-identical.  INERT unless state_snapshot_path.
         bool state_snapshot_signal_capture{ false };
+        /// RS-9 code-bias LINEARIZATION-POINT capture (write side of
+        /// network.resume_rxcb_lin_restore, docs/SPEC_event_harness.md §21.18): beside
+        /// every @c RC row also serialize an @c RL row — the station @c StateManager's
+        /// current @c x_lin for that code-bias state.  The @c RC row carries the rx-CB
+        /// carry's NUMERATOR; this is the REFERENCE its inject gate differences against
+        /// (@c cb_innov_raw = @c value_abs − @c x_lin(cb) against a fixed 5.13 m bar),
+        /// seeded ONCE from one epoch of code behind
+        /// @c StateInitializer::isCodeBiasInitialized and never written back.  RS-6
+        /// restored the numerator and left the reference cold, so a warm-resume leg
+        /// re-derives it from the RESUME epoch and 17 of 61 field stations sat outside
+        /// the bar every epoch against the continuous run's 7, losing their receiver-DCB
+        /// memory for the whole leg (§21.18).  REQUIRES @ref state_snapshot_station_capture
+        /// (an RL row with no RC row restores a reference for a carry that is not there);
+        /// the loader warn-disarms without it.  Rows ride the EXISTING header version (the
+        /// RS-3 / RS-5 / RS-6 precedent).  Write-side only — the capture block reads the
+        /// station state vectors after the emit and writes only into the snapshot, so the
+        /// writer's products and every trace stay byte-identical.  INERT unless
+        /// state_snapshot_path.
+        bool state_snapshot_rxcb_lin_capture{ false };
         bool trace_station_residuals{ false }; ///< L13: emit @c network_station_residuals.csv — EVERY post-fit RAIM cell (per non-pivot station with carried ambiguities, per sat) with its measurement-standardized residual @c s_raw (already B2-normalized), the σ̂0-normalized @c s_norm, and the epoch σ̂0.  Answers "which station is poisoning the network".  VERY heavy (≈ stations x sats x RAIM-epochs — e.g. 50x40x3600 ≈ 7M rows); requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
         bool trace_raim_redundancy{ false }; ///< SPEC_t3_null_derivation §7.1: emit @c network_raim_redundancy.csv — one row per POST-FIT RAIM phase row (station x sat x SIGNAL x row) with its weight, Baarda redundancy @c r_i, raw residual, measurement-standardized @c z_meas = |v|·√w and Baarda-standardized @c z_baarda = z_meas/√r_i.  The RAIM cell is a max OVER signals, so @ref trace_station_residuals cannot separate L1C from L2W/L5Q — this can.  DIAGNOSTIC: it makes @c row_r be COMPUTED but never USED, so unlike @ref raim_redundancy_normalize (which is solve-affecting) the census is solve-NEUTRAL.  Costs one @c rowRedundancy call per station per epoch.  Requires @ref raim (+ @ref phase_leveling) at runtime.  Off by default — byte-identical when OFF.
         bool trace_ssr_consumer{ false }; ///< L10: CONSUMER-side trace — the RealTimeEngine SSR consumer writes @c ssr_consumer_trace.csv (correction age, clk-applied, c0, URA, the recomputed R-inflation add-variance, phase-bias age/freshness, and disc counters) per modeled sat per processed epoch.  The V4 consumer-side evidence that the producer's URA/disc actually reach the user solution.  Off by default — byte-identical when OFF.
