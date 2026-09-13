@@ -566,6 +566,17 @@ namespace GnssProcessor {
                       ssr_bias_max_age_s_,
                       ssr_bias_max_age_s_ * ssr_bias_stale_hold_factor_,
                       ssr_bias_stale_hold_factor_);
+        // Card CC (A): the declared-step ambiguity carry for a network-product
+        // consumer.  Default false = the existing reset reaction (byte-identical);
+        // the closed-loop harness derives it from network.closed_loop.pb_disc_carry
+        // (deriveClosedLoopConsumerConfig), a standalone consumer sets it here.
+        ssr_phase_bias_disc_carry_ = jval<bool>(json,
+            "processing.ssr_phase_bias_disc_carry", "ssr_phase_bias_disc_carry", false);
+        if (ssr_phase_bias_disc_carry_)
+            log->info("SSR phase-bias declared-step CARRY ON (card CC): a disc-counter bump / "
+                      "freshness flip translates the float ambiguity by -delta (value-only, "
+                      "covariance kept) instead of resetting it; first sightings, an NL/WL "
+                      "basis, a BSSD consumer and unknown keys still take the reset.");
         // RTA-9(b): CLOCK stale-hold rung.  0 (default) = off — the historic
         // two-state gate (fresh/rejected) is byte-identical.  >0 opens the
         // middle rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is

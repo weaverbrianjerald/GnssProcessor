@@ -42,11 +42,14 @@
 #include "math/WlsEstimator.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
+#include "realtime/PbDiscCarryLedger.hpp"    // Card CC (A): declared-step ambiguity carry ledger
 #include <Eigen/Dense>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace GnssProcessor {
@@ -353,6 +356,71 @@ public:
     /// Always false when max_duration_s is 0 (the default, unlimited).
     bool maxDurationReached() const { return max_duration_reached_; }
 
+    // --- Card CC (A): declared-step ambiguity carry readout ------------------
+    /// True iff @c processing.ssr_phase_bias_disc_carry is armed on this engine's
+    /// config (the closed-loop harness derives it from
+    /// @c network.closed_loop.pb_disc_carry).
+    bool pbDiscCarryArmed() const { return config_.ssrPhaseBiasDiscCarry(); }
+    /// Run-end counters of the carry (all zero — and never printed — with the
+    /// knob off, so the off path stays byte-identical).
+    const PbDiscCarryLedger::Counters& pbDiscCarryCounters() const {
+        return pb_disc_carry_.counters();
+    }
+
+    // --- Card CC (B): harness-driven snapshot write + restore readout --------
+    /// Epoch time of the last epoch that ran the full estimation tail (the
+    /// epoch the live filter memory is "as of"); nullopt before the first.
+    std::optional<GnssTime> lastProcessedEpochTime() const {
+        if (!has_processed_epoch_) return std::nullopt;
+        return last_processed_epoch_;
+    }
+
+    /**
+     * @brief Write the live filter-state snapshot to @p path NOW — no cadence
+     *        gate, no @c realtime.state_snapshot_path needed.
+     *
+     * Reuses @c writeStateSnapshot_'s harvest (dynamic layout verified gapless)
+     * and the atomic temp-file + rename write.  The closed-loop harness calls
+     * it beside every network history snapshot copy
+     * (@c network.closed_loop.state_snapshot) so a resume leg's consumer can
+     * warm-start at the seam.
+     *
+     * @param path           Destination file.
+     * @param expected_epoch When non-null, the snapshot is written ONLY if the
+     *        engine's last processed epoch is this epoch (same week, |Δtow| ≤
+     *        1 ms) — the "consumer file carries the network copy's tow"
+     *        invariant; otherwise nothing is written and @p err says why.
+     * @param err            Optional one-line refusal / failure reason.
+     * @return true iff a snapshot was written.
+     */
+    bool writeStateSnapshotTo(const std::filesystem::path& path,
+                              const GnssTime* expected_epoch = nullptr,
+                              std::string* err = nullptr);
+
+    /// Card CC (B): the consumer-snapshot file that sits beside a network history
+    /// copy `<network_snapshot_path>.ep<NNNN>`: `<network_snapshot_path>.consumer.ep<NNNN>`
+    /// (same zero-padded @c n_emitted suffix the network copy uses).
+    static std::filesystem::path consumerSnapshotHistoryPath(
+        const std::filesystem::path& network_snapshot_path, unsigned long long n_emitted);
+
+    /// Outcome of the one-shot staged warm resume (RealTimeEngineStateSnap.cpp),
+    /// so a harness / test can assert RESTORED vs COLD without parsing the log.
+    struct RtSnapshotRestoreStatus {
+        enum class Outcome {
+            NotStaged,   ///< No snapshot was staged (path empty / file absent / unparsable) — cold by construction.
+            Restored,    ///< The staged snapshot was applied at the first processed epoch.
+            Discarded    ///< The staged snapshot was refused (age / fingerprint / layout) — cold start.
+        };
+        Outcome     outcome{ Outcome::NotStaged };
+        int         week{ 0 };            ///< Snapshot epoch (valid when Restored).
+        double      tow{ 0.0 };
+        std::size_t n_states{ 0 };        ///< Snapshot state size (Restored).
+        std::size_t n_dynamic{ 0 };       ///< Snapshot dynamic-state count (Restored).
+        std::string scope;                ///< "core" | "full" (Restored).
+        std::string reason;               ///< The refusal reason (Discarded).
+    };
+    const RtSnapshotRestoreStatus& stateSnapshotRestoreStatus() const { return rt_snap_restore_; }
+
 private:
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
@@ -518,6 +586,15 @@ private:
     void reactToGenerationChange(RtEpochContext& ctx);  ///< RTA-3 generation-id change → GLOBAL datum break.
     void logProducerStatus(RtEpochContext& ctx);        ///< RTA-10 producer heartbeat → one-shot transition log.
     void resetOnPhaseBiasDisc(RtEpochContext& ctx);     ///< Phase-bias discontinuity / freshness flip → ambiguity reset.
+    /// Card CC (A): the carry twin of resetOnPhaseBiasDisc, taken INSTEAD of it
+    /// when processing.ssr_phase_bias_disc_carry is armed — a declared step
+    /// translates the ambiguity by −Δ (PbDiscCarryLedger::react); refusals take
+    /// the existing reset.  The ledger's record() is the update site: it runs
+    /// per key AFTER the reaction, with the value the measurement update will
+    /// apply this epoch (the same gated read the model makes).
+    void carryOnPhaseBiasDisc_(RtEpochContext& ctx);
+    /// Card CC (A): one INFO line with the carry counters; silent unless armed.
+    void logPbDiscCarrySummary_(const char* tag);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
 
@@ -543,6 +620,11 @@ private:
     void loadStateSnapshotStaged_();                    ///< Parse + stage the snapshot file (initialize tail).
     void applyStagedStateSnapshot_(RtEpochContext& ctx);///< One-shot: age/fingerprint gate, layout rebuild, wholesale x/P + baselines restore.
     void writeStateSnapshot_(RtEpochContext& ctx);      ///< Cadence-gated atomic snapshot write.
+    /// Harvest the live filter memory into @p out stamped at @p at (the shared
+    /// body of writeStateSnapshot_ and the card-CC writeStateSnapshotTo).  False
+    /// + @p why when the dynamic layout is unserializable (warned once per run).
+    bool harvestStateSnapshot_(struct RtStateSnapshot& out, const GnssTime& at,
+                               const std::string& epoch_prefix, std::string* why);
 
     // =====================================================================
     // initialize() seams (RealTimeEngineInit.cpp)
@@ -692,6 +774,17 @@ private:
     std::unique_ptr<struct RtStateSnapshot> staged_rt_snap_;
     double    rt_snap_last_write_s_{ -1.0 };   ///< Continuous GPS seconds of the last snapshot write (-1 = never).
     bool      rt_snap_layout_warned_{ false }; ///< One-shot warn for an unserializable state layout (unknown dynamic index).
+    RtSnapshotRestoreStatus rt_snap_restore_;  ///< Card CC (B): outcome of the one-shot staged resume (RESTORED / DISCARDED / not staged).
+    /// Card CC (B): the epoch the live filter memory is "as of" — set at the
+    /// processEpoch tail, right where the cadence-gated snapshot write runs, so
+    /// writeStateSnapshotTo stamps (and checks) exactly that epoch.
+    GnssTime  last_processed_epoch_{ 0, 0.0 };
+    bool      has_processed_epoch_{ false };
+    /// Card CC (A): per-(sat|signal) applied-bias ledger + carry counters.  Only
+    /// touched by carryOnPhaseBiasDisc_ (the knob-ON twin of the reset reaction);
+    /// NOT part of the RT snapshot (v1 format unchanged — the first event per key
+    /// after a restore takes the reset, see RtStateSnapshot.hpp).
+    PbDiscCarryLedger pb_disc_carry_;
     /// RTA-10: last observed network-producer epoch-status STATE from the SSR
     /// store's heartbeat surface (nullopt = never seen).  Edge-trigger for the
     /// one-shot transition log (ok→withheld_sigma0 etc.): the first sighting

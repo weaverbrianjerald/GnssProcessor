@@ -360,6 +360,10 @@ void RealTimeEngine::flush() {
     logBiasAttrMismatchSummary("end of run");
     // Card 7: ditto for the orbit/clock coherence-echo mismatches.
     logOrbitEchoMismatchSummary("end of run");
+    // Card CC (A): the declared-step carry counters (silent unless armed).  The
+    // closed-loop harness never calls flush(); its consumer's counters go out on
+    // the closed-loop summary in NetworkTeardown instead.
+    logPbDiscCarrySummary_("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -516,6 +520,11 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);
+
+    // Card CC (B): the live filter memory is now "as of" this epoch — the
+    // stamp writeStateSnapshotTo uses (and checks against the network copy).
+    last_processed_epoch_ = ctx.current_time;
+    has_processed_epoch_  = true;
 
     // RT filter-state snapshot: cadence-gated atomic write of the live filter
     // memory, AFTER the epoch's full estimation tail so the snapshot carries

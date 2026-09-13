@@ -603,6 +603,15 @@ namespace GnssProcessor {
         ///        @c processing.ssr_bias_stale_hold_factor, default 2.0; clamped to ≥ 1.
         double getSsrBiasStaleHoldFactor() const { return ssr_bias_stale_hold_factor_; }
 
+        /// @brief Card CC (A): carry the float ambiguity across a DECLARED SSR
+        ///        phase-bias step (disc-counter bump / A5 freshness flip) by the
+        ///        exact translation @c amb − Δ instead of resetting it
+        ///        (@c processing.ssr_phase_bias_disc_carry, default false =
+        ///        the existing reset path, byte-identical).  The closed-loop
+        ///        harness derives it from @c network.closed_loop.pb_disc_carry.
+        ///        See @c RealTimeEngine::carryOnPhaseBiasDisc_.
+        bool ssrPhaseBiasDiscCarry() const { return ssr_phase_bias_disc_carry_; }
+
         /**
          * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
          *
@@ -7605,6 +7614,7 @@ namespace GnssProcessor {
         bool   enable_ssr_bias_max_age_{ false };         ///< A5: enforce the SSR code/phase-bias staleness gate; OFF = the bias getters never gate on age (byte-identical).
         bool   enable_ssr_bias_max_age_explicit_{ false };///< RTA-9(a): true iff the user WROTE processing.enable_ssr_bias_max_age (either key form) — lets applyNetworkConsumerProfile arm the gate under bias consumption while respecting an explicit false.
         double ssr_bias_stale_hold_factor_{ 2.0 };        ///< A5: apply-gate drop limit = factor × ssr_bias_max_age_s_ (hold the last bias over sub-limit staleness gaps → no manufactured model step / reset storm); 1.0 = drop exactly at max age.  Only meaningful when enable_ssr_bias_max_age_.
+        bool   ssr_phase_bias_disc_carry_{ false };       ///< Card CC (A): carry the float ambiguity across a DECLARED phase-bias step (amb − Δ, value-only) instead of resetting it; OFF = the existing reset path (byte-identical).  Set directly (processing.ssr_phase_bias_disc_carry) or derived from network.closed_loop.pb_disc_carry.
         double ssr_clock_stale_hold_factor_{ 0.0 };       ///< RTA-9(b): clock stale-hold rung — a clock aged in (ssr_max_age, factor × ssr_max_age] is still applied with URA-staleness R inflation; 0 (default) = off (byte-identical two-state gate); (0,1] clamps to 1.
         bool   ssr_bias_band_fallback_{ false };          ///< RTA-13 (opt-in): CODE-domain band-wise bias fallback — exact-attribute miss consumes the same-band sibling code bias; phase never falls back.  Default off = store lookups byte-identical.
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.
