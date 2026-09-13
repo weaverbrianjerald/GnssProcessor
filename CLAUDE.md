@@ -564,9 +564,15 @@ underlying errors are SUB-CYCLE: two arms picked as controls had 2–20-cycle DD
 uniform, and looked like a clean refutation of §6.12.
 
 **4. `network.trace_station_residuals` writes ZERO rows on `carry_invariant`
-chains** — the writer rides the leveling RAIM pool, structurally empty there
-(the known pool re-host gap).  Use the prires / block-Baarda / congruence
-run-end counters as the σ̂₀ instrument set on those lineages.
+chains UNLESS `network.raim_carry_invariant` (the re-hosted screen, pinned on the
+field golden 2026-09-13) is armed** — the writer rides the RAIM pool, which the
+re-host fills (26 k rows / 60 epochs measured 2026-09-14).  ⚠ Its statistic is the
+PHASE cell maximum, and on a `carry_invariant` lineage the free local column absorbs
+the phase tension: `s_raw` p50 ≈ 0.02 with σ̂₀ pinned at its 1.0 floor — post-fit
+phase residuals carry no information there (SPEC_raim_pool_rehost §7.2/§7.3).  For
+the CODE side use `trace_postfit_keyed` (`network_pf_keyed.csv`, STA/SAT/SIG) or
+the per-row trace `trace_postfit_rows` (pre-registered SPEC_event_harness §24.6); the prires /
+block-Baarda / congruence run-end counters remain the σ̂₀ instrument set.
 
 ## File management (RINEX, products, downloads)
 
