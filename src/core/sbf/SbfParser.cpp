@@ -18,7 +18,7 @@
 #include "sbf/SbfSignalMap.hpp"
 #include "sbf/Meas3Decoder.hpp"
 #include "common/Constants.hpp"
-#include <spdlog/spdlog.h>
+#include "logging/SafeLogger.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -26,6 +26,12 @@
 namespace GnssProcessor {
 
 namespace {
+
+/// Per-call logger for the SBF decode path — see logging/SafeLogger.hpp for why
+/// the bare spdlog::xxx() free functions are unsafe here.
+std::shared_ptr<spdlog::logger> sbfLog() {
+    return Logging::safeDefaultLogger();
+}
 
 // ---- little-endian typed reads at a byte pointer ----
 inline uint8_t  u1(const uint8_t* p) { return p[0]; }
@@ -96,7 +102,7 @@ bool SbfParser::parseFrame(const uint8_t* block, std::size_t len) {
     case 4026: return decodeRawNav(block, len);      // GLORawCA   (GLONASS string)
     case 4007: return decodePvtGeodetic(block, len); // PVTGeodetic (receiver a-priori)
     default:
-        spdlog::trace("SBF block {} not decoded", block_number);
+        sbfLog()->trace("SBF block {} not decoded", block_number);
         return false;
     }
 }
@@ -114,7 +120,7 @@ bool SbfParser::decodeMeasEpoch(const uint8_t* b, std::size_t len, int revision)
     const std::size_t sb2  = u1(b + 16);
     const uint8_t commonFlags = u1(b + 17);
     if (commonFlags & 0x80) {            // bit7: measurements scrambled (no permission)
-        spdlog::warn("SBF MeasEpoch: measurements scrambled (Measurement-Availability not granted)");
+        sbfLog()->warn("SBF MeasEpoch: measurements scrambled (Measurement-Availability not granted)");
         return false;
     }
     if (sb1 < 20 || (n1 > 0 && sb2 < 12)) return false;

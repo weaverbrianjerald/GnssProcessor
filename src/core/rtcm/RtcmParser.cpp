@@ -21,13 +21,23 @@
 #include "rtcm/RtcmNavDecoder.hpp"
 #include "rtcm/RtcmBitReader.hpp"
 #include "math/TimeUtils.hpp"
-#include <spdlog/spdlog.h>
+#include "logging/SafeLogger.hpp"
 #include <chrono>
 #include <fstream>
 
 namespace GnssProcessor {
 
 namespace {
+
+/// Per-call logger for the RTCM parse path.
+///
+/// Replaces the bare spdlog::warn()/info()/trace() free functions, which
+/// dereference a raw borrowed pointer into the registry's default-logger slot
+/// and therefore fault once spdlog::drop_all() (LogManager::shutdown()) has
+/// emptied it.  Routing is unchanged; see logging/SafeLogger.hpp.
+std::shared_ptr<spdlog::logger> rtcmLog() {
+    return Logging::safeDefaultLogger();
+}
 
 bool isLegacySsrType(uint16_t mt) {
     return (mt >= 1057 && mt <= 1068) ||
@@ -67,10 +77,10 @@ void warnIfUnderConsumed(uint16_t mt, const char* label, std::size_t payload_byt
     if (!ok) return;  // truncation already reported by the caller
     const std::size_t payload_bits = payload_bytes * 8u;
     if (payload_bits >= bits_consumed + 8u) {
-        spdlog::warn("RTCM {}: {} under-consumed payload — read {} of {} bits "
-                     "({} unread; MSM subtype / field-width / framing mismatch?)",
-                     mt, label, bits_consumed, payload_bits,
-                     payload_bits - bits_consumed);
+        rtcmLog()->warn("RTCM {}: {} under-consumed payload — read {} of {} bits "
+                        "({} unread; MSM subtype / field-width / framing mismatch?)",
+                        mt, label, bits_consumed, payload_bits,
+                        payload_bits - bits_consumed);
     }
 }
 
@@ -120,7 +130,7 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
     uint16_t payload_len = 0;
     uint16_t msg_type    = 0;
     if (!parseHeader(frame, len, payload_len, msg_type)) {
-        spdlog::trace("RTCM parseHeader failed (len={})", len);
+        rtcmLog()->trace("RTCM parseHeader failed (len={})", len);
         return false;
     }
     last_msg_type_ = static_cast<int>(msg_type);
@@ -154,14 +164,14 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
             : 0;
         const auto res = RtcmNav::decodeBroadcast(payload, pl, msg_type, week, broadcast_eph_);
         if (!res.ok) {
-            spdlog::warn("RTCM {}: broadcast-ephemeris decode incomplete (truncated payload?)", msg_type);
+            rtcmLog()->warn("RTCM {}: broadcast-ephemeris decode incomplete (truncated payload?)", msg_type);
         }
         return res.ok;
     }
     if (isMsm7Type(msg_type)) {
         const auto res = RtcmMsm::decodeMsm7(payload, pl, msg_type, anchorGpsSeconds(), observations_);
         if (!res.ok) {
-            spdlog::warn("RTCM {}: MSM7 decode incomplete (truncated payload?)", msg_type);
+            rtcmLog()->warn("RTCM {}: MSM7 decode incomplete (truncated payload?)", msg_type);
         }
         warnIfUnderConsumed(msg_type, "MSM7", pl, res.bits_consumed, res.ok);
         if (res.ok) updateTimeAnchor(res.epoch_time);
@@ -170,7 +180,7 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
     if (isMsm5Type(msg_type)) {
         const auto res = RtcmMsm::decodeMsm5(payload, pl, msg_type, anchorGpsSeconds(), observations_);
         if (!res.ok) {
-            spdlog::warn("RTCM {}: MSM5 decode incomplete (truncated payload?)", msg_type);
+            rtcmLog()->warn("RTCM {}: MSM5 decode incomplete (truncated payload?)", msg_type);
         }
         warnIfUnderConsumed(msg_type, "MSM5", pl, res.bits_consumed, res.ok);
         if (res.ok) updateTimeAnchor(res.epoch_time);
@@ -179,21 +189,21 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
     if (isMsm4Type(msg_type)) {
         const auto res = RtcmMsm::decodeMsm4(payload, pl, msg_type, anchorGpsSeconds(), observations_);
         if (!res.ok) {
-            spdlog::warn("RTCM {}: MSM4 decode incomplete (truncated payload?)", msg_type);
+            rtcmLog()->warn("RTCM {}: MSM4 decode incomplete (truncated payload?)", msg_type);
         }
         warnIfUnderConsumed(msg_type, "MSM4", pl, res.bits_consumed, res.ok);
         if (res.ok) updateTimeAnchor(res.epoch_time);
         return res.ok;
     }
 
-    spdlog::trace("RTCM message type {} not yet decoded", msg_type);
+    rtcmLog()->trace("RTCM message type {} not yet decoded", msg_type);
     return false;
 }
 
 bool RtcmParser::decodeStationCoords(const uint8_t* payload, std::size_t len, uint16_t msg_type) {
     RtcmStationCoords s;
     if (!RtcmSsr::decodeStationCoords(payload, len, msg_type, s)) {
-        spdlog::warn("RTCM {}: station coordinates decode failed", msg_type);
+        rtcmLog()->warn("RTCM {}: station coordinates decode failed", msg_type);
         return false;
     }
     station_coords_.push_back(std::move(s));
@@ -207,7 +217,7 @@ bool RtcmParser::decodeLegacySsr(const uint8_t* payload, std::size_t len, uint16
         ssr_phase_biases_, ssr_uras_, ssr_hrclocks_);
     last_ssr_header_ = result.header;
     if (!result.ok) {
-        spdlog::warn("RTCM {}: legacy SSR decode incomplete (truncated payload?)", msg_type);
+        rtcmLog()->warn("RTCM {}: legacy SSR decode incomplete (truncated payload?)", msg_type);
     }
     if (result.ok) updateTimeAnchor(result.header.epoch_time);
     return result.ok;
@@ -220,7 +230,7 @@ bool RtcmParser::decodeIgsSsr4076(const uint8_t* payload, std::size_t len) {
         ssr_phase_biases_, ssr_uras_, ssr_hrclocks_);
     last_ssr_header_ = result.header;
     if (!result.ok) {
-        spdlog::trace("RTCM 4076: IGS-SSR decode incomplete or unsupported sub-type");
+        rtcmLog()->trace("RTCM 4076: IGS-SSR decode incomplete or unsupported sub-type");
     }
     if (result.ok) updateTimeAnchor(result.header.epoch_time);
     return result.ok;
@@ -261,17 +271,17 @@ bool RtcmParser::decodeReceiverAntennaDescriptor(const uint8_t* payload, std::si
     readString(d.receiver_firmware);              // DF229 + DF230
     readString(d.receiver_serial);                // DF231 + DF232
     if (!r.ok()) {
-        spdlog::warn("RTCM 1033: receiver/antenna descriptor decode incomplete (truncated payload?)");
+        rtcmLog()->warn("RTCM 1033: receiver/antenna descriptor decode incomplete (truncated payload?)");
         return false;
     }
 
     if (!logged_1033_) {
         logged_1033_ = true;
-        spdlog::info("RTCM 1033: station {} antenna '{}' (setup {}, s/n '{}'), "
-                     "receiver '{}' fw '{}' s/n '{}'",
-                     d.reference_station_id, d.antenna_descriptor, d.antenna_setup_id,
-                     d.antenna_serial, d.receiver_type, d.receiver_firmware,
-                     d.receiver_serial);
+        rtcmLog()->info("RTCM 1033: station {} antenna '{}' (setup {}, s/n '{}'), "
+                        "receiver '{}' fw '{}' s/n '{}'",
+                        d.reference_station_id, d.antenna_descriptor, d.antenna_setup_id,
+                        d.antenna_serial, d.receiver_type, d.receiver_firmware,
+                        d.receiver_serial);
     }
     receiver_descriptors_.push_back(std::move(d));
     return true;
@@ -303,18 +313,18 @@ bool RtcmParser::decodeGlonassBiases(const uint8_t* payload, std::size_t len) {
         }
     }
     if (!r.ok()) {
-        spdlog::warn("RTCM 1230: GLONASS code-phase bias decode incomplete (truncated payload?)");
+        rtcmLog()->warn("RTCM 1230: GLONASS code-phase bias decode incomplete (truncated payload?)");
         return false;
     }
 
     if (!logged_1230_) {
         logged_1230_ = true;
-        spdlog::info("RTCM 1230: station {} GLONASS code-phase biases (aligned={}, mask=0x{:X}): "
-                     "L1CA={:.2f} L1P={:.2f} L2CA={:.2f} L2P={:.2f} m "
-                     "(surfaced only; not consumed by the IFB path)",
-                     b.reference_station_id, b.code_phase_bias_indicator,
-                     b.fdma_signal_mask, b.l1_ca_bias_m, b.l1_p_bias_m,
-                     b.l2_ca_bias_m, b.l2_p_bias_m);
+        rtcmLog()->info("RTCM 1230: station {} GLONASS code-phase biases (aligned={}, mask=0x{:X}): "
+                        "L1CA={:.2f} L1P={:.2f} L2CA={:.2f} L2P={:.2f} m "
+                        "(surfaced only; not consumed by the IFB path)",
+                        b.reference_station_id, b.code_phase_bias_indicator,
+                        b.fdma_signal_mask, b.l1_ca_bias_m, b.l1_p_bias_m,
+                        b.l2_ca_bias_m, b.l2_p_bias_m);
     }
     glonass_biases_.push_back(b);
     return true;
@@ -323,7 +333,7 @@ bool RtcmParser::decodeGlonassBiases(const uint8_t* payload, std::size_t len) {
 bool RtcmParser::parse() {
     std::ifstream stream(file_path_, std::ios::binary);
     if (!stream.is_open()) {
-        spdlog::error("RtcmParser: cannot open {}", file_path_.string());
+        rtcmLog()->error("RtcmParser: cannot open {}", file_path_.string());
         return false;
     }
 
@@ -348,13 +358,13 @@ bool RtcmParser::parse() {
         offset += frame_len;
     }
 
-    spdlog::info("RtcmParser: {} bytes -> {} decoded frames "
-                 "(orbits={}, clocks={}, combined={}, codebias={}, phasebias={}, "
-                 "ura={}, hrclock={}, station={})",
-                 buf.size(), frames_decoded,
-                 ssr_orbits_.size(), ssr_clocks_.size(), ssr_combined_.size(),
-                 ssr_code_biases_.size(), ssr_phase_biases_.size(),
-                 ssr_uras_.size(), ssr_hrclocks_.size(), station_coords_.size());
+    rtcmLog()->info("RtcmParser: {} bytes -> {} decoded frames "
+                    "(orbits={}, clocks={}, combined={}, codebias={}, phasebias={}, "
+                    "ura={}, hrclock={}, station={})",
+                    buf.size(), frames_decoded,
+                    ssr_orbits_.size(), ssr_clocks_.size(), ssr_combined_.size(),
+                    ssr_code_biases_.size(), ssr_phase_biases_.size(),
+                    ssr_uras_.size(), ssr_hrclocks_.size(), station_coords_.size());
     return frames_decoded > 0;
 }
 
