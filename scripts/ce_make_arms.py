@@ -90,6 +90,15 @@ ARMS = {
            "mark_refsat_reset_disc", C6, ""),
     "c0": ("the UNION of ALL 17 CHAIN-ERA keys on the PV-B base = PV-A's posture on the golden's newer pins",
            C1 + C2 + C3 + C4 + C5 + C6 + C0_EXTRA, ""),
+    # s24.15 (added after the c0..c6 grade): NOT a CHAIN-ERA row — both chains pin the cutoff at 25.0.
+    # The SH tie's admission cutoff sits at 25 deg against a 15 deg observation mask
+    # (ApplicationNetworkAssembly.cpp:1044), so ~26 % of settled per-LOS iono rows carry no tie row at
+    # all, and that population owns PV-B's metre-plus per-LOS level tail (|level| p99 6.34 m / max 138 m
+    # below 25 deg against 3.29 / 6.1 above).  c7 / c7b lower the cutoff to the mask and halfway to it.
+    "c7": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 25.0 -> 15.0 — the SH tie admits every "
+           "observation the elevation mask admits", [("estimation.ionosphere_weighting.elevation_cutoff_deg", 15.0)], ""),
+    "c7b": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 25.0 -> 20.0 — the same, halfway",
+            [("estimation.ionosphere_weighting.elevation_cutoff_deg", 20.0)], ""),
     "pva2": ("PV-A re-run 2 h on the post-ZP exe (config/test_suite/_pv_a.json unchanged; only the two "
              "run paths move) so its (i) / (iv) read on the same last-hour window",
              [], os.path.join(REPO, "config", "test_suite", "_pv_a.json")),
@@ -133,7 +142,7 @@ def main():
     ap.add_argument("--base", default=os.path.join(REPO, "config", "test_suite", "_pv_b.json"))
     ap.add_argument("--runs", default="C:/GnssProcessor/runs")
     ap.add_argument("--prefix", default="_cm_")
-    ap.add_argument("--arms", default="c0,c1,c2,c3,c4,c5,c6,pva2")
+    ap.add_argument("--arms", default="c0,c1,c2,c3,c4,c5,c6,c7,c7b,pva2")
     ap.add_argument("--out-dir", default="", help="also write <arm>.json here (default: run dir only)")
     ap.add_argument("--force", action="store_true", help="overwrite an existing arm.json")
     a = ap.parse_args()

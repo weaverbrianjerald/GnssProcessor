@@ -115,6 +115,11 @@ ARM_KNOBS = {
             "require_bia", "estimate_ifb", "(RXCB-DATUM)", "rx_code_bias_datum", "apriori_clock_anchor",
             "(SH-iono)", "layer2", "mean_vtec", "Frequency mode", "ATX coverage", "mark_refsat_reset_disc",
             "Kaula", "emit_pb_filter_meas_sigma"]),
+    # s24.15 — the SH tie's admission cutoff (25 deg) against the 15 deg observation mask.
+    "c7": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 15.0 (the SH tie admits the whole mask)",
+           ["ionosphere weighting", "elevation_cutoff", "elevation cutoff", "iono_dw_admit", "deweight"]),
+    "c7b": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 20.0",
+            ["ionosphere weighting", "elevation_cutoff", "elevation cutoff", "iono_dw_admit", "deweight"]),
     "pva2": ("PV-A re-run 2 h on the post-ZP exe (config/test_suite/_pv_a.json, paths only) — its (i) / (iv) "
              "now readable on the same last-hour window",
              ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
