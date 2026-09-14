@@ -1,0 +1,10 @@
+{
+ "doc": "SPEC_withhold_era_release.md",
+ "topic": "raim-qc",
+ "title": "SPEC — A4 withhold-era release policy",
+ "groups": [
+  ["__preamble__", "cards/raim-qc/WITHHOLD-ERA-RELEASE.md", "A4 withhold", "closed", "the withhold-era release policy — the defect named exactly, the v2 design, the pre-registered gates and the first results"],
+  ["## §8 The successor card's PREMISE", "cards/raim-qc/WITHHOLD-CLIFF-RETIREMENT.md", "withhold cliff", "closed", "the retirement census — every G3 number was on a retired binary; the cliff does not reproduce; the level-aware re-grade and era-3"],
+  ["## §12 The WITHHOLD CONSUMER CONTRACT", "cards/wire-contract/LEVEL-HEALTH-CHANNEL.md", "level health", "open", "`network.emit_level_health` — the contract gap, the one-channel three-class mechanism, and the normative consumer contract"]
+ ]
+}

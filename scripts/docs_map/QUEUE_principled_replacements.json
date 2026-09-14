@@ -1,0 +1,12 @@
+{
+ "doc": "QUEUE_principled_replacements.md",
+ "topic": "queues",
+ "title": "QUEUE — principled replacements for symptom-level patches (cross-family index)",
+ "groups": [
+  ["__preamble__", "cards/queues/QPR-00-CHARTER.md", "QPR", "open", "the charter — why this queue exists, how an item enters and leaves it, and the rank order"],
+  ["## 0 — Arm the pin bridge", "cards/queues/QPR-ITEMS-0-3.md", "QPR 0–3", "open", "items 0–3: the pin bridge, the S-transform re-reference family, datum-station election by criterion, and the clock's re-realization-free posture"],
+  ["## 4 — T3-class test statistics", "cards/queues/QPR-ITEM-4-T3-NULLS.md", "QPR 4", "open", "item 4: T3-class test statistics — correct nulls, not recalibrated constants"],
+  ["## 5 — The level", "cards/queues/QPR-ITEMS-5-8.md", "QPR 5–8", "open", "items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate release policy, and the per-LOS ionosphere representation"],
+  ["## Blocked on root cause", "cards/queues/QPR-BLOCKED-AND-CLOSED.md", "QPR blocked", "open", "blocked on root cause, leave-alone (falsified or decided), and the queue's maintenance rule"]
+ ]
+}

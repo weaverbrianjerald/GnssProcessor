@@ -1,0 +1,11 @@
+{
+ "doc": "SPEC_t3_null_derivation.md",
+ "topic": "raim-qc",
+ "title": "SPEC — the T3-class null: the statistic is scale-blind, so the defect is in the POOL",
+ "groups": [
+  ["__preamble__", "cards/raim-qc/T3-NULL-DERIVATION.md", "T3 null", "closed", "the statistic as actually computed, the invariance theorem, the falsified redundancy standardization, the principled replacement, and the validation shape"],
+  ["## 7. The open question", "cards/raim-qc/T3-IONO-MECHANISM.md", "T3 mechanism", "closed", "the per-row census, the falsification ledger, and the MECHANISM FOUND — per-LOS ionosphere estimation error, with the DD-integer tie"],
+  ["## 8. Validation shape", "cards/raim-qc/T3-NULL-DERIVATION.md", "T3 null", "closed", "the statistic as actually computed, the invariance theorem, the falsified redundancy standardization, the principled replacement, and the validation shape"],
+  ["## 11. The T3 class", "cards/raim-qc/T3-FIELD-AND-COLLATERALS.md", "T3 field", "closed", "the T3 class and its two collateral defects, the field check, the detection-power gate, the 305-station smoke, and R2 + R4 built and validated"]
+ ]
+}

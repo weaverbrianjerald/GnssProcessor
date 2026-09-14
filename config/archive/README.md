@@ -3,6 +3,15 @@
 234 configs moved here from `config/test_suite/` on 2026-07-29. **Nothing was deleted**; every
 byte and all git history is intact, and any of these can be moved back or run in place.
 
+> **A second pass ran on 2026-09-14**: 282 more configs are in
+> [`test_suite/`](test_suite/), under the same policy as below (cited-by-name, plus the
+> whole `extends` chain of anything cited, plus every warm-resume config, plus the
+> shipped no-underscore configs). See [`test_suite/README.md`](test_suite/README.md) and
+> [`../test_suite/README.md`](../test_suite/README.md) for the counts. Nine of those
+> arms had a bare-basename `extends` whose base stayed behind; each was re-pointed to its
+> base's absolute path when it moved, and all nine were verified to flatten with
+> `scripts/gnss_config_chain.py`, so every config in `test_suite/` loads in place.
+
 ## Why they moved
 
 `config/test_suite/` had accumulated 350 configs, most of them one-off diagnostic A/B arms from

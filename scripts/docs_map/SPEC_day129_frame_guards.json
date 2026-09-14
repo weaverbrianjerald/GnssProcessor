@@ -1,0 +1,11 @@
+{
+ "doc": "SPEC_day129_frame_guards.md",
+ "topic": "raim-qc",
+ "title": "SPEC — DOY-129 frame guards & trigger instrumentation (Opus card)",
+ "groups": [
+  ["__preamble__", "cards/raim-qc/DAY129-FRAME-ANATOMY.md", "DOY-129 anatomy", "closed", "the answered questions — the pinned pivot's code bias, the a₀₀ collapse anatomy, the quiet-hour wander, and the disc counter as a DATUM channel"],
+  ["## Phase 0 — Q5", "cards/raim-qc/DAY129-PHASES.md", "DOY-129 phases", "closed", "phases 0–2: the closed-loop replay, the trigger instrumentation, and the gated guards"],
+  ["## C1 What the leg shipped", "cards/raim-qc/DAY129-DEFECTS-ABC.md", "DOY-129 defects", "closed", "defects A/B/C from the instrumented leg, the five wiring facts, and the measured policy counterfactuals"],
+  ["## D-G1 — resume grace", "decisions/DEC-day129-gate-policy.md", "DEC-day129-gate-policy", "open", "the gate-policy ruling — DEGRADE, DO NOT WITHHOLD; the statistic; the CB-excursion resume window; the validation gates; and the un-derived grace-floor magnitude"]
+ ]
+}

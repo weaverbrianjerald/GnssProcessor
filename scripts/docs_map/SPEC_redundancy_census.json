@@ -1,0 +1,12 @@
+{
+ "doc": "SPEC_redundancy_census.md",
+ "topic": "raim-qc",
+ "title": "SPEC — redundancy / testability census (the statistical parked-garbage monitor) + its three riders",
+ "groups": [
+  ["__preamble__", "cards/raim-qc/REDUNDANCY-CENSUS.md", "redundancy census", "closed", "the row-redundancy and unobservable-local censuses — design, cost model, wiring, build record, convergence hygiene and governance"],
+  ["## 11. RIDER A", "cards/raim-qc/MDB-RIDER-A.md", "Rider A", "closed", "Baarda reliability numbers (MDB) on the network path — `network.mdb`"],
+  ["## 12. RIDER B", "cards/raim-qc/BLOCK-BAARDA-RIDER-B.md", "Rider B", "closed", "BlockFormal — the (station, sat) LOS block outlier census, `network.block_baarda`"],
+  ["## 13. RIDER C", "cards/raim-qc/CONGRUENCE-RIDER-C.md", "Rider C", "closed", "the station congruence screen, `network.congruence_screen`"],
+  ["## 14. ★ CROSS-RIDER", "cards/raim-qc/REDUNDANCY-CENSUS.md", "redundancy census", "closed", "the row-redundancy and unobservable-local censuses — design, cost model, wiring, build record, convergence hygiene and governance"]
+ ]
+}

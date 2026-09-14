@@ -1,0 +1,29 @@
+{
+ "doc": "SPEC_synthetic_minimum_network.md",
+ "topic": "sim-bed",
+ "title": "SPEC — the SYNTHETIC MINIMUM NETWORK (the sim half of G4)",
+ "groups": [
+  ["__preamble__", "cards/sim-bed/SIMNET-REF.md", "SIMNET", "reference", "the truth-graded 3/5/50-station fixture — architecture, truth channels, the estimable-function grading map, the gates, the trap register and the build manifest"],
+  ["## §9.5 G-A RESULTS", "cards/sim-bed/SIMNET-GA-NULL-TEST.md", "G-A", "closed", "the NULL test — the first absolute grade, measured 2026-08-11"],
+  ["## §9.7 The 50-STATION GLOBAL arm", "cards/sim-bed/SIMNET-50STA-QC-TIERS.md", "G-A 50-sta", "closed", "the 50-station global arm — the vf trend, the QC tiers, and the MW null space"],
+  ["## §9.8 The DATUM-WANDER arm", "cards/network-vehicle/DATUM-WANDER.md", "datum wander", "closed", "the common level FOLLOWS the datum station — both remedies measured"],
+  ["## §9.9 The FIELD probe", "cards/clock/FIELD-WANDER-PROBE.md", "field wander probe", "closed", "the field wire wander is NOT receiver-code-driven; the a-priori CLK common-drift probe exonerates the product frame"],
+  ["## §9.10 Cross-station IONO-FIELD", "cards/ionosphere/IONO-FIELD-AGREEMENT.md", "iono-field agreement", "closed", "cross-station iono-field agreement — coherent where mapped, BROKEN at low–high, plus the elevation-cutoff field A/B"],
+  ["## §9.6 G-B", "cards/sim-bed/SIMNET-GB-CLOCK-STEP.md", "G-B", "closed", "event injection, satellite-clock step — first class only"],
+  ["## §11 NEXT", "cards/sim-bed/SIMNET-W6SH-BRIEF.md", "W6+SH brief", "superseded", "the design brief for the W6+SH synthetic arm — superseded by the arm itself"],
+  ["### 9.10.1 The elevation-cutoff", "cards/ionosphere/IONO-FIELD-AGREEMENT.md", "iono-field agreement", "closed", "cross-station iono-field agreement — coherent where mapped, BROKEN at low–high, plus the elevation-cutoff field A/B"],
+  ["## §12 The W6+SH ARM", "cards/sim-bed/SIMNET-W6SH-ARM.md", "W6+SH arm", "closed", "the W6+SH arm and its minimum-n ladder — the two-band wall is n-invariant, posture is the 16× lever"],
+  ["## §12.8 The CHAIN-PIN AUDIT", "cards/network-vehicle/CHAIN-PIN-AUDIT.md", "chain-pin audit", "closed", "rungs 2/6 re-attributed and the field's emission explained — the chain is COMPLETE"],
+  ["## §12.9 The elevation-cutoff A/B", "cards/ionosphere/ELEV-CUTOFF-AB.md", "elev-cutoff A/B", "closed", "the elevation-cutoff A/B WITH TRUTH — the field verdict INVERTS on a coherent field"],
+  ["## §13 The THIRD BAND", "cards/sim-bed/SIMNET-SLANT-TRIPLE.md", "slant + triple", "closed", "the third band and the slant-ionosphere posture — the ambiguity-integer grade, the settled trio's divergence, and the grading traps"],
+  ["## §10 Verification status", "cards/sim-bed/SIMNET-REF.md", "SIMNET", "reference", "the truth-graded 3/5/50-station fixture — architecture, truth channels, the estimable-function grading map, the gates, the trap register and the build manifest"],
+  ["## §14 THE CHAIN-SLANT BRIEF", "cards/network-vehicle/CHAIN-SLANT-ODIJK.md", "chain-slant", "closed", "Odijk rank arithmetic, the global-network chain caveat, the three self-consistent postures, and what not to re-litigate"],
+  ["## §15 THE EVENT-INJECTION BENCH", "cards/sim-bed/SIM-INJECTION-BENCH.md", "injection bench", "closed", "the G-B event-injection bench — the ambiguity N-regime, the pre-flight, the arms, and the first bench run"],
+  ["## §16 THE 60-STA CAMPAIGN", "cards/sim-bed/SIMNET-60STA-CAMPAIGN.md", "60-sta campaign", "closed", "the first long / multi-GNSS / realistic-slip grade — full record in the slip re-level walk card"],
+  ["## §17 THE DASHBOARD", "cards/sim-bed/SIMNET-DASHBOARD.md", "dashboard", "closed", "one-command HTML report over a graded simnet run"],
+  ["## §18 THE STABILITY CAMPAIGN", "cards/sim-bed/STABILITY-CAMPAIGN.md", "stability", "closed", "the settled state must stop moving — targets 1–4, the eclipse-exclusion valve, sticky pivot, and the field transfer"],
+  ["### 18.10 RESUME FRAME RESTORE", "cards/resume-seam/RESUME-FRAME-RESTORE.md", "§18.10/§18.11", "closed", "the seam is a FRAME loss — `resume_frame_restore`, built and graded"],
+  ["### 18.12 COUPLING-REGRESSOR RESTORE", "cards/resume-seam/RESUME-COUPLING-RESTORE.md", "§18.12", "closed", "the coupling-regressor restore verdict — the mechanism works, the wire is 10× better"],
+  ["### 18.13 E2 + THE DENSE BORDER", "cards/resume-seam/RESUME-DENSE-BORDER-E2.md", "§18.13/§18.14", "closed", "E2 and the dense border across the seam — pre-registered, then its verdicts"]
+ ]
+}

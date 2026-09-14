@@ -1,0 +1,28 @@
+{
+ "doc": "SPEC_level_information_budget.md",
+ "topic": "ionosphere",
+ "title": "SPEC — the ionosphere-level information budget (LV-1/LV-2/LV-3/LV-4/LV-5, S2H)",
+ "groups": [
+  ["__preamble__", "cards/ionosphere/LV-REF.md", "LV", "reference", "the ionosphere-level initiative's own reference page — knob ledger, verdict ledger, section map, grading protocol and the problem statement"],
+  ["## 3. Card LV-1", "cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md", "LV-1", "closed", "bias-free per-LOS iono seeding — the seed is a FRAME, not an authority"],
+  ["## 4. Card LV-2", "cards/ionosphere/LV-2-RXCB-DEMEAN.md", "LV-2", "closed", "rx-CB carry common-mode de-mean — works as designed, but the de-mean is NOT frame-invariant"],
+  ["## 5. Card LV-3", "cards/ionosphere/LV-3-LEVEL-AUTHORITY.md", "LV-3", "closed", "the level authority, made explicit — mostly documentation, one optional knob"],
+  ["## 6. Build / run mechanics", "cards/ionosphere/LV-REF.md", "LV", "reference", "the ionosphere-level initiative's own reference page — knob ledger, verdict ledger, section map, grading protocol and the problem statement"],
+  ["## 9. Implementation record", "cards/ionosphere/LV-IMPL-RECORD.md", "LV impl", "closed", "the 2026-08-05 implementation record, and the measured outcomes that corrected the mechanism"],
+  ["## 11. Card LV-4", "cards/ionosphere/LV-4-FRAME-INVARIANT-SCREEN.md", "LV-4", "closed", "the carry screen made frame-invariant — fixed, and it exposed a second defect"],
+  ["## 12. Card LV-5", "cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md", "LV-5", "closed", "μ computed within the epoch, with the review addendum's requirements"],
+  ["## 13. CORRECTION", "cards/ionosphere/LV-CORRECTION-AND-12H.md", "LV correction", "closed", "what LV-2 actually does and what LV-1 is really for — and the 12 h verdict that made the 1 h result an ignition transient"],
+  ["## 15. The tracking-pin fix", "cards/ionosphere/LV-TRACKING-PIN.md", "LV tracking pin", "closed", "the tracking-pin fix, tested and FALSIFIED"],
+  ["## 16. LV-5 requirements", "cards/ionosphere/LV-5-MU-WITHIN-EPOCH.md", "LV-5", "closed", "μ computed within the epoch, with the review addendum's requirements"],
+  ["## 17. ROADMAP", "cards/ionosphere/LV-ROADMAP.md", "LV roadmap", "open", "the continuing session's roadmap, and its refresh at hand-back"],
+  ["## 18. Is the residual an EXTRAPOLATION", "cards/ionosphere/LV-RESIDUAL-EXTRAPOLATION.md", "LV residual", "closed", "the residual is not an extrapolation artifact, and `rx_cb_carry_q` is not simply too tight"],
+  ["## 19. Roadmap item 1 FALSIFIED", "cards/ionosphere/LV-ITEM1-FALSIFIED.md", "LV item 1", "closed", "roadmap item 1 falsified at stage 1 — the cost attributes to LV-4 alone, plus two invariant-#4 holes in the instrument"],
+  ["## 20. Arm 30", "cards/ionosphere/LV-EXTCB-DEFECT2.md", "EXT-CB defect 2", "closed", "arm 30 and the 303-station EXT-CB arm — DEFECT 2 is largely a station-support artifact"],
+  ["## 21. The mask 2×2", "cards/ionosphere/LV-MASK-STUDY.md", "LV mask study", "closed", "the mask study, end to end — the trade is regime-dependent, it flips sign between 61 and 303 stations, and it closes on one posture"],
+  ["## 27. Roadmap refresh", "cards/ionosphere/LV-ROADMAP.md", "LV roadmap", "open", "the continuing session's roadmap, and its refresh at hand-back"],
+  ["## 28. Item 3 BUILT", "cards/code-bias/S2H-HARVEST.md", "S2H", "closed", "the S-consistent rx-CB harvest — built, validated through 3 h, and its 12 h tracking verdict"],
+  ["## 29. The EXT-CB campaign record", "cards/ionosphere/LV-EXTCB-CAMPAIGN.md", "EXT-CB arms 1–36", "closed", "the EXT-CB campaign record, arms 1–36 — root cause, the fix, and the L2-ESCAPE"],
+  ["## 30. CONTRACT", "cards/wire-contract/LEVEL-CONTRACT.md", "LV-3 contract", "closed", "the normative contract for the ionosphere LEVEL and receiver-DCB frame of the emitted products"],
+  ["## §31 The S2H 12 h tracking verdict", "cards/code-bias/S2H-HARVEST.md", "S2H", "closed", "the S-consistent rx-CB harvest — built, validated through 3 h, and its 12 h tracking verdict"]
+ ]
+}

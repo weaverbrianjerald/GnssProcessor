@@ -1,0 +1,11 @@
+{
+ "doc": "SPEC_prior_residual_census.md",
+ "topic": "raim-qc",
+ "title": "SPEC — prior-residual census (the stale-carry test, generalized off D5)",
+ "groups": [
+  ["__preamble__", "cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md", "prires census", "closed", "the prior-residual census — the binding precedent, INC-0..3, the wiring sites, the build record and the pointer-drift ledger"],
+  ["## 14. THE GLOBAL σ̂₀ RIDER", "cards/raim-qc/GLOBAL-SIGMA0-RIDER.md", "global σ̂₀ rider", "closed", "`network.prior_residual_global_sigma0` — three sums, one ratio, nothing acted on"],
+  ["## 16. Pointer-drift ledger", "cards/raim-qc/PRIOR-RESIDUAL-CENSUS.md", "prires census", "closed", "the prior-residual census — the binding precedent, INC-0..3, the wiring sites, the build record and the pointer-drift ledger"],
+  ["## 17. The RNEG re-partition", "cards/raim-qc/RNEG-REPARTITION.md", "RNEG", "closed", "the RNEG re-partition — what a `post_var > fold_var` row is, and the numerator card it leaves open"]
+ ]
+}
