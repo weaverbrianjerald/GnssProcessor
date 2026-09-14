@@ -7689,3 +7689,36 @@ the lane-preserving refloat SPEC_lane_slip_response owes) and the standing slip-
 and (b) < 0.3 ⇒ re-levels are exonerated and the representation card is pre-registered next; a rate > 1 per LOS per hour at the eight
 stations against < 0.3 elsewhere ⇒ the re-level rate is itself the bad-station signature (false slips on noisy code), and the detector's
 field thresholds are the card.
+
+**§24.19 GL-2 RESULTS (2026-09-14 ~12:00 local; worker commit `1d482b7`, merged; suite 2112 / 287 (0 failed); smokes OFF and ON `87a33bf0…`;
+`--verify` PASS; exe `7a1cb9bf…`; manager grade).**  `network.gross_los_sat_standdown` (+ `_sat_min_stations` 3, `_sat_wire_withhold`)
+invents nothing: on the over-bar station count it refuses / releases the per-LOS declarations and routes the satellite to the two
+consensus responses the producer already has (the retro disc bump via `ura_retro_sats` → `NetworkSolPrep` → `markSatDiscontinuity`; the
+per-satellite wire withhold via the `sol.sats` swap-prune), never an epoch withhold.  `runs/_gl2_on6` (6 h, 720/720): 20 stand-downs / 19
+releases over 313 epochs, 1 499 per-LOS declarations refused, 352 satellite-epochs pruned; G17 stood down at tow **271170 on 15 over-bar
+stations — one epoch BEFORE `_gl_on6`'s first per-LOS declaration** — and withheld from the wire from 271200.  **Bars FAIL:** station max
+19.8 / 17.5 / 25.4 m in hours 4–6 (worse than `_gl_on6`'s 5.4 / 5.9 / 6.8); consumer hour 4 **22.25 m** (bar ≤ 1.5); (ii) better in 4 of 6;
+availability identical; 3.33 stand-downs / hour on 9 satellites (> 2).  **What the failure actually is — §24.18's attribution was wrong:**
+the consumer steps to **55.77 m at tow 271170 identically in BOTH screen arms**, BEFORE any G17 declaration existed in `_gl_on6`; the emitted
+wire shows the producer's own **G17 clock jumping −0.81 → +15.92 m in one epoch with the discontinuity counter frozen at 3** (`emit_clock_disc`
+and `emit_clock_frame_hold` both armed), one epoch after the Q3 anchor re-coupled ten satellites (`cta_recouple … in_band=4` at 271140).
+G17 being 4–49 m out at fifteen stations was the SYMPTOM of the producer's own clock excursion — the screen read it correctly, GL-2
+classified it correctly, and the wire withhold is one epoch late because the emit seams run before SB_RAIM.  c10 (anchor on, screen off) has
+no excursion there: the step needs the screen's deweights (which change the code information feeding the shared clocks) AND the anchor's
+re-coupling, which discharged it into G17.  **Two defects, both above the screen:** (1) **an unsignalled 16.7 m satellite clock step reached
+the wire** — an M4 contract violation independent of its cause (the consumer must be TOLD; CLK-R's "613 → 1 wire discs" was measured on
+`carry_invariant`, and its emit-side detector is evidently blind to this step); (2) **the anchor's re-coupling edge is BARE** — invariant #7's
+re-coupling without re-validation, and the exact edge G4 was meant to grade: the guard fired, marked and re-coupled, and the re-coupling
+itself discharged.  GL / GL-2 stay BUILT, default OFF, not consumer-safe; the per-satellite emission policy waits on (1).
+
+**R10 (pre-registered, GL worker, existing runs `_cm_pvb`, `_cm_c8b`, `_cm_c10`, `_gl_on6`, `_gl2_on6`, `pvb6`, `g4a` / `g4b`): the wire's
+unsignalled steps — an M4 contract audit.**  Per satellite per epoch from the emitted products (`network_solution.csv` / `products.txt`):
+|Δclock| epoch-to-epoch (and |ΔPB| per signal) against the disc counters' increments; the count of steps > 0.5 / > 2 / > 10 m WITH and
+WITHOUT a signalled discontinuity, per arm and per hour; each unsignalled step > 2 m attributed to the nearest producer event within ± 2
+epochs (`cta_recouple` / `cta_decouple`, a phase-anchor election, a GROSSLOS row, a retro bump, a datum change, a refloat burst) with the
+consumer's 3D step at the same epoch; and the CLK-R emit-side detector's own view of each (which test it applies, from the code, cited, and
+why it did not fire on 271170).  **Frozen reading:** unsignalled steps > 2 m exist on an arm ⇒ the emit-side disc detector is defective on
+this vehicle — a field-blocking card independent of the screen, graded on the consumer's steps; > 50 % of them within ± 2 epochs of a
+`cta_recouple` ⇒ the anchor's re-coupling edge is the source and the anchor is NOT armable until its re-coupling marks a wire
+discontinuity (or re-validates the clock before re-engaging); none on `_cm_c10` and `pvb6` ⇒ the steps are screen-induced only and GL's
+deweight needs to feed the clocks' disc test.
