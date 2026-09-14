@@ -16,7 +16,7 @@ decomposition that keeps `ApplicationNetwork.cpp` and `RealTimeEngine.cpp` thin.
 - Debug perf numbers are artifacts (standing invariant #2).
 
 **Current posture (2026-09-14)** — the lane layer is OFF at both scales, on speed and on
-science; the re-founding's scope cut removes the lanes entirely for now.
+science; the scope cut in [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md) removes the lanes entirely for now.
 
 ## Cards, oldest first
 

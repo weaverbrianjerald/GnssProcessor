@@ -13,6 +13,9 @@ card was measured against it.
   `D:\GnssProcessor_archive\2026-08-12\runs\`; per the author those results are not
   trusted — regenerate rather than re-grade.
 
+**Current posture (2026-09-14)** — [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md) is the live program;
+everything here predates it and is provenance only.
+
 **The 2026-08-15 attic** — 43 handoffs, session reports and superseded specs, moved out of
 `docs/` on 2026-08-15 and kept unchanged:
 

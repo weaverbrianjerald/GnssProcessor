@@ -18,9 +18,9 @@ This is the record the goldens are generated from.
 - A verdict is only as good as its regime. "Helps" without a stated scale, bed and
   lineage is not a verdict.
 
-**Current posture (2026-09-14)** — the re-founding freezes an explicit posture rather than
-inheriting the armed set; the ledger remains the reference for what each knob was measured
-to do.
+**Current posture (2026-09-14)** — [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md) freezes an explicit posture
+rather than inheriting the armed set; the ledger remains the reference for what each knob
+was measured to do, and RF-0's config is the new baseline a promotion is graded against.
 
 ## Cards, oldest first
 

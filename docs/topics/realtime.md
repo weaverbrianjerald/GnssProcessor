@@ -18,8 +18,8 @@ reactions, and the service work queue.
 - The seam A/B certifies TRAVERSAL, not the reactions — re-run `scripts/rt_seam_verify.py`
   after touching a seam body.
 
-**Current posture (2026-09-14)** — unchanged by the re-founding, which is a producer
-program; the RT consumer inherits whatever the wire contract declares.
+**Current posture (2026-09-14)** — unchanged by [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md), which is a
+producer program; the RT consumer inherits whatever RF-3's wire contract declares.
 
 ## Cards, oldest first
 

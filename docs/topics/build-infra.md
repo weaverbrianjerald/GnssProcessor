@@ -17,8 +17,10 @@ the aiding-source abstraction, the datum-transformation reference and the docs t
 - Concurrent runs share `./logs/` — there is no config knob for it; use a renamed exe and
   a distinct run directory.
 
-**Current posture (2026-09-14)** — unchanged. The docs tooling
-(`scripts/docs_split.py`, `scripts/docs_index_check.py`) is new and lives here.
+**Current posture (2026-09-14)** — unchanged by [the network re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md), which is a
+producer program; what it needs from here is a clean Release build and the goldens.
+The docs tooling (`scripts/docs_split.py`, `scripts/docs_index_check.py`) is new and
+lives here.
 
 ## Cards, oldest first
 
