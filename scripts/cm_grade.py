@@ -73,6 +73,24 @@ ARM_KNOBS = {
             "relevel_free_epoch, gauge_project, the phase-datum family)",
             ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
              "phase-datum", "leveling", "inject", "do_amb_carry", "anchor", "EWL", "UWL", "lane"]),
+    # card CM2 (s24.12) — the s24.8 knob arms re-run on the LEVELING vehicle, control = pvb.
+    # Same knobs as a1..a7 / a10b, one per arm, on top of config/test_suite/_pv_b.json.
+    "b1": ("network.carry_rx_code_bias: false", ["carry_rx_code_bias", "rx-CB carry", "rx-CB", "receiver code-bias"]),
+    "b2": ("network.carry_zwd true + zwd_carry_q 1e-8 (diagonal B9 RW)", ["ZWD carry", "carry_zwd", "B9"]),
+    "b2b": ("network.carry_zwd true + zwd_carry_q 1e-7 (diagonal B9 RW)", ["ZWD carry", "carry_zwd", "B9"]),
+    "b3": ("network.cb_kaula_prior: false", ["Kaula", "kaula"]),
+    "b4": ("filter.process_noise.sat_code_bias_q: 1e-4", ["sat_code_bias_q", "sat_code_bias", "code-bias q", "code bias q"]),
+    "b5": ("network.estimate_iono_sh: false",
+           ["estimate_iono_sh", "SH-iono", "SH-VTEC", "SH health", "sh_health", "consume_network_iono", "Iono-2"]),
+    "b6": ("network.estimate_sat_code_bias: false + model_corrections.enable_code_phase_bias: true",
+           ["(W6)", "enable_code_phase_bias", "code_phase_bias", ".BIA", "OSB", "estimate_sat_biases",
+            "promote_sat_code_bias", "estimate_ifb"]),
+    "b7": ("estimation.global_vtec_sh.representation_sigma_tecu: 20", ["representation_sigma_tecu", "representativeness", "SH<->slant", "rep_error"]),
+    "b8": ("estimation.zwd_constraint enabled, sigma 0.2 m (getter read by the RT engine only)",
+           ["ZWD soft constraint", "zwd_constraint"]),
+    "b9": ("UNION of the s24.12 contributors (the knobs the grade named; see the arm's _cm2_arm note)",
+           ["carry_rx_code_bias", "carry_zwd", "ZWD carry", "Kaula", "sat_code_bias_q", "estimate_iono_sh",
+            "SH-VTEC", "enable_code_phase_bias", "representation_sigma_tecu", "zwd_constraint"]),
 }
 
 RUN_END = [
@@ -402,7 +420,7 @@ def attrib(armdir, tow0, k_lo, k_hi, force=False):
 
 
 # ------------------------------------------------------------------ per arm
-def grade_arm(arm, armdir, a, ref_cfg_lines=None):
+def grade_arm(arm, armdir, a, ref_cfg_lines=None, ctl="a0"):
     base_arm = arm.split("_")[0]          # "a0_nozwd" grades as a0 (the trace_zwd byte-identity twin)
     R = dict(arm=arm, knob=ARM_KNOBS.get(base_arm, (arm, []))[0], dir=armdir)
     t_lo = a.tow0 + 30.0 * (a.k_lo - 1)
@@ -437,8 +455,8 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None):
             if tok in l and short(l) not in V["knob_lines"]:
                 V["knob_lines"].append(short(l))
     V["knob_lines"] = V["knob_lines"][:12]
-    if ref_cfg_lines is not None and arm != "a0":
-        only_n, only_0 = config_log_diff(ref_cfg_lines, cfg, "a0", arm)
+    if ref_cfg_lines is not None and arm != ctl:
+        only_n, only_0 = config_log_diff(ref_cfg_lines, cfg, ctl, arm)
         V["cfg_only_in_arm"] = [short(l) for l in only_n][:20]
         V["cfg_only_in_a0"] = [short(l) for l in only_0][:20]
     R["verify"] = V
@@ -500,7 +518,7 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None):
 
 
 # ------------------------------------------------------------------ report
-def bars(R, R0):
+def bars(R, R0, ctl="A0"):
     i = R.get("i") or {}
     ii = R.get("ii") or {}
     iii = R.get("iii") or {}
@@ -520,7 +538,7 @@ def bars(R, R0):
         avail_ok = av["frac"] >= av0["frac"] - 0.05
     names = all(passes.values())
     contributor = any(halved.values())
-    label = "NAMES (all three bars)" if names else ("contributor (a bar halved vs A0)" if contributor else "exonerated (no bar moved)")
+    label = "NAMES (all three bars)" if names else (f"contributor (a bar halved vs {ctl})" if contributor else "exonerated (no bar moved)")
     if b1 is None and b3 is None:
         label = "NOT GRADABLE (no code pool and no wire in the hour)"
     if R is not R0:
@@ -530,15 +548,17 @@ def bars(R, R0):
     if R is R0:
         label = "control"
     if avail_ok is False:
-        label += " — AVAILABILITY FELL > 5 % vs A0 (a pass by withholding is not a pass)"
+        label += f" — AVAILABILITY FELL > 5 % vs {ctl} (a pass by withholding is not a pass)"
     return dict(passes=passes, halved=halved, avail_ok=avail_ok, label=label)
 
 
-def print_report(results, a):
+def print_report(results, a, ctl="a0"):
     order = [r["arm"] for r in results]
-    R0 = results[0]
+    R0 = next((r for r in results if r["arm"] == ctl), results[0])
+    CTL = R0["arm"].upper()
     print("\n" + "=" * 118)
-    print(f"CARD CM — six cold 2 h arms, LAST HOUR k = {a.k_lo}..{a.k_hi} (tow {a.tow0 + 30 * (a.k_lo - 1):.0f}..{a.tow0 + 30 * (a.k_hi - 1):.0f})")
+    print(f"CARD CM — cold 2 h arms, LAST HOUR k = {a.k_lo}..{a.k_hi} (tow {a.tow0 + 30 * (a.k_lo - 1):.0f}..{a.tow0 + 30 * (a.k_hi - 1):.0f})"
+          f"; CONTROL = {R0['arm']} (every 'halved' / availability label is relative to it)")
     print("=" * 118)
     for R in results:
         print(f"\n--- {R['arm']}: {R['knob']}   [{R['dir']}]  exit {R['exit']}  wall {fmt(R['wall_s'], 0)} s")
@@ -558,7 +578,7 @@ def print_report(results, a):
             print(f"  gnss_config.log lines only in this arm ({len(V['cfg_only_in_arm'])}):")
             for l in V["cfg_only_in_arm"]:
                 print(f"    + {l}")
-            print(f"  gnss_config.log lines only in a0 ({len(V['cfg_only_in_a0'])}):")
+            print(f"  gnss_config.log lines only in {R0['arm']} ({len(V['cfg_only_in_a0'])}):")
             for l in V["cfg_only_in_a0"]:
                 print(f"    - {l}")
         av = R.get("avail")
@@ -622,15 +642,15 @@ def print_report(results, a):
                   f" between/common {fmt(t['between_over_common'])} vs pure-dispersive {fmt(t['pure_dispersive_ratio'])}; 3-signal γ share {fmt(t['gamma_share_3'], 2)});"
                   f" (sta,sig) constants {fmt(t['sta_sig_const'], 1)} %, (sat,sig) {fmt(t['sat_sig_const'], 1)} %, nested LOS signal-common {fmt(t['los_common_nested'], 1)} %; A2 best row: {t['a2_best']} at {fmt(t['a2_best_share'], 1)} %"
                   f"; phase pooled rms {fmt(t['phase_pooled_rms'], 4)} m; per-signal code rms {{{', '.join(f'{k} {fmt(v, 2)}' for k, v in sorted(t['per_signal'].items()))}}}")
-        B = bars(R, R0)
+        B = bars(R, R0, CTL)
         R["bars"] = B
         print(f"  BARS: (i) p50<1.0 {'PASS' if B['passes']['i'] else 'fail'} | (ii) zero>0.5 {'PASS' if B['passes']['ii'] else 'fail'} | (iii) D_phase<0.5 {'PASS' if B['passes']['iii'] else 'fail'}"
-              + ("" if R is R0 else f" | halved vs A0: {[k for k, v in B['halved'].items() if v] or 'none'} | availability ok: {B['avail_ok']}")
+              + ("" if R is R0 else f" | halved vs {CTL}: {[k for k, v in B['halved'].items() if v] or 'none'} | availability ok: {B['avail_ok']}")
               + f"  =>  {B['label']}")
 
     # -- the six-row table
     print("\n" + "-" * 118)
-    print("SIX-ROW TABLE (last hour): (i) code rms p50/p90/max m | (ii) #sta |ZWD|>0.5 (worst 3) | (iii) D_phase / D_code declared within-arc rms, clk LEVEL p50 m | (iv) LOS-mean SS share %, nested dispersive % | (v) emitted/synced, withheld")
+    print(f"PER-ARM TABLE (last hour, control {R0['arm']}): (i) code rms p50/p90/max m | (ii) #sta |ZWD|>0.5 (worst 3) | (iii) D_phase / D_code declared within-arc rms, clk LEVEL p50 m | (iv) LOS-mean SS share %, nested dispersive % | (v) emitted/synced, withheld")
     print("-" * 118)
     print(f"{'arm':4s} {'knob':52s} {'(i) p50/p90/max':>19s} {'(ii) n>0.5 (worst)':>28s} {'(iii) Dph/Dcd/clk':>20s} {'(iv) lvl%/disp%':>15s} {'(v) avail':>16s}  verdict")
     for R in results:
@@ -660,25 +680,40 @@ def main():
     ap.add_argument("--skip-census", action="store_true")
     ap.add_argument("--skip-attrib", action="store_true")
     ap.add_argument("--force", action="store_true", help="re-run the census / attrib even if their outputs exist")
+    ap.add_argument("--control", default="",
+                    help="the arm every 'halved' / availability / gnss_config.log-diff label is relative to "
+                         "(card CM2: 'pvb').  Default '' keeps the historical behaviour exactly: the reference "
+                         "is a0 when a0 is among --arms, otherwise the first graded arm and no config-log diff.")
     ap.add_argument("--json", default="")
     a = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     arms = [s for s in a.arms.split(",") if s]
+    # the control arm: --control if given, else a0 (the s24.8 card's control) — unchanged behaviour
+    ctl = a.control or "a0"
+    ctl_dir = os.path.join(a.runs, f"{a.prefix}{ctl}")
+    if a.control and not os.path.isdir(ctl_dir):
+        sys.exit(f"--control {ctl}: {ctl_dir} missing")
+    if a.control and ctl not in arms:
+        sys.exit(f"--control {ctl} must also be listed in --arms (it is graded as the control row)")
     results = []
     ref_cfg = None
+    if a.control:
+        # pre-read so an arm listed BEFORE the control still gets its config-log diff (with no
+        # --control the reference is picked up lazily inside the loop, exactly as before)
+        ref_cfg = read_lines(os.path.join(ctl_dir, "logs", "gnss_config.log"))
     for arm in arms:
         armdir = os.path.join(a.runs, f"{a.prefix}{arm}")
         if not os.path.isdir(armdir):
             print(f"!! {armdir} missing — skipped")
             continue
-        if arm.split("_")[0] == "a0" and ref_cfg is None:
+        if arm.split("_")[0] == ctl.split("_")[0] and ref_cfg is None:
             ref_cfg = read_lines(os.path.join(armdir, "logs", "gnss_config.log"))
         print(f"grading {arm} ({armdir}) …", flush=True)
-        results.append(grade_arm(arm, armdir, a, ref_cfg))
+        results.append(grade_arm(arm, armdir, a, ref_cfg, ctl))
     if not results:
         sys.exit("nothing graded")
-    print_report(results, a)
+    print_report(results, a, ctl)
     if a.json:
         def conv(o):
             if isinstance(o, (np.floating,)):
