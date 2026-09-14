@@ -74,6 +74,34 @@ C0_EXTRA = [("network.cb_kaula_prior", False),
             ("network.clock_datum_broadcast_anchored", False),
             ("network.emit_pb_filter_jump_k", 4.0)]
 
+# ---------------------------------------------------------------- s24.16 (card Q3-F)
+# The SIM golden's guarded temporal clock anchor, transplanted VERBATIM onto the field bed.
+# The literals are READ OUT of config/golden/golden_sim_tri_w6.json rather than retyped, so the
+# transplant cannot drift from the posture it claims to copy; SIM_CTA_KEYS pins the expected set
+# (12 leaves: `clock_temporal_anchor` + eleven `clock_anchor_*`) and the loader is the final check
+# — `Network producer (Card Q3): GUARDED TEMPORAL CLOCK ANCHOR ON` plus the run-end counter line,
+# which reads `folded_anchored = 0` / `the anchor folded ZERO anchored rows` if the guard is silent.
+# `clock_datum_station` is deliberately NOT transplanted: it is the sim's own station roster.
+SIM_GOLDEN = os.path.join(REPO, "config", "golden", "golden_sim_tri_w6.json")
+SIM_CTA_KEYS = ("clock_temporal_anchor", "clock_anchor_q", "clock_anchor_max_gap_s", "clock_anchor_k",
+                "clock_anchor_abs_m", "clock_anchor_recouple_epochs", "clock_anchor_mark",
+                "clock_anchor_resolve", "clock_anchor_var_floor_m2", "clock_anchor_sigma_floor_m",
+                "clock_anchor_gauge_free", "clock_anchor_gauge_free_stat")
+
+
+def _sim_cta():
+    with open(SIM_GOLDEN, encoding="utf-8") as fh:
+        net = json.load(fh).get("network", {})
+    missing = [k for k in SIM_CTA_KEYS if k not in net]
+    if missing:
+        sys.exit(f"{SIM_GOLDEN}: clock-anchor key(s) absent: {missing}")
+    return [(f"network.{k}", net[k]) for k in SIM_CTA_KEYS]
+
+
+C8 = _sim_cta()
+C8B = [(k, 2.9e-8 if k == "network.clock_anchor_q" else v) for k, v in C8]
+C8C = C8 + C3          # the sim anchor PLUS c3's external a-priori pin
+
 # arm -> (description, [(dotted json path, value), ...], base override or "")
 ARMS = {
     "c1": ("CODE OSB, correctly specified: external_sat_code_bias + estimate_sat_code_bias off + "
@@ -99,6 +127,11 @@ ARMS = {
            "observation the elevation mask admits", [("estimation.ionosphere_weighting.elevation_cutoff_deg", 15.0)], ""),
     "c7b": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 25.0 -> 20.0 — the same, halfway",
             [("estimation.ionosphere_weighting.elevation_cutoff_deg", 20.0)], ""),
+    "c8": ("the SIM golden's guarded temporal clock anchor (Card Q3), transplanted verbatim from "
+           "config/golden/golden_sim_tri_w6.json — 12 leaves, q 3e-6", C8, ""),
+    "c8b": ("the same anchor at the Q3 physical q: clock_anchor_q 3e-6 -> 2.9e-8", C8B, ""),
+    "c8c": ("the same anchor (q 3e-6) PLUS c3's external pin apriori_clock_anchor_sigma_m 0.02 — the "
+            "temporal anchor and the a-priori anchor together", C8C, ""),
     "pva2": ("PV-A re-run 2 h on the post-ZP exe (config/test_suite/_pv_a.json unchanged; only the two "
              "run paths move) so its (i) / (iv) read on the same last-hour window",
              [], os.path.join(REPO, "config", "test_suite", "_pv_a.json")),
@@ -142,7 +175,7 @@ def main():
     ap.add_argument("--base", default=os.path.join(REPO, "config", "test_suite", "_pv_b.json"))
     ap.add_argument("--runs", default="C:/GnssProcessor/runs")
     ap.add_argument("--prefix", default="_cm_")
-    ap.add_argument("--arms", default="c0,c1,c2,c3,c4,c5,c6,c7,c7b,pva2")
+    ap.add_argument("--arms", default="c0,c1,c2,c3,c4,c5,c6,c7,c7b,c8,c8b,c8c,pva2")
     ap.add_argument("--out-dir", default="", help="also write <arm>.json here (default: run dir only)")
     ap.add_argument("--force", action="store_true", help="overwrite an existing arm.json")
     a = ap.parse_args()

@@ -120,6 +120,17 @@ ARM_KNOBS = {
            ["ionosphere weighting", "elevation_cutoff", "elevation cutoff", "iono_dw_admit", "deweight"]),
     "c7b": ("estimation.ionosphere_weighting.elevation_cutoff_deg: 20.0",
             ["ionosphere weighting", "elevation_cutoff", "elevation cutoff", "iono_dw_admit", "deweight"]),
+    # s24.16 (card Q3-F) — the SIM golden's guarded temporal clock anchor transplanted onto the field bed.
+    # NB the run-end counter line ("Network (Card Q3 / guarded temporal clock anchor): ... ANCHORED at q =
+    # ... Trips ... re-coupling edge(s), ... wire mark(s) queued") is the ON-path evidence, not the config
+    # line: `folded_anchored = 0` means the guard never bound a row and the arm is INERT (invariant #4).
+    "c8": ("network.clock_temporal_anchor + the sim golden's 11 clock_anchor_* leaves (q 3e-6)",
+           ["Card Q3", "clock_temporal_anchor", "clock_anchor", "TEMPORAL CLOCK ANCHOR", "gauge-free"]),
+    "c8b": ("the same anchor at clock_anchor_q 2.9e-8 (the Q3 physical q)",
+            ["Card Q3", "clock_temporal_anchor", "clock_anchor", "TEMPORAL CLOCK ANCHOR", "gauge-free"]),
+    "c8c": ("the same anchor (q 3e-6) + network.apriori_clock_anchor_sigma_m 0.02 (c3's external pin)",
+            ["Card Q3", "clock_temporal_anchor", "clock_anchor", "TEMPORAL CLOCK ANCHOR", "gauge-free",
+             "apriori_clock_anchor", "a-priori clock"]),
     "pva2": ("PV-A re-run 2 h on the post-ZP exe (config/test_suite/_pv_a.json, paths only) — its (i) / (iv) "
              "now readable on the same last-hour window",
              ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
