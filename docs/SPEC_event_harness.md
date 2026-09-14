@@ -7461,3 +7461,53 @@ what card Q3-F (§24.16, the temporal clock anchor at q 3e-6 and 2.9e-8) is runn
 the clock's; if it stays, it lives in the phase-bias / level channel and the next read targets that state's process noise and carry.
 The anchor-election defects of R5 / R6 (coverage-only rule, split-referencing families, newborn low anchors) remain OWED cards on their own
 evidence, off the bars.
+
+**§24.16 RESULTS (2026-09-14 ~05:45 local; worker commit `6282c55`, merged 95caa8e; exe `4CD7D664…`; manager grade).**  The sim golden's
+12-key clock-anchor family transplants without a refusal and is LIVE on the field (run-end: 7064–7092 ANCHORED folds of 7327, 28–35 trips
+split across the `nis` detector and one `gap` staleness trip, 59–66 re-coupling edges, 28–35 wire marks; at q 2.9e-8 the variance floor
+binds on 4575 of 7064 folds — c8b runs at the floor, not its nominal q).  All three arms cold, 240/242, 0 withheld, vehicle lines = PV-B.
+
+| arm | (i) code rms p50 / p90 / max m | (ii) n (worst) | (iii) D_phase / D_code / clock LEVEL m | level p99 below / above 25° | consumer p50 tail (at 2 h) |
+|---|---|---|---|---|---|
+| PV-B | 1.79 / 3.28 / 7.08 | 13 | 0.95 / 0.13 / 0.74 | 6.34 / 3.29 | 1.187 (0.546) |
+| c3 external pin σ 0.02 | 1.08 / 1.97 / 2.86 | 7 | 0.82 / 0.12 / 0.04 | 2.58 / 2.02 | 1.343 (0.744) |
+| c8 Q3 q 3e-6 | 1.71 / 3.34 / 5.17 | 13 (GUAM +2.5, GOPE +1.9, GRAZ +1.1) | 0.90 / 0.11 / 0.58 | 3.40 / 3.21 | 1.847 (1.719) |
+| **c8b Q3 q 2.9e-8** | **1.09 / 2.12 / 3.46** | **8** (GOPE +2.1, GRAZ +1.2, LCK4 +0.9) | 0.87 / 0.10 / 0.60 | 2.42 / 2.18 | **0.954 (0.188)** |
+| c8c Q3 + pin | 1.07 / 1.96 / 2.82 | 7 (GOPE +1.9, GRAZ +1.1, BOGT −1.0) | **0.78** / 0.11 / 0.04 | 2.58 / 2.04 | 1.484 (0.891) |
+
+**Grade against §24.16's frozen thresholds ((i) ≤ 1.2 m, station max ≤ 3.5 m, (ii) ≤ 8): c8b PASSES all three (1.09 / 3.46 / 8), c8c passes
+(1.07 / 2.82 / 7), c8 fails all three (1.71 / 5.17 / 13).**  The first frozen reading applies: **the free per-epoch satellite clock IS the
+second code-side contributor, and the guarded temporal clock anchor at the PHYSICAL floor is its self-contained fix** — it reproduces the
+external pin's code side to 0.01 m on (i) and 0.16 m on the level p99, gives the best consumer tail of the whole campaign (0.954 m
+settled, 0.19 m at the 2 h mark), and is neutral-to-better on every σ̂₀ instrument (block-Baarda 1.375 → 1.165, prires rxcb 1.086 →
+0.869).  The sim's own q (3e-6) does NOT transfer: the field clock needs the floor, two orders tighter, and at 3e-6 the instruments get
+louder (prires cb 3.12 → 3.70).  c8c shows the two anchors are complementary, not additive (+0.02 on (i), +1 station, D_phase 0.87 →
+0.78 with the LEVEL contrast collapsed to 0.04) at the consumer's expense (0.954 → 1.484).  **The wire's within-arc random walk (R7) is NOT
+the clock's** — D_phase moves 0.95 → 0.87 only — so it lives in the phase-bias / level channel, the one channel this campaign has not
+opened; it is the remaining lever between 0.87 m and the 0.5 m bar.  Under §24.8's absolute bars nothing crosses yet ((i) 1.09 vs 1.0,
+(ii) 8 vs 0, (iii) 0.87 vs 0.5).
+
+### 24.17 The posture decision, and the closing legs (pre-registered before any is read)
+
+**The field posture this campaign names** — every step measured against its control on the same 2 h cold bed: the field golden's
+`carry_invariant` vehicle → the leveling vehicle with the sim's gauge projection and phase-datum family (PV-B: consumer 7.80 → 1.19 m, the
+station block full-rank, ZWD physical at 48 of 61 stations) → plus the guarded temporal clock anchor at the physical floor (c8b: code rms
+1.79 → 1.09 m, unphysical ZWDs 13 → 8, consumer 0.95 m).  The exact delta from `golden_field_gps_dual` is the 16 vehicle keys of §24.11 +
+the 12 Q3 keys with `clock_anchor_q: 2.9e-8`.  **It is a posture change of the field vehicle** — goldens, harness seeds (v5–v9 are all
+carry_invariant), the RS-8/9/10 seam mechanisms, the RAIM re-host, the lanes and every level-channel number re-base with it — **and
+its arming is the author's call, prepared here, not taken**: the manifest / ledger rows are written on the author's go, through the
+generator with `--verify`.  Before that go, three legs close what the standing rules require of any stiff time-link (invariant #1) and
+of any posture claim (the 2 h level budget):
+- **The stack (2 h, base c8b's config):** **c9** = + `network.carry_zwd: true`, `zwd_carry_q: 1e-7` (§24.12's b2b — physical, no longer
+  diverging, the best consumer of that card); **c9b** = c9 + `network.carry_rx_code_bias: false` (b1 — D_phase 0.95 → 0.83 there).  Bars:
+  §24.8's, vs c8b as the control (1.09 / 8 / 0.87 / consumer 0.954); a knob that moves the consumer's settled p50 by more than 0.15 m or
+  any bar by 20 % in either direction is reported as such; the stack winner is the posture candidate.
+- **The 6 h twin:** the stack winner (or c8b) and PV-B, 6 h cold from the same start, graded hour by hour on (i), (ii), (iii) and the
+  consumer's per-hour p50 — the level channel's ~2 h budget means the 2 h numbers above are ignition; the twin says whether they hold,
+  improve, or drift (SPEC_level_information_budget §14's trap).  Frozen: hours 3–6 not worse than hour 2 on any bar ⇒ the posture holds;
+  a drift ⇒ its rate and the channel it lives in are the finding.
+- **G4 — the DOY-129 20:47 event-window replay** (SPEC_clock_temporal_anchor §4, invariant #1's actual bar for the anchor): the stack
+  winner's posture run SEAMLESSLY from 15:00 (the half-epoch back-off on `start_offset_hours`) through 21:30, and PV-B over the same window
+  as the no-anchor control; PASS = the guard FIRES at the event with marks at the decoupling edge, a `cta_recouple` at the re-coupling edge,
+  and the epochs EMITTING (adapt-and-emit, not withhold), with the wire and the consumer through the event not worse than the control's;
+  "quiet-day cleanliness alone does not pass".  FAIL ⇒ the anchor stays OFF on the field and the posture card ships the vehicle alone.
