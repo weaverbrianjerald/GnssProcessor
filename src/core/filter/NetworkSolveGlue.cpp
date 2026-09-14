@@ -317,6 +317,18 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     if (cbd.H.rows() > 0) {
         est.attribTag("w6_cb_gauge");
         est.addSharedConstraintRows(cbd.H, cbd.z, NetworkSbasis::kCodeBiasGaugeWeight);
+        // RF-0b ON-path telemetry.  In the no-constraint posture these rows are not a
+        // gauge ALONGSIDE an ionosphere constraint, they are the ENTIRE satellite
+        // code-bias datum, so the run has to be able to say how many epochs actually
+        // folded them and how many channel levels they pinned (standing invariant #4:
+        // "0 folded" is what inert wiring looks like, and the log alone cannot tell
+        // that from a healthy run).
+        if (config_.getNetworkConfig().w6_iono_constraint
+            == NetworkW6IonoConstraint::None) {
+            ++ctx.counters.n_w6_iono_none_epochs;
+            ctx.counters.n_w6_iono_none_s2z_rows +=
+                static_cast<std::size_t>(cbd.n_s2z_channels);
+        }
         if (within_epoch_armed) {
             cap_H = cbd.H; cap_z = cbd.z;
             cap_constraint_weight = NetworkSbasis::kCodeBiasGaugeWeight;
@@ -356,9 +368,17 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         }
     }
     if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
-        log->warn("Network[W6-cb]: nshared={}, n_cb={}, folded {} code-bias gauge "
+        log->warn("Network[W6-cb]{}: nshared={}, n_cb={}, folded {} code-bias gauge "
                   "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels"
                   "{}{})",
+                  // RF-0b: in the no-constraint posture these rows are the WHOLE
+                  // satellite code-bias datum, not a gauge beside an ionosphere
+                  // constraint.  Naming the posture on the line that reports the row
+                  // count is what lets a first-N read of any log say which datum
+                  // produced the product it is looking at.
+                  config_.getNetworkConfig().w6_iono_constraint
+                          == NetworkW6IonoConstraint::None
+                      ? "[iono-none]" : "",
                   est.numShared(), n_cb, cbd.H.rows(), cbd.n_if_pin_sats,
                   cbd.n_s2z_channels,
                   cbd.n_gf_pin_sats > 0

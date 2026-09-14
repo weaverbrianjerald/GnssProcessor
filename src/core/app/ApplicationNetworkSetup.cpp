@@ -426,6 +426,31 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "MODERNIZED DCB from the third frequency onward; the geometry-free lump "
                   "is absorbed by the ionosphere, so the emitted ionosphere and code biases "
                   "must be applied by a consumer AS A PAIR.");
+    } else if (config_.estimateNetworkSatCodeBias()
+               && config_.getNetworkConfig().w6_iono_constraint
+                      == NetworkW6IonoConstraint::None) {
+        // RF-0b (docs/refound/RF-0_baseline_2026-09-14.md Finding 2): the SELF-CONTAINED
+        // W6 posture.  Same "no ionosphere constraint" shape as the slant branch above,
+        // and deliberately a SEPARATE branch rather than a widened condition on it,
+        // because the two differ in the one thing that matters — the satellite code-bias
+        // DATUM.  The slant branch pins each satellite's geometry-free bias to zero
+        // (estimable content only from the third frequency); this one leaves it free and
+        // lets the per-(constellation, signal) sum-to-zero rows realize the IGS
+        // convention, which is what makes the posture reachable under
+        // processing.frequency_mode = dual, where the GF pin is refused at load.
+        //
+        // No GIM is loaded and there is no hard error: that is the whole point of the
+        // card.  `gim_` stays null, so networkAppendGimIonoRows_ returns immediately and
+        // the per-LOS slant ionosphere floats on its own — and the loader has already
+        // forced estimation.ionosphere_weighting off, so neither half can be half-armed.
+        log->info("Network (W6/no-constraint, RF-0b): NO ionosphere constraint and NO external "
+                  "GIM — free per-LOS slant delays, with the satellite code-bias datum carried "
+                  "by the per-satellite ionosphere-free pin plus the per-(constellation, signal) "
+                  "SUM-TO-ZERO rows (IGS Sum_s DCB^s = 0).  The geometry-free lump is absorbed "
+                  "by the ionosphere, so the emitted ionosphere and code biases must be applied "
+                  "by a consumer AS A PAIR.  The between-satellite geometry-free split is "
+                  "PRIOR-determined here, not data-determined: check the null-space gate's "
+                  "observed-vs-declared and the run-end W6-IONO-NONE counter.");
     } else if (config_.estimateNetworkSatCodeBias()) {
         // Card 5 belt-and-braces: the external-GIM code-bias path is post-processing-only
         // (a GIM is a daily product, unavailable in the self-sufficient brdc_rts service).
