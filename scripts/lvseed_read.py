@@ -1091,6 +1091,481 @@ def fmt_r4(res):
 
 
 # --------------------------------------------------------------------------- #
+# R5 — SPEC_event_harness §24.15: is the DJIG/G06 outlier a wire defect or a record?
+# --------------------------------------------------------------------------- #
+def _census_series(project, arm, t_lo, t_hi, drop_sat=None):
+    """The census's own de-medianed D series for one arm and window.
+
+    `drop_sat` removes that satellite BEFORE the common mode is formed, so the
+    per-epoch median is re-taken over the remaining satellites — the honest
+    counterfactual beside the cheaper "drop it from the pool only".
+    """
+    import wire_vs_code_census as wc
+    clk_paths, bia, doy_key, _ = wc.resolve_code_products(
+        os.path.join(arm_dir(project, arm), "seed.json"))
+    if not clk_paths or not bia:
+        raise SystemExit("CODE products not found (seed.json paths)")
+    clk, _n = wc.parse_clk(clk_paths)
+    osb, _s = wc.parse_bia(bia, doy_key)
+    epochs, _meta = wc.parse_products(os.path.join(arm_dir(project, arm), "products.txt"))
+    raw, disc, ev, cnt, _miss, _nc, tows = wc.collect_raw(epochs, clk, osb, t_lo, t_hi)
+    if drop_sat:
+        for kind in raw:
+            for key in [k for k in raw[kind]
+                        if (k[0] if isinstance(k, tuple) else k) == drop_sat]:
+                raw[kind].pop(key)
+    out = {}
+    for kind in ("phase", "code", "clk"):
+        cm = wc.common_mode(raw[kind], tows, "median")
+        out[kind] = wc.demean(raw[kind], disc[kind], cm)
+    return out, ev, cnt
+
+
+def _pool_within_arc(series, ev, sat_filter=None, step=0.25, min_n=2):
+    """Declared-arc within-arc residuals (the (iii) statistic) -> (rms, n, per-sat)."""
+    import wire_vs_code_census as wc
+    pool, per_sat = [], defaultdict(list)
+    for key, ser in series.items():
+        sat = key[0] if isinstance(key, tuple) else key
+        if sat_filter is not None and sat != sat_filter:
+            continue
+        for arc in wc.split_arcs(ser, ev.get(sat, {}), declared=True):
+            if len(arc) < min_n:
+                continue
+            d = np.array([ser[i][1] for i in arc], float)
+            r = d - d.mean()
+            pool.extend(r.tolist())
+            per_sat[sat].extend(r.tolist())
+    a = np.asarray(pool, float)
+    rms = float(np.sqrt(np.mean(a * a))) if a.size else float("nan")
+    return rms, int(a.size), {s: (float(np.sqrt(np.mean(np.square(v)))), len(v))
+                              for s, v in per_sat.items()}
+
+
+def _pool_level(series, sat_filter=None):
+    """p50 / p95 of |de-medianed value| — the between-satellite LEVEL (level_table)."""
+    pool, per_sat = [], defaultdict(list)
+    for key, ser in series.items():
+        sat = key[0] if isinstance(key, tuple) else key
+        if sat_filter is not None and sat != sat_filter:
+            continue
+        for (_t, d, _disc) in ser:
+            pool.append(abs(d))
+            per_sat[sat].append(abs(d))
+    return (q(pool, .5), q(pool, .95), len(pool),
+            {s: (q(v, .5), len(v)) for s, v in per_sat.items()})
+
+
+def read_r5a(project, arms, sat="G06", t_lo=262800.0, t_hi=266370.0):
+    out = {}
+    for arm in arms:
+        ser, ev, cnt = _census_series(project, arm, t_lo, t_hi)
+        ser_re, ev_re, _ = _census_series(project, arm, t_lo, t_hi, drop_sat=sat)
+        A = dict(window=[t_lo, t_hi], sat=sat)
+        for kind in ("phase", "code"):
+            rms_all, n_all, per = _pool_within_arc(ser[kind], ev)
+            rms_sat, n_sat, _ = _pool_within_arc(ser[kind], ev, sat_filter=sat)
+            keep = {k: v for k, v in ser[kind].items()
+                    if (k[0] if isinstance(k, tuple) else k) != sat}
+            rms_ex, n_ex, _ = _pool_within_arc(keep, ev)
+            rms_re, n_re, _ = _pool_within_arc(ser_re[kind], ev_re)
+            # share of the pooled SUM OF SQUARES the satellite carries
+            ss_all = rms_all ** 2 * n_all
+            ss_sat = rms_sat ** 2 * n_sat if n_sat else 0.0
+            A[f"D_{kind}"] = dict(
+                rms_all=rms_all, n_all=n_all,
+                rms_sat_only=rms_sat, n_sat=n_sat,
+                rms_excl_pool_only=rms_ex, n_excl=n_ex,
+                rms_excl_cm_recomputed=rms_re, n_excl_cm=n_re,
+                share_of_sumsq=float(ss_sat / ss_all) if ss_all > 0 else float("nan"),
+                share_of_rows=float(n_sat / n_all) if n_all else float("nan"),
+                per_sat={k: dict(rms=v[0], n=v[1]) for k, v in sorted(
+                    per.items(), key=lambda kv: -kv[1][0])})
+        p50, p95, n, per = _pool_level(ser["clk"])
+        p50s, _p95s, ns, _ = _pool_level(ser["clk"], sat_filter=sat)
+        keep = {k: v for k, v in ser["clk"].items()
+                if (k[0] if isinstance(k, tuple) else k) != sat}
+        p50e, p95e, ne, _ = _pool_level(keep)
+        p50r, p95r, nr, _ = _pool_level(ser_re["clk"])
+        A["clk_LEVEL"] = dict(p50_all=p50, p95_all=p95, n_all=n,
+                              p50_sat_only=p50s, n_sat=ns,
+                              p50_excl_pool_only=p50e, p95_excl_pool_only=p95e, n_excl=ne,
+                              p50_excl_cm_recomputed=p50r, p95_excl_cm_recomputed=p95r,
+                              n_excl_cm=nr,
+                              per_sat={k: dict(p50=v[0], n=v[1]) for k, v in sorted(
+                                  per.items(), key=lambda kv: -kv[1][0])})
+        out[arm] = A
+    return out
+
+
+def _scan_csv(path, pred, limit=400):
+    """Return (header, [matching raw lines]) — quoted verbatim in the report."""
+    if not os.path.isfile(path):
+        return None, []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        hdr = fh.readline().rstrip("\n")
+        cols = hdr.split(",")
+        hits = []
+        for line in fh:
+            f = line.rstrip("\n").split(",")
+            try:
+                if pred(dict(zip(cols, f)), f) and len(hits) < limit:
+                    hits.append(line.rstrip("\n"))
+            except Exception:
+                continue
+    return hdr, hits
+
+
+def read_r5b(project, arms, station="DJIG00DJI", sat="G06", k_lo=210, k_hi=240):
+    t_lo, t_hi = TOW0 + DT_S * (k_lo - 1), TOW0 + DT_S * (k_hi - 1)
+    out = {}
+    for arm in arms:
+        logs = os.path.join(arm_dir(project, arm), "logs")
+        R = dict(window_tow=[t_lo, t_hi], window_k=[k_lo, k_hi],
+                 station=station, sat=sat)
+
+        def inwin(d):
+            t = float(d["tow"])
+            return t_lo - 1e-3 <= t <= t_hi + 1e-3
+
+        hdr, hits = _scan_csv(os.path.join(logs, "network_events.csv"),
+                              lambda d, f: inwin(d) and d.get("sat") == sat
+                              and d.get("station") == station)
+        R["events_sat_station"] = dict(header=hdr, lines=hits)
+        _h, hits2 = _scan_csv(os.path.join(logs, "network_events.csv"),
+                              lambda d, f: inwin(d) and d.get("sat") == sat)
+        R["events_sat_any_station"] = dict(n=len(hits2), tiers=dict(
+            (t, sum(1 for l in hits2 if l.split(",")[2] == t))
+            for t in sorted({l.split(",")[2] for l in hits2})))
+        hdr, hits = _scan_csv(os.path.join(logs, "network_raim.csv"),
+                              lambda d, f: inwin(d) and (d.get("sat") == sat
+                                                         or d.get("station") == station))
+        R["raim"] = dict(header=hdr, lines=hits, n=len(hits))
+        hdr, hits = _scan_csv(os.path.join(logs, "network_raim_attrib.csv"),
+                              lambda d, f: inwin(d) and d.get("entity") in (sat, station))
+        R["raim_attrib"] = dict(header=hdr, lines=hits, n=len(hits))
+        # the whole-run counts, so "nothing in the window" can be read against
+        # "the screen ran at all"
+        _h, allraim = _scan_csv(os.path.join(logs, "network_raim.csv"),
+                                lambda d, f: True, limit=10 ** 7)
+        R["raim_run_total_rows"] = len(allraim)
+        R["raim_run_rows_this_sat"] = sum(1 for l in allraim if l.split(",")[2] == sat)
+        R["raim_run_rows_this_station"] = sum(1 for l in allraim if l.split(",")[3] == station)
+        _h, allev = _scan_csv(os.path.join(logs, "network_events.csv"),
+                              lambda d, f: d.get("sat") == sat and d.get("station") == station,
+                              limit=10 ** 7)
+        R["events_sat_station_whole_run"] = allev
+        # epoch dispositions over the window (withhold / sigma0 / adapt)
+        hdr, hits = _scan_csv(os.path.join(logs, "network_epoch_status.csv"),
+                              lambda d, f: inwin(d) and (d.get("disposition") != "emitted"
+                                                         or float(d.get("n_adapt") or 0) > 0))
+        R["epoch_status_nonclean"] = dict(header=hdr and ",".join(hdr.split(",")[:8]),
+                                          lines=[",".join(l.split(",")[:8]) for l in hits])
+        # the residual rows the screens were looking at
+        _h, rows = _scan_csv(os.path.join(logs, "network_pf_rows.csv"),
+                             lambda d, f: inwin(d) and d.get("station") == station
+                             and d.get("sat") == sat and d.get("kind") == "code",
+                             limit=10 ** 6)
+        vals = [float(l.split(",")[6]) for l in rows]
+        R["pf_rows_code"] = dict(n=len(rows), min=min(vals) if vals else None,
+                                 max=max(vals) if vals else None,
+                                 first_line=rows[0] if rows else None,
+                                 last_line=rows[-1] if rows else None)
+        out[arm] = R
+    return out
+
+
+def read_r5c(project, arms, tow_focus=265470.0, sat="G06",
+             young_epochs=5, low_elev_deg=25.0):
+    out = {}
+    for arm in arms:
+        logs = os.path.join(arm_dir(project, arm), "logs")
+        df = load_pf_rows(project, arm)
+        # per (station, sat) epoch runs, NO min length — a newborn arc is 1 row
+        g = df.groupby(["station", "sat"], observed=True)["k"]
+        runs = {}
+        for (sta, s), kk in g:
+            k = np.unique(kk.to_numpy())
+            cut = np.nonzero(np.diff(k) > 5)[0]
+            b = [0] + (cut + 1).tolist() + [len(k)]
+            runs[(str(sta), str(s))] = [(int(k[b[i]]), int(k[b[i + 1] - 1]))
+                                        for i in range(len(b) - 1)]
+        el = {}
+        for r in df[["station", "sat", "k", "elev_deg"]].itertuples(index=False):
+            el[(str(r.station), str(r.sat), int(r.k))] = float(r.elev_deg)
+
+        def age_elev(sta, s, k):
+            for a, b in runs.get((sta, s), []):
+                if a <= k <= b:
+                    return k - a, el.get((sta, s, k))
+            return None, el.get((sta, s, k))
+
+        hdr, hand = _scan_csv(os.path.join(logs, "network_events.csv"),
+                              lambda d, f: d.get("tier") == "PHASE_ANCHOR", limit=10 ** 6)
+        _h, gauge = _scan_csv(os.path.join(logs, "network_events.csv"),
+                              lambda d, f: d.get("tier") == "PBGAUGE", limit=10 ** 6)
+        tab = []
+        for line in hand:
+            f = line.split(",")
+            t, s, sta, detail = float(f[1]), f[4], f[5], f[9]
+            k = int(round((t - TOW0) / DT_S)) + 1
+            age, e = age_elev(sta, s, k)
+            tab.append(dict(tow=t, k=k, sat=s, to_station=sta, detail=detail,
+                            successor_arc_age_ep=age, successor_elev_deg=e,
+                            young=(age is not None and age < young_epochs),
+                            low=(e is not None and e < low_elev_deg)))
+        cold = [l for l in gauge if l.split(",")[3] == "handover_cold"]
+        # A satellite handing over files ONE PHASE_ANCHOR row per (sat, signal)
+        # family, so the row count over-counts elections; de-duplicate on
+        # (tow, sat, successor) and report both, plus the whole-run log's own count.
+        seen, uniq = set(), []
+        for r in tab:
+            key = (r["tow"], r["sat"], r["to_station"])
+            if key not in seen:
+                seen.add(key)
+                uniq.append(r)
+        R = dict(n_phase_anchor_rows=len(tab), n_distinct_elections=len(uniq),
+                 n_phase_anchor_handovers=len(tab),
+                 n_distinct_young=sum(1 for r in uniq if r["young"]),
+                 n_distinct_low=sum(1 for r in uniq if r["low"]),
+                 n_distinct_young_or_low=sum(1 for r in uniq if r["young"] or r["low"]),
+                 n_pbgauge_cold=len(cold), n_pbgauge_continuous=len(gauge) - len(cold),
+                 cold_lines=cold,
+                 n_young=sum(1 for r in tab if r["young"]),
+                 n_low=sum(1 for r in tab if r["low"]),
+                 n_young_or_low=sum(1 for r in tab if r["young"] or r["low"]),
+                 n_young_and_low=sum(1 for r in tab if r["young"] and r["low"]),
+                 n_unresolved=sum(1 for r in tab if r["successor_arc_age_ep"] is None),
+                 handovers=tab)
+        # the focus election: every station tracking `sat` that epoch, ranked
+        k0 = int(round((tow_focus - TOW0) / DT_S)) + 1
+        cand = []
+        sub = df[(df["k"] == k0) & (df["sat"] == sat)]
+        for sta, grp in sub.groupby("station", observed=True):
+            age, e = age_elev(str(sta), sat, k0)
+            cand.append(dict(station=str(sta), elev_deg=e, arc_age_ep=age,
+                             n_rows=int(len(grp)),
+                             n_code=int((grp["kind"] == "code").sum()),
+                             n_phase=int((grp["kind"] == "phase").sum()),
+                             code_resid_min=float(grp[grp["kind"] == "code"]["resid_m"].min())
+                             if (grp["kind"] == "code").any() else None))
+        cand.sort(key=lambda r: -(r["elev_deg"] or 0))
+        R["focus"] = dict(tow=tow_focus, k=k0, sat=sat, candidates=cand,
+                          event_lines=[l for l in hand + gauge
+                                       if abs(float(l.split(",")[1]) - tow_focus) < 1e-3])
+        out[arm] = R
+    return out
+
+
+def read_r5d(project, arms, tow_focus=265470.0, halfwidth_ep=10,
+             sat="G06", signals=("L1C", "L1W", "L2W", "L5Q", "L5X")):
+    import wire_vs_code_census as wc
+    out = {}
+    k0 = int(round((tow_focus - TOW0) / DT_S)) + 1
+    t_lo = TOW0 + DT_S * (k0 - 1 - halfwidth_ep)
+    t_hi = TOW0 + DT_S * (k0 - 1 + halfwidth_ep)
+    for arm in arms:
+        logs = os.path.join(arm_dir(project, arm), "logs")
+        hdr, hits = _scan_csv(os.path.join(logs, "closed_loop_trace.csv"),
+                              lambda d, f: t_lo - 1e-3 <= float(d["tow"]) <= t_hi + 1e-3,
+                              limit=10 ** 5)
+        rows = [dict(zip(hdr.split(","), l.split(","))) for l in hits] if hdr else []
+        e3 = [float(r["pos_err_3d_m"]) for r in rows]
+        # the largest epoch-to-epoch 3D step inside the window, and the run's own
+        # distribution of that step, so "a step" has a scale
+        _h, allr = _scan_csv(os.path.join(logs, "closed_loop_trace.csv"),
+                             lambda d, f: True, limit=10 ** 6)
+        allе = [float(l.split(",")[8]) for l in allr]
+        d_all = np.abs(np.diff(np.asarray(allе, float)))
+        d_win = np.abs(np.diff(np.asarray(e3, float))) if len(e3) > 1 else np.array([])
+        # the wire step the consumer was handed for the handed-over (sat, signal)
+        epochs, _meta = wc.parse_products(os.path.join(arm_dir(project, arm), "products.txt"))
+        wire = []
+        for ep in epochs:
+            if not (t_lo - 1e-3 <= ep["tow"] <= t_hi + 1e-3):
+                continue
+            row = dict(tow=ep["tow"], clock=ep["C"].get(sat, (None,))[0],
+                       retro=(sat in ep["retro"]), datum_changed=ep["datum_changed"])
+            for sg in signals:
+                v = ep["P"].get((sat, sg))
+                if v:
+                    row[sg] = (v[0], v[3])   # bias_m, disc counter
+            wire.append(row)
+        steps = []
+        for a, b in zip(wire[:-1], wire[1:]):
+            for sg in signals:
+                if sg in a and sg in b:
+                    steps.append(dict(tow=b["tow"], signal=sg,
+                                      d_bias_m=b[sg][0] - a[sg][0],
+                                      disc_from=a[sg][1], disc_to=b[sg][1],
+                                      disc_bumped=a[sg][1] != b[sg][1]))
+        # BASE RATE (the lesson of the lag-attribution trap): a per-epoch
+        # discontinuity bump means nothing without the rate every other (sat, signal)
+        # runs at, in the SAME window and over the whole run.
+        def bump_rates(eps, min_pairs):
+            bump, tot = defaultdict(int), defaultdict(int)
+            for x, y in zip(eps[:-1], eps[1:]):
+                for kk in y["P"]:
+                    if kk in x["P"]:
+                        tot[kk] += 1
+                        if x["P"][kk][3] != y["P"][kk][3]:
+                            bump[kk] += 1
+            return {kk: (bump[kk], tot[kk]) for kk in tot if tot[kk] >= min_pairs}
+        win_eps = [e for e in epochs if t_lo - 1e-3 <= e["tow"] <= t_hi + 1e-3]
+        wr = bump_rates(win_eps, max(3, halfwidth_ep))
+        ar = bump_rates(epochs, 30)
+        wv = np.array([b / t for b, t in wr.values()]) if wr else np.array([])
+        av = np.array([b / t for b, t in ar.values()]) if ar else np.array([])
+        focus_key = (sat, signals[0])
+        out[arm] = dict(
+            window_tow=[t_lo, t_hi], focus_tow=tow_focus, focus_k=k0,
+            consumer_header=hdr, consumer_rows=hits,
+            pos3d_at_focus=next((float(r["pos_err_3d_m"]) for r in rows
+                                 if abs(float(r["tow"]) - tow_focus) < 1e-3), None),
+            pos3d_window_min=min(e3) if e3 else None, pos3d_window_max=max(e3) if e3 else None,
+            max_abs_step_in_window=float(d_win.max()) if d_win.size else None,
+            run_step_p50=float(np.median(d_all)) if d_all.size else None,
+            run_step_p95=float(np.quantile(d_all, .95)) if d_all.size else None,
+            run_step_max=float(d_all.max()) if d_all.size else None,
+            n_resets_in_window=sum(1 for r in rows if float(r["n_sats"]) == 0),
+            wire_steps=[s for s in steps if s["disc_bumped"] or abs(s["d_bias_m"]) > 0.05],
+            disc_bump_base_rate=dict(
+                window_n_channels=len(wr),
+                window_focus=list(wr.get(focus_key, (0, 0))),
+                window_focus_rate=float(wr[focus_key][0] / wr[focus_key][1])
+                if focus_key in wr else float("nan"),
+                window_pool_median=float(np.median(wv)) if wv.size else float("nan"),
+                window_pool_mean=float(wv.mean()) if wv.size else float("nan"),
+                window_pool_max=float(wv.max()) if wv.size else float("nan"),
+                run_n_channels=len(ar),
+                run_focus_rate=float(ar[focus_key][0] / ar[focus_key][1])
+                if focus_key in ar else float("nan"),
+                run_pool_median=float(np.median(av)) if av.size else float("nan"),
+                run_pool_p95=float(np.quantile(av, .95)) if av.size else float("nan"),
+                run_pool_max=float(av.max()) if av.size else float("nan")),
+        )
+    return out
+
+
+def fmt_r5(res):
+    a, b, c, d = res["a"], res["b"], res["c"], res["d"]
+    L = ["R5 - sec 24.15: is the DJIG00DJI/G06 outlier a wire defect or an outlier record?",
+         "bar: G06 carries > 30 % of PV-B's D_phase => a wire defect with a named fix; < 10 % => a record.",
+         "",
+         "(a) within-arc D rms and the clock LEVEL, last hour (tow 262800..266370), declared arcs,",
+         "    median common mode - the same statistic cm_grade reports as (iii).",
+         f"    'excl (pool)' drops the satellite's rows from the pool; 'excl (cm)' ALSO re-takes the",
+         "    per-epoch median over the remaining satellites."]
+    hdr = (f"{'arm':8s} {'quantity':10s} {'all':>9s} {'G06 only':>9s} {'excl(pool)':>11s} "
+           f"{'excl(cm)':>9s} {'n_all':>7s} {'n_G06':>6s} {'share SS':>9s} {'share rows':>11s}")
+    L += [hdr, "-" * len(hdr)]
+    for arm, A in a.items():
+        for kind in ("phase", "code"):
+            s = A[f"D_{kind}"]
+            L.append(f"{arm:8s} {'D_' + kind:10s} {f(s['rms_all'],4)!s:>9s} "
+                     f"{f(s['rms_sat_only'],4)!s:>9s} {f(s['rms_excl_pool_only'],4)!s:>11s} "
+                     f"{f(s['rms_excl_cm_recomputed'],4)!s:>9s} {s['n_all']:7d} {s['n_sat']:6d} "
+                     f"{f(s['share_of_sumsq'],4)!s:>9s} {f(s['share_of_rows'],4)!s:>11s}")
+        s = A["clk_LEVEL"]
+        L.append(f"{arm:8s} {'clk LEVEL':10s} {f(s['p50_all'],4)!s:>9s} "
+                 f"{f(s['p50_sat_only'],4)!s:>9s} {f(s['p50_excl_pool_only'],4)!s:>11s} "
+                 f"{f(s['p50_excl_cm_recomputed'],4)!s:>9s} {s['n_all']:7d} {s['n_sat']:6d} "
+                 f"{'(p50)':>9s} {f(s['n_sat'] / s['n_all'],4)!s:>11s}")
+    for arm, A in a.items():
+        L.append("")
+        L.append(f"per-satellite within-arc D_phase rms, {arm} (worst 8 of "
+                 f"{len(A['D_phase']['per_sat'])}):")
+        for sat, v in list(A["D_phase"]["per_sat"].items())[:8]:
+            L.append(f"    {sat:5s} rms {f(v['rms'],4)!s:>9s}  n {v['n']:5d}")
+
+    L += ["", "(b) what every screen did with the DJIG00DJI/G06 rows over k 210..240"]
+    for arm, R in b.items():
+        pr = R["pf_rows_code"]
+        L.append(f"  === {arm} === code rows {pr['n']}, residual range "
+                 f"{f(pr['min'],2)} .. {f(pr['max'],2)} m")
+        L.append(f"      first: {pr['first_line']}")
+        L.append(f"      last : {pr['last_line']}")
+        L.append(f"      network_raim.csv        : {R['raim']['n']} rows for this sat OR station in "
+                 f"the window (whole run: {R['raim_run_total_rows']} rows, "
+                 f"{R['raim_run_rows_this_sat']} for the sat, "
+                 f"{R['raim_run_rows_this_station']} for the station)")
+        L.append(f"      network_raim_attrib.csv : {R['raim_attrib']['n']} rows naming the sat or station")
+        L.append(f"      network_events.csv      : {len(R['events_sat_station']['lines'])} rows on "
+                 f"(sat, station) in the window; the sat at ANY station: "
+                 f"{R['events_sat_any_station']['n']} ({R['events_sat_any_station']['tiers']})")
+        for line in R["events_sat_station"]["lines"]:
+            L.append(f"        | {line}")
+        L.append(f"      epoch_status rows not 'emitted' or with n_adapt > 0: "
+                 f"{len(R['epoch_status_nonclean']['lines'])}")
+        for line in R["epoch_status_nonclean"]["lines"]:
+            L.append(f"        | {line}")
+        L.append(f"      whole-run event lines on (sat, station): "
+                 f"{len(R['events_sat_station_whole_run'])}")
+        for line in R["events_sat_station_whole_run"]:
+            L.append(f"        | {line}")
+
+    L += ["", "(c) the G06 phase-anchor election"]
+    for arm, R in c.items():
+        fo = R["focus"]
+        L.append(f"  === {arm} === at tow {fo['tow']:.0f} (k {fo['k']}), {len(fo['candidates'])} "
+                 f"stations tracking {fo['sat']}:")
+        for line in fo["event_lines"]:
+            L.append(f"        | {line}")
+        L.append(f"      {'station':11s} {'elev':>6s} {'arc age ep':>10s} {'rows':>5s} "
+                 f"{'code':>5s} {'phase':>6s} {'worst code resid m':>19s}")
+        for r in fo["candidates"]:
+            L.append(f"      {r['station']:11s} {f(r['elev_deg'],2)!s:>6s} "
+                     f"{('-' if r['arc_age_ep'] is None else r['arc_age_ep']):>10} "
+                     f"{r['n_rows']:5d} {r['n_code']:5d} {r['n_phase']:6d} "
+                     f"{f(r['code_resid_min'],2)!s:>19s}")
+        L.append(f"      whole run: {R['n_phase_anchor_rows']} PHASE_ANCHOR rows = "
+                 f"{R['n_distinct_elections']} distinct (tow, sat, successor) elections "
+                 f"(one row per (sat, signal) family); "
+                 f"{R['n_pbgauge_cold']} PBGAUGE cold / {R['n_pbgauge_continuous']} continuous.")
+        L.append(f"      by ROW   - successor arc younger than 5 epochs: {R['n_young']}; below 25 "
+                 f"deg: {R['n_low']}; either: {R['n_young_or_low']}; both: "
+                 f"{R['n_young_and_low']} (unresolved successors {R['n_unresolved']})")
+        L.append(f"      by ELECTION - younger than 5 epochs: {R['n_distinct_young']}; below 25 "
+                 f"deg: {R['n_distinct_low']}; either: {R['n_distinct_young_or_low']}")
+        for line in R["cold_lines"]:
+            L.append(f"        COLD | {line}")
+        yl = [r for r in R["handovers"] if r["young"] or r["low"]]
+        if yl:
+            L.append(f"      handovers onto a young or low successor:")
+            L.append(f"        {'tow':>9s} {'k':>4s} {'sat':4s} {'to':11s} {'elev':>6s} {'age':>4s}")
+            for r in yl:
+                L.append(f"        {r['tow']:9.0f} {r['k']:4d} {r['sat']:4s} {r['to_station']:11s} "
+                         f"{f(r['successor_elev_deg'],2)!s:>6s} "
+                         f"{('-' if r['successor_arc_age_ep'] is None else r['successor_arc_age_ep']):>4}")
+
+    L += ["", "(d) the closed-loop consumer within +-10 epochs of the election"]
+    for arm, R in d.items():
+        L.append(f"  === {arm} === 3D at the election epoch {f(R['pos3d_at_focus'],4)} m; "
+                 f"window min/max {f(R['pos3d_window_min'],4)} / {f(R['pos3d_window_max'],4)} m; "
+                 f"largest epoch step in the window {f(R['max_abs_step_in_window'],4)} m "
+                 f"(run-wide step p50 {f(R['run_step_p50'],4)}, p95 {f(R['run_step_p95'],4)}, "
+                 f"max {f(R['run_step_max'],4)}); resets in window {R['n_resets_in_window']}")
+        L.append(f"      {R['consumer_header']}")
+        for line in R["consumer_rows"]:
+            L.append(f"        | {line}")
+        L.append("      wire records handed to the consumer that stepped or bumped a disc counter:")
+        for s in R["wire_steps"]:
+            L.append(f"        | tow {s['tow']:.0f} {s['signal']:4s} d_bias {s['d_bias_m']:+.4f} m  "
+                     f"disc {s['disc_from']} -> {s['disc_to']}"
+                     f"{'  (BUMPED)' if s['disc_bumped'] else ''}")
+        br = R["disc_bump_base_rate"]
+        L.append(f"      disc-bump BASE RATE (per-epoch, per (sat,signal)): in this window the focus "
+                 f"channel bumps {br['window_focus'][0]}/{br['window_focus'][1]} = "
+                 f"{f(br['window_focus_rate'],3)} against a pool of {br['window_n_channels']} "
+                 f"channels with median {f(br['window_pool_median'],3)}, mean "
+                 f"{f(br['window_pool_mean'],3)}, max {f(br['window_pool_max'],3)}; over the WHOLE "
+                 f"run the focus channel is {f(br['run_focus_rate'],3)} against pool median "
+                 f"{f(br['run_pool_median'],3)}, p95 {f(br['run_pool_p95'],3)}, max "
+                 f"{f(br['run_pool_max'],3)} ({br['run_n_channels']} channels).")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------- #
 # witness — per-station code rms vs arcs born inside the run
 # --------------------------------------------------------------------------- #
 def read_witness(project, arms, gap_epochs, min_arc):
@@ -1139,13 +1614,15 @@ def emit(out_dir, name, obj, text):
         json.dump(obj, fh, indent=1, default=str)
     with open(os.path.join(out_dir, name + ".txt"), "w", encoding="utf-8") as fh:
         fh.write(text + "\n")
-    print(text)
+    # the file is UTF-8; the Windows console is cp1252, so never let a glyph kill the run
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    sys.stdout.write(text.encode(enc, errors="replace").decode(enc, errors="replace") + "\n")
     print(f"\n[wrote {os.path.join(out_dir, name)}.json / .txt]")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "witness", "all"])
+    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "witness", "all"])
     ap.add_argument("--project", default=PROJECT_DEFAULT)
     ap.add_argument("--arms", default=",".join(ARMS_DEFAULT))
     ap.add_argument("--out", default=None)
@@ -1154,6 +1631,9 @@ def main():
     ap.add_argument("--min-settled-rows", type=int, default=30)
     ap.add_argument("--step", type=float, default=0.3)
     ap.add_argument("--shuffles", type=int, default=1000)
+    ap.add_argument("--sat", default="G06", help="r5: the satellite under test")
+    ap.add_argument("--station", default="DJIG00DJI", help="r5b: the station under test")
+    ap.add_argument("--tow", type=float, default=265470.0, help="r5c/r5d: the election epoch")
     a = ap.parse_args()
     arms = [s for s in a.arms.split(",") if s]
     out_dir = a.out or os.path.join(a.project, "runs", "_lvseed")
@@ -1173,6 +1653,12 @@ def main():
             r = read_r4(a.project, arms, a.gap_epochs, a.min_arc,
                         step_thresh=a.step, n_shuffle=a.shuffles)
             emit(out_dir, "r4", r, fmt_r4(r))
+        elif t == "r5":
+            r = dict(a=read_r5a(a.project, arms, sat=a.sat),
+                     b=read_r5b(a.project, arms, station=a.station, sat=a.sat),
+                     c=read_r5c(a.project, arms, tow_focus=a.tow, sat=a.sat),
+                     d=read_r5d(a.project, arms, tow_focus=a.tow, sat=a.sat))
+            emit(out_dir, "r5", r, fmt_r5(r))
         elif t == "witness":
             r = read_witness(a.project, arms, a.gap_epochs, a.min_arc)
             emit(out_dir, "witness", r, fmt_witness(r))
