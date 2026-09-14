@@ -152,6 +152,10 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     const int    holdoff      = nc.gross_los_event_holdoff_ep;
     const int    warmup_ep    = nc.gross_los_warmup_epochs;
     const double max_sta_frac = nc.gross_los_max_station_frac;
+    // --- GL-2 (docs/SPEC_event_harness.md §24.19): the WHOLE-SATELLITE stand-down.
+    const bool   gl2_on       = ctx.knobs.gl2_on;
+    const int    gl2_min_sta  = nc.gross_los_sat_min_stations;
+    const bool   gl2_wire     = nc.gross_los_sat_wire_withhold;
 
     // --- GUARD 1: the MATURITY horizon (invariant #4's other half — a tier that
     // fires on ignition is measuring ignition).  MEASURED on the cert smoke: with
@@ -221,6 +225,20 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     // absence half of the streak rule needs the complement of this set.
     std::set<std::pair<int, std::string>> seen;
     int n_declared_ep = 0, n_cleared_ep = 0;
+
+    // GL-2 needs a NETWORK-WIDE tally before any line of sight is acted on: "the same
+    // satellite over the bar at >= N stations in one epoch" is not knowable inside a
+    // per-station walk, and a decision taken on the first station of that walk would
+    // depend on which station it happened to be.  So the pass is split: ASSESS every
+    // station, TALLY per satellite, then ACT.  The store is ~61 x 10 verdicts.
+    struct StationPass {
+        std::size_t i{0};
+        std::map<std::string, GrossLosVerdict> verdicts;
+        bool sta_standdown{false};
+    };
+    std::vector<StationPass> passes;
+    passes.reserve(stations.size());
+    std::map<std::string, int> sat_over_stations;   // satellite -> stations over the bar
 
     for (std::size_t i = 0; i < stations.size() && i < asm_res.size(); ++i) {
         if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
@@ -351,17 +369,123 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                                   n_over_here, n_los_here));
         }
 
-        for (const auto& [sat, d] : verdicts) {
+        if (gl2_on)
+            for (const auto& [sat, d] : verdicts)
+                if (d.over) ++sat_over_stations[sat];
+        passes.push_back(StationPass{ i, std::move(verdicts), sta_standdown });
+    }
+
+    // --- GL-2: the WHOLE-SATELLITE stand-down (§24.19) ------------------------
+    // MEASURED on `runs/_gl_on6` (§24.18's arm): at TOW 271200/271260 the screen
+    // declared TEN lines of sight and every one of them was the SAME satellite,
+    // G17, at SEYG00SYC / NYA200NOR / CEBR00ESP / LEIJ00DEU / MIZU00JPN /
+    // LCK400IND / KIT300UZB / ULAB00MNG / URUM00CHN / SVTL00RUS — ten stations
+    // spread over four continents, residuals 4–49 m.  A satellite whose code is
+    // wrong at ten stations at once is not ten gross lines of sight; it is a bad
+    // SATELLITE (its clock, its orbit or its code bias).  De-weighting it at ten
+    // stations removes it from the code solution network-wide, and the held-out
+    // consumer went to 56 m and decayed for an hour.
+    //
+    // This is the same rule as the whole-station stand-down, one axis over, and it
+    // is the population post-fit RAIM's cross-station CONSENSUS already exists to
+    // route (`network.raim_min_stations`, default 3: "a satellite so flagged at >=
+    // 3 stations is refloated network-wide").  GL-2 therefore does not invent a
+    // response — it routes the satellite to the two mechanisms the producer already
+    // owns for a consensus fault:
+    //   * the per-satellite RETRO DISC BUMP, by queueing the satellite into
+    //     `ctx.carry.ura_retro_sats` — the same queue `NetworkSolPrep` drains into
+    //     `emitter.markSatDiscontinuity`, with that seam's mark-==-land semantics
+    //     (a satellite absent from an emission stays pending) and its RETRO event;
+    //   * the per-satellite WIRE WITHHOLD, by queueing it into
+    //     `ctx.carry.gl2_wire_pending`, which `NetworkSolPrep` prunes out of
+    //     `sol.sats` exactly the way the RT0-5 runaway quarantine and the RTA-10
+    //     per-constellation carve-out prune theirs.  NEVER an epoch withhold: the
+    //     epoch still emits every other satellite (adapt-and-emit).
+    // Both are one epoch late, which is the lag every post-fit tier here has (the
+    // emit seams run before SB_RAIM), and is exactly why the consensus path was
+    // built edge-triggered and pending-aware in the first place.
+    std::set<std::string> sat_down_now;
+    if (gl2_on && mature)
+        for (const auto& [sat, n] : sat_over_stations)
+            if (n >= gl2_min_sta) sat_down_now.insert(sat);
+
+    if (gl2_on) {
+        // The DECOUPLING edge: a satellite that was not stood down and now is.
+        for (const auto& sat : sat_down_now) {
+            if (ctx.carry.gl2_sat_down.count(sat)) continue;
+            ctx.carry.gl2_sat_down.insert(sat);
+            ctx.carry.gl2_sat_since[sat] = se.time.tow;
+            ++tal.sat_standdowns;
+            ++tal.sat_standdown_by_sat[sat];
+            emitEvent("gross_los_sat_standdown", sat, "",
+                      static_cast<double>(sat_over_stations[sat]),
+                      static_cast<double>(gl2_min_sta), "standdown",
+                      fmt::format("n_sta_over={};min_sta={};reason=whole_satellite_not_one_los;"
+                                  "routed={}",
+                                  sat_over_stations[sat], gl2_min_sta,
+                                  gl2_wire ? "retro_disc+wire_withhold" : "retro_disc"));
+        }
+        // The RE-COUPLING edge: a satellite that was stood down and no longer is.
+        for (auto it = ctx.carry.gl2_sat_down.begin(); it != ctx.carry.gl2_sat_down.end(); ) {
+            if (sat_down_now.count(*it)) { ++it; continue; }
+            const auto sit = ctx.carry.gl2_sat_since.find(*it);
+            ++tal.sat_released;
+            emitEvent("gross_los_sat_release", *it, "",
+                      static_cast<double>(sat_over_stations.count(*it)
+                                              ? sat_over_stations[*it] : 0),
+                      static_cast<double>(gl2_min_sta), "release",
+                      fmt::format("n_sta_over={};standdown_tow={:.1f}",
+                                  sat_over_stations.count(*it) ? sat_over_stations[*it] : 0,
+                                  sit != ctx.carry.gl2_sat_since.end() ? sit->second : 0.0));
+            if (sit != ctx.carry.gl2_sat_since.end()) ctx.carry.gl2_sat_since.erase(sit);
+            it = ctx.carry.gl2_sat_down.erase(it);
+        }
+        // Route the CURRENTLY stood-down set to the producer's own consensus-fault
+        // response, rebuilt every epoch so a released satellite stops being routed
+        // in the same pass a newly-faulted one starts.
+        ctx.carry.gl2_wire_pending.clear();
+        if (!ctx.carry.gl2_sat_down.empty()) {
+            ++tal.sat_epochs;
+            tal.sat_epoch_max = std::max<long long>(
+                tal.sat_epoch_max, static_cast<long long>(ctx.carry.gl2_sat_down.size()));
+            for (const auto& sat : ctx.carry.gl2_sat_down) {
+                ctx.carry.ura_retro_sats.insert(sat);   // the consensus path's disc bump
+                if (gl2_wire) ctx.carry.gl2_wire_pending.insert(sat);
+            }
+        }
+    }
+
+    // --- ACT ------------------------------------------------------------------
+    for (auto& pass : passes) {
+        const std::size_t i = pass.i;
+        const StationAssembly& R = asm_res[i];
+        const bool sta_standdown = pass.sta_standdown;
+        for (const auto& [sat, d] : pass.verdicts) {
             const auto key = std::make_pair(static_cast<int>(i), sat);
             seen.insert(key);
             GrossLosState& st = gstate[key];
             st.last_seen_s = now_s;
-            const bool allow = mature && !sta_standdown;
+            // GL-2: a stood-down SATELLITE takes its lines of sight with it.  An
+            // already-declared one is RELEASED here — the deweight must lift, because
+            // the fault is not this line of sight's and holding it decoupled would keep
+            // removing code the solution needs (standing invariant #7's re-coupling
+            // edge, at the satellite's scale).  A release is a real edge and is
+            // counted; it deliberately does NOT go through the per-LOS clear event,
+            // which asserts the DATA healed — this one did not.
+            const bool sat_down = gl2_on && ctx.carry.gl2_sat_down.count(sat) > 0;
+            if (sat_down && st.gross) {
+                st.gross = false;
+                st.over_streak = 0;
+                st.clear_streak = 0;
+                ++tal.sat_los_released;
+            }
+            const bool allow = mature && !sta_standdown && !sat_down;
             const GrossLosEdge edge =
                 networkGrossLosStep(st, d, dec_epochs, clr_epochs, se.time.tow, allow);
             if (edge == GrossLosEdge::Suppressed) {
-                if (!mature) ++tal.suppressed_warmup;
-                else         ++tal.suppressed_station;
+                if (!mature)        ++tal.suppressed_warmup;
+                else if (sat_down)  ++tal.sat_los_suppressed;
+                else                ++tal.suppressed_station;
                 continue;
             }
 

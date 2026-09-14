@@ -986,6 +986,48 @@ int networkTeardown(
             log->info("Network (gross-LOS screen): {} by {} ({} distinct): {}",
                       what, axis, v.size(), line);
         };
+        // --- GL-2 (§24.19): the whole-SATELLITE stand-down -------------------
+        if (ctx.knobs.gl2_on) {
+            log->info("Network (gross-LOS, GL-2 whole-SATELLITE stand-down): {} satellite "
+                      "stand-down edge(s) and {} release(s) over {} epoch(s) with at least "
+                      "one satellite down ({} the most simultaneously); it refused {} "
+                      "per-LOS declaration(s) and RELEASED {} standing one(s), and the wire "
+                      "withhold pruned {} satellite-epoch(s) from an emission.",
+                      g.sat_standdowns, g.sat_released, g.sat_epochs, g.sat_epoch_max,
+                      g.sat_los_suppressed, g.sat_los_released, g.sat_wire_withheld);
+            if (g.sat_standdowns == 0)
+                log->info("Network (gross-LOS, GL-2): ZERO OPPORTUNITY — no satellite was "
+                          "ever over the {:.1f}σ bar at {} or more stations in one epoch.  "
+                          "A clean window, not a demonstration: the guard's power is "
+                          "unproven until a window that carries a satellite-level fault "
+                          "grades it (runs/_gl_on6 at TOW 271200 carries one, G17 at ten "
+                          "stations).",
+                          config_.getNetworkConfig().gross_los_k,
+                          config_.getNetworkConfig().gross_los_sat_min_stations);
+            if (g.sat_standdowns > 0 && g.sat_wire_withheld == 0
+                && config_.getNetworkConfig().gross_los_sat_wire_withhold)
+                log->warn("Network (gross-LOS, GL-2): {} satellite(s) stood down but NOTHING "
+                          "was ever pruned from an emission, though the wire withhold is "
+                          "armed.  The prune lives in networkSolPrep and keys on "
+                          "ctx.carry.gl2_wire_pending; a zero here means the stood-down "
+                          "satellites were never in a solution, or the pending set did not "
+                          "reach the emit seam.",
+                          g.sat_standdowns);
+            if (g.sat_epochs > 0) {
+                const double per_hour = static_cast<double>(g.sat_standdowns)
+                                      / std::max(1.0, static_cast<double>(g.epochs) / 120.0);
+                if (per_hour > 2.0)
+                    log->warn("Network (gross-LOS, GL-2): {:.2f} satellite stand-down(s) per "
+                              "hour — above the 2/hour line §24.19 froze.  Satellite-level "
+                              "faults are COMMON on this bed, and the wire's per-satellite "
+                              "EMISSION POLICY (not this screen) is the next card; report "
+                              "the satellites and the hours.", per_hour);
+                else
+                    log->info("Network (gross-LOS, GL-2): {:.2f} satellite stand-down(s) per "
+                              "hour (§24.19's line is 2/hour).", per_hour);
+            }
+            topTable("GL-2 satellite stand-downs", "satellite", g.sat_standdown_by_sat);
+        }
         topTable("declarations", "station", g.declared_by_station);
         topTable("declarations", "satellite", g.declared_by_sat);
         topTable("stand-down station-epochs", "station", g.standdown_by_station);
