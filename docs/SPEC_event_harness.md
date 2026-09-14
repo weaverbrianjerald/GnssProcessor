@@ -7778,3 +7778,34 @@ set.  **Reading:** re-levels do not set the arc level (H1 stays refuted mid-arc 
 same from the emitted side (88 % of the unsignalled clock steps at a T4 refloat of the same satellite).  Whether the T4 refloat CAUSES the
 clock re-realization (a refloat on the satellite's anchor station) or merely marks the epoch of an excursion born elsewhere is exactly card
 CS's part (B) read; the two are not yet separable on these traces.
+
+**§24.20 RESULTS (2026-09-14 ~15:00 local; GL worker commit `58822e3` (the part-B read), merged; exe `7a1cb9bf…`; no source change — a knob
+arm and a read; manager grade).**  Loader: *"Card CLK-R: CLOCK DISC JUMP TEST ON — per-sat common-removed emitted-clock steps > 1.50 m route
+to the markSatDiscontinuity retro-bump"*; run-end *"step marks ON — 5 mark(s)"* (cs1) / *"8 mark(s)"* (cs2).
+**(A) The contract holds:** unsignalled clock steps > 2 m **0 / 0** on both arms every hour (controls 0 and 2 (+1 > 10 m)); marks 5 and 8 in
+six hours against 1 144 / 904 T4 refloats — **0.022 % / 0.035 % of satellite-epochs, no storm**; the solve is byte-identical (cs1 reproduces
+`_cm_c10` to three decimals in every (i) / (ii) cell; cs2 reproduces `_gl_on6`) — CLK-R is outputs-only, as it should be; availability
+identical.  G17's 16.731 m step at 271170 is now marked (`CLK_STEP,mark,G17,16.731,retro_bump`; disc 3 → 4 → 5 → 6 on the same emitted
+values).  **The consumer:** at the event epoch 55.77 → **2.72 m**; hour-4 p50 25.45 → **2.43 m** — the excursion is gone, but the bar wanted
+≤ 1.5 m, and hour 6 reads 4.39 vs the control's 3.70 (+0.7, within the hour-to-hour spread these arms show).  **Reading: the second — the
+contract holds and the consumer's handling of a DECLARED multi-metre clock discontinuity is the next read** (`RealTimeEngineSsrBreaks.cpp`'s
+per-signal reaction, exercised for the first time on a marked clock step: a ~2 m plateau through the hour rather than a reset that
+converges).  The knob is VALIDATED as the M4-contract fix on this vehicle (neutral, byte-identical solve, no storm, the catastrophic step
+removed) and NOT yet promoted — its ledger row is written with the posture, on the author's go.
+**(B) The anchor read:** of the 43 unsignalled steps, **18 (41.9 %) were on the satellite's elected phase anchor** and 25 (58 %) had the phase
+bias holding (≤ 0.5 m) while the clock took the re-realization — between §24.20's thresholds, so neither branch fires alone: the anchor
+election is a real but partial lever, the marking rule is the complete one.  The strongest single fact: **both consumer-damaging steps (G17,
+16.7 m) are ON-ANCHOR with the PB steady to 0.045 m** — the gauge station's refloat moved the clock and only the clock.
+
+**Where the campaign stands (2026-09-14 15:00; main after this commit; every worker branch merged; nothing armed on the goldens or ledger):**
+
+| defect, in the order found | status | the fix and its evidence |
+|---|---|---|
+| the `carry_invariant` station block is singular (58/61 stations, null dim 7) | NAMED, measured (ZP trace) | the leveling vehicle + gauge projection + the sim's phase-datum family (PV-B): consumer 7.8 → 1.2 m, ZWD physical at 48/61 |
+| the free satellite clock's random walk (q 0.001) | NAMED | the Q3 anchor at the physical floor (c8b): code rms 1.79 → 1.09 m, ZWD stations 13 → 8, consumer 0.95 m; G4 inconclusive on this bed; exonerated as a step source (R10) |
+| gross code errors unreachable by every acting screen (phase-row admission) | NAMED, cited | `gross_los_screen` + the satellite stand-down: tail 85 → 5–7 m; default OFF, needs the consumer read |
+| unsignalled satellite clock steps on the wire (43, to 16.7 m; 88 % at a T4 refloat) | NAMED, cited | `clock_disc_jump_test` (existing, never armed): 0 unsignalled, no storm, consumer 55.8 → 2.7 m at the event |
+| the wire's within-arc random walk (0.9 m) | NAMED as the T4-refloat re-realizations of the satellite clock (R7 / R9 / R10) | the marking rule (above) declares them; the structural lever is the anchor election (42 % on-anchor) and the refloat's own clock re-realization — owed |
+| the bulk code-residual drift (+0.25 m/h) | OPEN | not the tie's representation (R8), not low-elevation multipath (R8), not the rx-CB carry (R8b), not re-levels (R9); the representation degrades monotonically over the day (suspect by elimination) |
+| the consumer's plateau after a declared multi-metre step (2.4 m) | OPEN | the consumer's reset handling (`RealTimeEngineSsrBreaks`) — the next read |
+| owed, off the bars | recorded | the anchor election tie-break + minimum age; the untraced free-epoch latches; `NetworkRowClassify`'s code-row gap; the T4 refloat firing on gross code (21 %) |
