@@ -7243,3 +7243,60 @@ arc, or the level re-estimated from the arc's accumulated code — a design card
 representation is the card (degree / stiffness / a per-station DCB datum, §24.10 (c)), one arm per lever; H3 ⇒ a roster correction
 (data, not code) and PV-B re-run; nothing named ⇒ the residual is the field's code noise floor at this weighting and the bars re-base on
 it.  Card ZP's trace on PV-B is read beside these as the block's rank / conditioning witness.
+
+**§24.10 RESULTS — card ZP's measure-only half (2026-09-14 ~02:00 local; worker on worktree-agent-a5ab19146ca127d71, commits cb8e39a /
+ec66d42 / 2c4be49, merged to main; exe `D7D7CFC1…`; suite 2089 / 283 (2072 + 17 fixture-gated skips, exit 0); smokes OFF / ON both
+`87a33bf0…`; `--verify` PASS; manager grade).**  `network.trace_station_block` → `logs/network_station_block.csv` (the local block
+`N_rr = A_rᵀ W A_r` + folded station priors with the shared states held at `x_s` — `reconstructStation`'s conditioning; rank at 1e-9 ×
+λ_max; the three smallest eigenpairs labelled by every `StateManager` kind; `zwd_info_eff = 1/(N_rr⁺)_zz`; redundancy on the non-null
+subspace, so a row lying partly in the null space reads CHECKABLE — unconstrained, not absorbed — which is why `rank < n_local` and
+`zero_red` are complementary).  Two 1 h cold arms, 61 stations, the trace on (`_zp_ci` from `_cm_a0`, `_zp_pl` from `_pv_b`):
+
+| epoch 1 / 5 / 20 / 22 | `carry_invariant` (`_zp_ci`) | `phase_leveling` (`_zp_pl`) |
+|---|---|---|
+| stations with rank < n_local (of 61) | 58 / 58 / 58 / 59 | **15 / 15 / 0 / 0** |
+| null dimension p50 (max) | **7 (10)** | 0 (9) |
+| condition number p50 | 6.6e8 → 5.7e8 | 3.0e8 → **2.7e4** |
+| `zwd_info_ratio` p50 | 2.6e-5 → 3.0e-5 | 2.9e-7 → **3.4e-3** |
+| reconstructed ZWD p50 (m) | −3.14 → −3.39 → −1.08 | **+0.086 → +0.193 → +0.253** |
+| zero-redundancy phase rows | 0.227 → 0.225 | 0.691 → **0.007** |
+| smallest eigenvector, epoch 22 | `amb` 34, `iono+amb` 10, `rxpb` 8, `clk+zwd+amb` 7 | **`clk+zwd+iono` 30**, `iono+amb` 9, `rxcb` 8, `clk+zwd` 7 |
+
+WROC (the §24.9 station): CI `n_local 32, rank 24` all hour, `zwd_info_eff` 73–127 against raw 4.49e6, ZWD −9.2 → −10.5 m; PL rank 29 =
+n_local from epoch 1, `zwd_info_eff` 0.77 → 8749, ZWD +2.77 → +0.195 → −0.085 m, its weakest direction changing identity from
+`amb:G15:L2W` to `clk | zwd | iono` at tow 259620.  **Read:** under `carry_invariant` the local block is genuinely singular — a median
+7-dimensional null space at 58 of 61 stations, unchanged over the hour, spanned by an L2W-ambiguity combination, the ZWD column keeping
+1/38 000 of its raw information — the "near-rank-deficient at ignition" of §24.9 is rank-deficient, permanently; under `phase_leveling`
+the same stations start nearly as badly and the carry closes the block within ~10 epochs (full rank 61/61, condition number down four
+orders, ZWD information up four orders, phase zero-redundancy 0.69 → 0.007, ZWD physical), and the weakest direction becomes the
+physical `clk + zwd + iono` trio — the block stops being under-determined and is merely correlated.  Card ZP's mechanism half (the
+per-epoch ZWD prior) is retired by §24.12 (b2 / b2b / b8); the trace stays as the standard witness for any vehicle or datum card.
+
+**§24.11 instrument gap CLOSED (commit ec66d42, trace-only, both smokes unchanged):** the P1-4 pass files a data row that is not phase and
+touches a satellite `CLK:` column as CODE (the counterpart of the phase side's ambiguity-column touch); such a row carries no `signal`
+label (per-STATION / per-SATELLITE pools only); the same gap stays open in `NetworkRowClassify::classifyRow` (prefit census, seed
+tripwire, topology, FUSE — solve-affecting under `prefit_fuse_sigma`; its own card).  PV-A re-read over 1 h (`_zp_pva1h`): 0 → 118 775 code
+rows, all 61 stations, **per-station code rms p50 0.436 m (p10 0.236, p90 1.050, max 3.633)** — the standalone-PPP floor, and **4× below
+PV-B's 1.79 m** while PV-A's wire (D_phase 1.07) and consumer (2.26 m) are NOT better than PV-B's.  Two consequences: (1) §24.12's b6 was
+mis-specified — the CODE-OSB posture needs `external_sat_code_bias: true` + `require_bia_for_signals: true` beside `estimate_sat_code_bias:
+false` + `enable_code_phase_bias: true` (the pl2 chain's recipe), or the loader forces W6 back on; the CODE-OSB arm has never validly run
+on either vehicle; (2) the CHAIN-ERA class of §24.11's diff carries a 4× code-residual difference the vehicle does not explain, and a wire
+difference it does not track.
+
+### 24.14 Card CE — the CHAIN-ERA bisect on the leveling vehicle (pre-registered before any arm is read)
+
+Base `_pv_b.json`, control `runs/_cm_pvb`, exe = main's Release after the ZP merge (the fallback makes every arm's code side readable);
+2 h cold; one CHAIN-ERA group per arm, values as the flattened pl2 chain has them: **c1** CODE OSB, correctly specified
+(`external_sat_code_bias: true`, `estimate_sat_code_bias: false`, `model_corrections.enable_code_phase_bias: true`,
+`require_bia_for_signals: true`; the loader's effective posture recorded — if W6 is still forced, the arm is reported inert and the forcing
+line is the finding); **c2** `rx_code_bias_datum: true`; **c3** `apriori_clock_anchor_sigma_m: 0.02`; **c4** the SH representation
+(`max_degree` 15 + layer 2 + `mean_vtec_prior` 15 ± 30, as pl2); **c5** `processing.frequency_mode: triple`; **c6** the remainder
+(`emit_pb_filter_meas_sigma_m` 0.10, `mark_refsat_reset_disc`, `require_atx_coverage`; `cb_kaula_prior` off is already exonerated as b3);
+**c0** the UNION of all 17 CHAIN-ERA keys on the golden base (PV-A's posture on the golden's pins); and **pva2** = PV-A itself re-run 2 h
+on the fixed exe (its (i) / (iv) now readable on the same last-hour window).  Reads (i)–(v) + the consumer as §24.11.  **Bars (frozen,
+absolute = §24.8's)** and the same contributor / exonerated rules against PV-B.  **Frozen reading:** c0 reproduces pva2's code rms (within
+0.2 m) ⇒ the class carries the code defect and the single arms name it (an arm halving (i) is the candidate; one that also halves (iii)
+or the consumer is the card); c0 does not ⇒ the difference is in GOLDEN-NEWER (bisected next, one pin per arm); c1 crosses (i) alone ⇒
+W6's self-estimated satellite code biases are the second code-side defect on this bed (a posture decision: OSB from the external .BIA
+against a self-contained producer); any arm that halves (i) but not (iii) confirms §24.13's premise that the wire's within-arc wander is
+born on the phase side (H1), which card LV-SEED reads in parallel.
