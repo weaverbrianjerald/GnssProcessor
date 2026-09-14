@@ -4412,11 +4412,26 @@ int networkTeardown(
                  "Network (§24.6 post-fit rows): {} SIGNED per-row post-fit residual(s) written "
                  "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
                  "elev_deg); {} data row(s) the pass visited were attributed to neither "
-                 "family and NOT written (local-column-only pseudo-observations).  0 written "
+                 "family and NOT written (rows with NO shared partial at all — pivot pins "
+                 "and local prior rows; since the 2026-09-14 CLK fallback a code row with "
+                 "no satellite code-bias column is no longer among them).  0 written "
                  "under an ARMED trace means the pass never pooled a station — read the "
                  "P1-4 line.",
                  ctx.carry.pf_rows_written, ctx.carry.pf_rows_code, ctx.carry.pf_rows_phase,
                  ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed);
+    if (config_.getNetworkConfig().trace_station_block)
+        // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line.
+        // The two refusal counts distinguish the two ways the sweep finds nothing —
+        // no station reached the audit, or the block could not be decomposed.
+        log->log(ctx.carry.sb_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
+                 "Network (§24.10 card ZP station block): {} station-epoch row(s) written to "
+                 "network_station_block.csv over {} traced emission(s) (the first 20 EMITTED "
+                 "epochs, then every 60th); {} station-epoch(s) skipped (not in the solve / no "
+                 "usable assembly) and {} undecomposable (N_rr unavailable or its eigen-"
+                 "decomposition did not converge).  0 written under an ARMED trace means no "
+                 "epoch ever reached the wire — read the emission counters.",
+                 ctx.carry.sb_rows_written, ctx.carry.sb_epochs_written,
+                 ctx.carry.sb_stations_skipped, ctx.carry.sb_decomp_failed);
     if (config_.getNetworkConfig().trace_sh_spectrum)
         log->info("Network (P1-3 shared-normal spectrum): {} epoch(s) written to "
                   "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).",

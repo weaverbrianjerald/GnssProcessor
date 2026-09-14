@@ -2299,6 +2299,19 @@ namespace GnssProcessor {
                       "metres) with the row weight and LOS elevation -> network_pf_rows.csv "
                       "(trace-only; the P1-4 residual pass runs whenever this, "
                       "trace_postfit_keyed or trace_postfit_sigma0 is armed).");
+        // SPEC_event_harness §24.10 (card ZP): the per-station LOCAL-BLOCK audit.
+        // Trace-only, fingerprint-SAFE (absent from NetworkRunContext.cpp's
+        // fingerprint list like the three riders above), and measure-only — it reads
+        // the solved estimator through const accessors after the solve.
+        network_config_.trace_station_block =
+            jval<bool>(json, "network.trace_station_block", "trace_station_block", false);
+        if (network_config_.trace_station_block)
+            log->info("Network (§24.10 card ZP): network.trace_station_block ON — per-station "
+                      "LOCAL-block audit (rank, condition number, the 3 smallest eigenpairs and "
+                      "the local states spanning them, the ZWD column's effective vs raw "
+                      "information, the reconstructed local correction, and zero-redundancy row "
+                      "counts by kind) -> network_station_block.csv on the first 20 EMITTED "
+                      "epochs and every 60th thereafter (trace-only, measure-only).");
         if (network_config_.trace_sh_spectrum)
             log->info("Network (P1-3): network.trace_sh_spectrum ON — per-epoch reduced-shared-"
                       "normal spectrum + per-family eigenvector mass partition into "

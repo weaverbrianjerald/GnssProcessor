@@ -1711,6 +1711,17 @@ namespace GnssProcessor {
         long long pf_rows_phase        = 0;   ///< …of which kind=phase
         long long pf_rows_no_elev      = 0;   ///< …written with an EMPTY elev_deg (station absent from the modeled set, or no satellite on the row)
         long long pf_rows_unattributed = 0;   ///< data rows attributed to neither family (local-column-only pseudo-observations) — counted, not written
+        // SPEC_event_harness §24.10 (network.trace_station_block, card ZP): run-end
+        // accounting of the per-station LOCAL-block audit.  Invariant #4 needs all
+        // four: "0 rows under an ARMED trace" must be visible, and the two refusal
+        // counts say WHICH of the two ways the sweep can find nothing happened —
+        // no station reached the audit at all, or the block itself could not be
+        // decomposed (a non-finite / empty N_rr).
+        long long sb_rows_written     = 0;   ///< station-epoch rows written to network_station_block.csv
+        long long sb_epochs_written   = 0;   ///< TRACED epochs that wrote at least one row
+        long long sb_stations_skipped = 0;   ///< station-epochs skipped: not in the solve, no usable assembly, or no local block
+        long long sb_decomp_failed    = 0;   ///< station-epochs skipped: N_rr unavailable or its eigen-decomposition did not converge
+        std::size_t sb_last_emitted   = 0;   ///< n_emitted of the last audited emission (one row-set per EMITTED epoch, never per solve)
 
         // --- PREFIT census, per-epoch scalars ---------------------------------
         // Filled by

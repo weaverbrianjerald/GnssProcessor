@@ -616,6 +616,19 @@ namespace GnssProcessor {
         /// pools cannot be: they pool per STA / SAT / SIG separately and drop the sign.
         std::ofstream pf_rows_trace;
         const std::filesystem::path pf_rows_trace_path;
+        /// SPEC_event_harness §24.10 card ZP (@c network.trace_station_block): the
+        /// per-station LOCAL-BLOCK audit — one row per station per TRACED epoch (the
+        /// first 20 EMITTED epochs, then every 60th) describing
+        /// @f$N_{rr}=A_r^\top W A_r@f$ + folded station priors, the matrix
+        /// @c NetworkEstimator::reconstructStation inverts with the shared states held
+        /// at their solved values.  Columns: @c week,tow,station, the row counts by
+        /// kind, @c n_local, @c rank, @c cond, the three smallest eigenpairs with the
+        /// local states that span them, the ZWD column's effective / raw information,
+        /// the reconstructed local correction's norm + ZWD element, and the
+        /// zero-redundancy row counts.  The eyes of card ZP: it names WHICH local
+        /// direction is unresolved, not merely that the block is ill-conditioned.
+        std::ofstream station_block_trace;
+        const std::filesystem::path station_block_trace_path;
         /// S1 (@c network.trace_phase_anchor): one row per GAUGE-PINNED ambiguity per
         /// PROCESSED epoch — @c week,tow,cons,signal,sat,anchor_sta.  The
         /// (constellation, signal, satellite) -> anchoring STATION map that realizes the

@@ -188,6 +188,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkClockAnchor.cpp
     src/core/filter/NetworkFrameDiag.cpp
+    src/core/filter/NetworkStationBlock.cpp
     src/core/filter/NetworkHandoverStransform.cpp
     src/core/filter/NetworkRowClassify.cpp
     src/core/filter/NetworkRhsAttrib.cpp
@@ -369,6 +370,7 @@ add_executable(gnss_tests
     tests/test_datum_graph_census.cpp
     tests/test_network_fast_clock.cpp
     tests/test_network_run_traces.cpp
+    tests/test_station_block_audit.cpp
     tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp

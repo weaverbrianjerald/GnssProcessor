@@ -1955,6 +1955,35 @@ namespace GnssProcessor {
          */
         bool trace_postfit_rows{ false };
         /**
+         * @brief SPEC_event_harness §24.10 (card ZP): per-station LOCAL-BLOCK audit
+         *        (@c network.trace_station_block) -> @c network_station_block.csv.
+         *
+         * §24.9 measured a station whose own code rows fit to 0.3–0.55 m while its
+         * reconstructed ZWD reads −18 ± 4.5 m and 36 % of its rows carry ZERO
+         * redundancy.  Nothing in the tree reported the object that explains both:
+         * the station's LOCAL normal block
+         * @f$N_{rr}=A_r^\top W A_r+\text{(folded station priors)}@f$ — the matrix
+         * @ref NetworkEstimator::reconstructStation inverts with the shared states
+         * held at their solved values @f$x_s@f$
+         * (@f$x_r=N_{rr}^{-1}(u_r-N_{rs}x_s)@f$).  Armed, one row per station per
+         * TRACED epoch (the first 20 EMITTED epochs, then every 60th) carries its
+         * numerical rank and condition number, its three smallest eigenpairs with
+         * the LOCAL states that span them (clock / ZWD / receiver code bias /
+         * per-LOS ionosphere / ambiguity), the ZWD column's EFFECTIVE information
+         * after eliminating every other local state against its RAW
+         * @f$\sum w\,m_\text{wet}^2@f$, the reconstructed local correction's norm
+         * and its ZWD element, and the count of ZERO-REDUNDANCY rows
+         * (@f$r_i=1-w_i h_i^\top N_{rr}^{+}h_i<10^{-6}@f$) by kind.
+         *
+         * MEASURE-ONLY: the sweep runs in the trigger-instrumentation group after
+         * the solve and reads @ref NetworkEstimator through const accessors only —
+         * no @c x, no @c N, no order of operations changes, ON or OFF.  Cost is one
+         * symmetric eigen-decomposition of a ~60–100-dimensional block per station
+         * on the traced epochs alone.  TRACE-ONLY — never folded into the
+         * warm-resume fingerprint.  Default OFF ⇒ no file, byte-identical.
+         */
+        bool trace_station_block{ false };
+        /**
          * @brief SPEC_day129_frame_guards Phase 2.2: SH-field health GATE
          *        (@c network.sh_health_gate) — gate emission, not just warn.
          *
