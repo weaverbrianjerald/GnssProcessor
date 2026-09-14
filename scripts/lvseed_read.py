@@ -1566,6 +1566,359 @@ def fmt_r5(res):
 
 
 # --------------------------------------------------------------------------- #
+# R6 — §24.15: what the wire's noisy satellites are made of
+# --------------------------------------------------------------------------- #
+R6_SATS = ["G29", "G28", "G32", "G18"]
+R6_CONTROLS = ["G27", "G06"]
+R_EARTH_M = 6378137.0
+
+
+def sun_unit_ecef(week, tow):
+    """Sub-solar direction as an ECEF unit vector, from the SAME low-precision solar
+    series `sh_vtec.mean_sun_longitude` ports from `meanSunLongitude` (sub-solar
+    longitude), plus the declination from the ecliptic longitude and obliquity.
+    Good to ~0.01 deg — far inside what a cylindrical shadow test needs."""
+    jd = 2444244.5 + week * 7.0 + tow / 86400.0
+    n = jd - 2451545.0
+    L = math.radians((280.460 + 0.9856474 * n) % 360.0)
+    g = math.radians((357.528 + 0.9856003 * n) % 360.0)
+    lam = L + math.radians(1.915) * math.sin(g) + math.radians(0.020) * math.sin(2.0 * g)
+    eps = math.radians(23.439 - 4.0e-7 * n)
+    dec = math.asin(math.sin(eps) * math.sin(lam))
+    lon = mean_sun_longitude(week, tow)
+    return np.array([math.cos(dec) * math.cos(lon),
+                     math.cos(dec) * math.sin(lon),
+                     math.sin(dec)])
+
+
+def eclipse_and_beta(sp3_paths, sats, week, t_lo, t_hi):
+    """Cylindrical umbra test + beta angle per satellite over [t_lo, t_hi].
+
+    In shadow when the satellite is on the anti-sun side (r.s < 0) AND its distance
+    from the Earth-Sun line is below the Earth's radius.  beta is the Sun's elevation
+    above the orbital plane: sin(beta) = s . (r x v)/|r x v|, v by central difference
+    on the SP3 nodes.
+    """
+    sys.path.insert(0, os.path.join(REPO, "scripts"))
+    from field_wire_phase_clock_census import parse_sp3
+    recs = {}
+    for p in sp3_paths:
+        for sat, (t, xyz) in parse_sp3(p, set(sats)).items():
+            if sat in recs:
+                t0, x0 = recs[sat]
+                t, xyz = np.concatenate([t0, t]), np.concatenate([x0, xyz])
+                o = np.argsort(t)
+                t, xyz = t[o], xyz[o]
+            recs[sat] = (t, xyz)
+    out = {}
+    for sat in sats:
+        if sat not in recs:
+            out[sat] = dict(error="no SP3 arc")
+            continue
+        t, xyz = recs[sat]
+        m = (t >= t_lo - 600) & (t <= t_hi + 600)
+        t, xyz = t[m], xyz[m]
+        # consecutive daily SP3 files share their boundary node; a duplicate time
+        # makes np.gradient divide by zero
+        _, uniq = np.unique(t, return_index=True)
+        t, xyz = t[uniq], xyz[uniq]
+        if len(t) < 3:
+            out[sat] = dict(error=f"only {len(t)} SP3 nodes in the window")
+            continue
+        v_ecef = np.gradient(xyz, t, axis=0)
+        # SP3 velocity is EARTH-FIXED; the orbit plane is inertially fixed, so the
+        # plane normal needs the inertial velocity v_i = v_ecef + omega x r (still
+        # written on ECEF axes, which is all the dot product with an ECEF Sun vector
+        # needs).  Without this the "beta angle" swings tens of degrees in two hours,
+        # which is the Earth turning, not the Sun moving.
+        omega = np.array([0.0, 0.0, 7.2921151467e-5])
+        rows = []
+        for i in range(len(t)):
+            s = sun_unit_ecef(week, float(t[i]))
+            r = xyz[i]
+            along = float(r @ s)
+            perp = float(np.linalg.norm(r - along * s))
+            nvec = np.cross(r, v_ecef[i] + np.cross(omega, r))
+            nvec = nvec / max(1e-9, float(np.linalg.norm(nvec)))
+            rows.append(dict(tow=float(t[i]),
+                             in_shadow=bool(along < 0.0 and perp < R_EARTH_M),
+                             perp_over_Re=perp / R_EARTH_M, along_sign=1 if along > 0 else -1,
+                             beta_deg=math.degrees(math.asin(max(-1.0, min(1.0,
+                                                                           float(s @ nvec)))))))
+        sh = [r["tow"] for r in rows if r["in_shadow"]]
+        betas = [r["beta_deg"] for r in rows]
+        # the closest approach to the shadow cylinder while on the anti-sun side
+        night = [r for r in rows if r["along_sign"] < 0]
+        out[sat] = dict(n_nodes=len(rows), any_shadow=bool(sh),
+                        shadow_tow_first=min(sh) if sh else None,
+                        shadow_tow_last=max(sh) if sh else None,
+                        n_shadow_nodes=len(sh),
+                        min_perp_over_Re_on_night_side=min((r["perp_over_Re"] for r in night),
+                                                           default=None),
+                        frac_nodes_night_side=float(len(night) / len(rows)),
+                        beta_deg_first=betas[0], beta_deg_last=betas[-1],
+                        beta_deg_min=min(betas), beta_deg_max=max(betas))
+    return out
+
+
+def read_r6(project, arm="_cm_pvb", sats=None, t_lo=TOW0, t_hi=266370.0,
+            near_ep=2, min_drift_rows=4):
+    sats = sats or (R6_SATS + R6_CONTROLS)
+    import wire_vs_code_census as wc
+    ser, ev, _cnt = _census_series(project, arm, t_lo, t_hi)
+    epochs, _m = wc.parse_products(os.path.join(arm_dir(project, arm), "products.txt"))
+    epochs = [e for e in epochs if t_lo - 1e-3 <= e["tow"] <= t_hi + 1e-3]
+    k_of = lambda t: int(round((t - TOW0) / DT_S)) + 1                      # noqa: E731
+
+    # ---- boundary epochs per satellite: a declared PB or CB discontinuity, a clock
+    # disc, an R retro mark, a G datum change, or a PHASE_ANCHOR election.
+    bounds = defaultdict(set)
+    for a, b in zip(epochs[:-1], epochs[1:]):
+        kb = k_of(b["tow"])
+        for (s, sg), v in b["P"].items():
+            if (s, sg) in a["P"] and a["P"][(s, sg)][3] != v[3]:
+                bounds[s].add(kb)
+        for (s, sg), v in b["B"].items():
+            if (s, sg) in a["B"] and a["B"][(s, sg)][1] != v[1]:
+                bounds[s].add(kb)
+        for s, v in b["C"].items():
+            if s in a["C"] and a["C"][s][2] != v[2]:
+                bounds[s].add(kb)
+        for s in b["retro"]:
+            bounds[s].add(kb)
+        if b["datum_changed"]:
+            for s in b["C"]:
+                bounds[s].add(kb)
+    logs = os.path.join(arm_dir(project, arm), "logs")
+    _h, anchor_rows = _scan_csv(os.path.join(logs, "network_events.csv"),
+                                lambda d, f: d.get("tier") == "PHASE_ANCHOR", limit=10 ** 6)
+    anchors = defaultdict(list)
+    for line in anchor_rows:
+        f = line.split(",")
+        anchors[f[4]].append(line)
+        bounds[f[4]].add(k_of(float(f[1])))
+
+    # ---- station count per (satellite, epoch) and the elected-anchor geometry
+    df = load_pf_rows(project, arm)
+    nsta = (df.groupby(["sat", "k"], observed=True)["station"].nunique()
+            .reset_index(name="n"))
+    nsta_map = defaultdict(dict)
+    for r in nsta.itertuples(index=False):
+        nsta_map[str(r.sat)][int(r.k)] = int(r.n)
+    g = df.groupby(["station", "sat"], observed=True)["k"]
+    runs, elev = {}, {}
+    for (sta, s), kk in g:
+        k = np.unique(kk.to_numpy())
+        cut = np.nonzero(np.diff(k) > 5)[0]
+        bnd = [0] + (cut + 1).tolist() + [len(k)]
+        runs[(str(sta), str(s))] = [(int(k[bnd[i]]), int(k[bnd[i + 1] - 1]))
+                                    for i in range(len(bnd) - 1)]
+    for r in df[["station", "sat", "k", "elev_deg"]].itertuples(index=False):
+        elev[(str(r.station), str(r.sat), int(r.k))] = float(r.elev_deg)
+
+    out = dict(arm=arm, window=[t_lo, t_hi], near_ep=near_ep, sats={})
+    for sat in sats:
+        keys = [k for k in ser["phase"] if (k[0] if isinstance(k, tuple) else k) == sat]
+        B = bounds.get(sat, set())
+        near = set()
+        for kb in B:
+            near.update(range(kb - near_ep, kb + near_ep + 1))
+        ss_tot = ss_near = ss_drift_marg = ss_drift_nested = 0.0
+        n_rows = n_near = n_arcs = n_arcs_drift = 0
+        arclens = []
+        dser = defaultdict(list)      # k -> |dD| over that satellite's signals
+        for key in keys:
+            s_ = ser["phase"][key]
+            for arc in wc.split_arcs(s_, ev.get(sat, {}), declared=True):
+                if len(arc) < 2:
+                    continue
+                n_arcs += 1
+                arclens.append(len(arc))
+                t = np.array([s_[i][0] for i in arc], float)
+                d = np.array([s_[i][1] for i in arc], float)
+                r = d - d.mean()
+                kk = np.array([k_of(x) for x in t])
+                ss_tot += float(r @ r)
+                n_rows += len(r)
+                nm = np.array([int(x) in near for x in kk])
+                ss_near += float(r[nm] @ r[nm])
+                n_near += int(nm.sum())
+                for a_, b_ in zip(range(len(t) - 1), range(1, len(t))):
+                    if kk[b_] - kk[a_] == 1:
+                        dser[int(kk[b_])].append(abs(d[b_] - d[a_]))
+                if len(r) >= min_drift_rows:
+                    n_arcs_drift += 1
+                    tt = t - t.mean()
+                    den = float(tt @ tt)
+                    if den > 0:
+                        ss_drift_marg += float((tt @ r) ** 2 / den)
+                    # nested: the drift of what the boundary rows leave behind
+                    if (~nm).sum() >= min_drift_rows:
+                        t2 = t[~nm]
+                        r2 = r[~nm] - r[~nm].mean()
+                        t2 = t2 - t2.mean()
+                        d2 = float(t2 @ t2)
+                        if d2 > 0:
+                            ss_drift_nested += float((t2 @ r2) ** 2 / d2)
+        a_share = ss_near / ss_tot if ss_tot > 0 else float("nan")
+        b_share_n = ss_drift_nested / ss_tot if ss_tot > 0 else float("nan")
+        b_share_m = ss_drift_marg / ss_tot if ss_tot > 0 else float("nan")
+
+        # (2) |dD| vs |d n_stations|
+        ks = sorted(dser)
+        x, y = [], []
+        for k in ks:
+            n1, n0 = nsta_map[sat].get(k), nsta_map[sat].get(k - 1)
+            if n1 is None or n0 is None:
+                continue
+            x.append(abs(n1 - n0))
+            y.append(float(np.mean(dser[k])))
+        ns = sorted(nsta_map[sat].values()) if nsta_map[sat] else []
+        # |dn| is zero on ~95 % of epoch pairs, so a Pearson against it is nearly a
+        # two-point test.  The conditional contrast is the statistic with power.
+        xa, ya = np.asarray(x, float), np.asarray(y, float)
+        chg = xa > 0
+        m_chg = float(ya[chg].mean()) if chg.any() else float("nan")
+        m_no = float(ya[~chg].mean()) if (~chg).any() else float("nan")
+
+        # (3) the elections
+        el = []
+        for line in anchors.get(sat, []):
+            f = line.split(",")
+            k = k_of(float(f[1]))
+            sta = f[5]
+            age = None
+            for a_, b_ in runs.get((sta, sat), []):
+                if a_ <= k <= b_:
+                    age = k - a_
+            el.append(dict(line=line, tow=float(f[1]), k=k, to_station=sta,
+                           elev_deg=elev.get((sta, sat, k)), arc_age_ep=age))
+
+        out["sats"][sat] = dict(
+            n_signal_series=len(keys), n_declared_arcs=n_arcs, n_rows=n_rows,
+            arc_len_p50=q(arclens, .5), arc_len_max=max(arclens) if arclens else None,
+            within_arc_rms=float(math.sqrt(ss_tot / n_rows)) if n_rows else float("nan"),
+            n_boundary_epochs=len(B), boundary_epochs=sorted(B),
+            frac_rows_near_boundary=float(n_near / n_rows) if n_rows else float("nan"),
+            share_a_near_boundary=a_share,
+            # the honest statistic: the boundary band already COVERS `frac near` of the
+            # rows, so (a) has to be read as an enrichment over that base rate
+            enrichment_a=float(a_share / (n_near / n_rows))
+            if n_rows and n_near else float("nan"),
+            share_b_drift_nested=b_share_n, share_b_drift_marginal=b_share_m,
+            share_c_remainder=float(1.0 - a_share - b_share_n)
+            if np.isfinite(a_share) and np.isfinite(b_share_n) else float("nan"),
+            n_arcs_drift_fitted=n_arcs_drift,
+            nsta_min=min(ns) if ns else None, nsta_max=max(ns) if ns else None,
+            nsta_p50=q(ns, .5) if ns else None,
+            r_absdD_vs_absdn=pearson(x, y), rho_absdD_vs_absdn=spearman(x, y),
+            n_epoch_pairs=len(x), n_set_change_pairs=int(chg.sum()) if x else 0,
+            frac_epochs_with_set_change=float(np.mean(np.asarray(x) > 0)) if x else float("nan"),
+            mean_absdD_on_set_change=m_chg, mean_absdD_no_change=m_no,
+            ratio_absdD_change_over_not=float(m_chg / m_no)
+            if np.isfinite(m_chg) and np.isfinite(m_no) and m_no > 0 else float("nan"),
+            n_election_epochs=len({e["k"] for e in el}),
+            # a satellite's SIGNAL families can elect DIFFERENT anchor stations in the
+            # same epoch (the run-end log's "split-referenced satellites"); an election
+            # epoch with more than one successor is that
+            n_split_reference_epochs=sum(
+                1 for k in {e["k"] for e in el}
+                if len({e["to_station"] for e in el if e["k"] == k}) > 1),
+            elections=el)
+    # (4) eclipse / beta
+    data_root = os.path.join(project, "data")
+    sp3 = sorted(glob_sp3(data_root))
+    out["eclipse"] = eclipse_and_beta(sp3, sats, 2313, t_lo, t_hi)
+    out["sp3_files"] = sp3
+    return out
+
+
+def glob_sp3(data_root):
+    import glob as _g
+    return [p for d in ("2024-128", "2024-129", "2024-130")
+            for p in _g.glob(os.path.join(data_root, d, "products", "*ORB.SP3"))]
+
+
+def fmt_r6(R):
+    L = [f"R6 - sec 24.15: what the wire's noisy satellites are made of ({R['arm']}, "
+         f"tow {R['window'][0]:.0f}..{R['window'][1]:.0f}, the FULL 2 h)",
+         "classification: (a) > 50 % => the re-realization mechanism beside declared boundaries;",
+         "  (b) > 50 % => a slowly varying satellite term; station-count r > 0.5 => coverage-driven",
+         "  re-referencing; an eclipse crossing inside the noisy arcs => the re-admission edge.",
+         "",
+         "D_phase = the census's de-medianed wire-vs-CODE contrast; arcs are DECLARED arcs, so a",
+         "  disc bump / retro mark / datum change already CUTS the arc and the +-2-epoch boundary",
+         "  band therefore sits at the arc edges.  (a) and (b) are reported NESTED in the card's",
+         "  own order (the pf_rows_attrib house convention) so a+b+c closes exactly; (b) marginal",
+         "  is the drift fitted on ALL rows of each arc instead.  'frac near' is the SHARE OF ROWS",
+         "  the +-2 band covers - the base rate (a) has to beat."]
+    hdr = (f"{'sat':4s} {'arcs':>5s} {'rows':>6s} {'len50':>6s} {'rms':>7s} {'nbnd':>5s} "
+           f"{'frac near':>9s} {'(a) bnd':>8s} {'ENRICH':>7s} {'(b) drift':>9s} {'nfit':>5s} "
+           f"{'(b) marg':>9s} {'(c) rest':>8s}")
+    L += ["", "(1) the within-arc sum-of-squares decomposition", hdr, "-" * len(hdr)]
+    for sat, s in R["sats"].items():
+        tag = "*" if sat in R6_SATS else " "
+        L.append(f"{sat:3s}{tag}{s['n_declared_arcs']:5d} {s['n_rows']:6d} "
+                 f"{f(s['arc_len_p50'],0)!s:>6s} {f(s['within_arc_rms'],4)!s:>7s} "
+                 f"{s['n_boundary_epochs']:5d} {f(s['frac_rows_near_boundary'],3)!s:>9s} "
+                 f"{f(s['share_a_near_boundary'],3)!s:>8s} {f(s['enrichment_a'],2)!s:>7s} "
+                 f"{f(s['share_b_drift_nested'],3)!s:>9s} {s['n_arcs_drift_fitted']:5d} "
+                 f"{f(s['share_b_drift_marginal'],3)!s:>9s} {f(s['share_c_remainder'],3)!s:>8s}")
+    L.append("  (* = the wire's noisy four; the others are the controls)")
+    L.append("  ENRICH = (a) / 'frac near'.  1.00 means the boundary band holds exactly its own")
+    L.append("    share of the energy, i.e. NO concentration at declared boundaries.  nfit = arcs")
+    L.append("    long enough (>= 4 rows) for a drift fit.")
+    hdr = (f"{'sat':4s} {'nsta':>10s} {'pairs':>6s} {'set-chg':>8s} {'r |dD|,|dn|':>11s} "
+           f"{'rho':>7s} {'|dD| chg':>9s} {'|dD| no':>9s} {'ratio':>7s}")
+    L += ["", "(2) does the wire move when the tracking set moves?", hdr, "-" * len(hdr)]
+    for sat, s in R["sats"].items():
+        tag = "*" if sat in R6_SATS else " "
+        L.append(f"{sat:3s}{tag}{(str(s['nsta_min']) + '-' + str(s['nsta_max'])):>10s} "
+                 f"{s['n_epoch_pairs']:6d} {s['n_set_change_pairs']:8d} "
+                 f"{f(s['r_absdD_vs_absdn'])!s:>11s} {f(s['rho_absdD_vs_absdn'])!s:>7s} "
+                 f"{f(s['mean_absdD_on_set_change'],4)!s:>9s} "
+                 f"{f(s['mean_absdD_no_change'],4)!s:>9s} "
+                 f"{f(s['ratio_absdD_change_over_not'],2)!s:>7s}")
+    L.append("  |dn| is 0 on ~95 % of epoch pairs, so the Pearson is nearly a two-point test; the")
+    L.append("  conditional means (mean |dD| on set-change pairs vs the rest) are the powered form.")
+
+    L += ["", "(3) anchor elections per satellite (successor elevation and arc age at election)"]
+    for sat, s in R["sats"].items():
+        L.append(f"  {sat}: {len(s['elections'])} PHASE_ANCHOR row(s) over "
+                 f"{s['n_election_epochs']} election epoch(s), of which "
+                 f"{s['n_split_reference_epochs']} elect MORE THAN ONE successor station "
+                 f"(the signal families split-reference)")
+        for e in s["elections"]:
+            L.append(f"    | {e['line']}")
+            L.append(f"        -> k {e['k']}, successor {e['to_station']} at "
+                     f"{f(e['elev_deg'],2)} deg, arc age "
+                     f"{'-' if e['arc_age_ep'] is None else e['arc_age_ep']} epochs")
+
+    L += ["", "(4) eclipse (cylindrical umbra) and beta angle over the window",
+          f"    SP3: {', '.join(os.path.basename(p) for p in R['sp3_files'])}"]
+    hdr = (f"{'sat':4s} {'nodes':>6s} {'in shadow':>10s} {'shadow tow':>20s} {'min perp/Re':>12s} "
+           f"{'night frac':>10s} {'beta first':>10s} {'beta last':>10s} {'beta min..max':>16s}")
+    L += [hdr, "-" * len(hdr)]
+    for sat, e in R["eclipse"].items():
+        if "error" in e:
+            L.append(f"{sat:4s} {e['error']}")
+            continue
+        sw = ("-" if not e["any_shadow"]
+              else f"{e['shadow_tow_first']:.0f}..{e['shadow_tow_last']:.0f}")
+        if e["min_perp_over_Re_on_night_side"] is None:
+            e = dict(e, min_perp_over_Re_on_night_side=float("nan"))
+        L.append(f"{sat:4s} {e['n_nodes']:6d} {str(e['any_shadow']):>10s} {sw:>20s} "
+                 f"{f(e['min_perp_over_Re_on_night_side'],3)!s:>12s} "
+                 f"{f(e['frac_nodes_night_side'],2)!s:>10s} {f(e['beta_deg_first'],2)!s:>10s} "
+                 f"{f(e['beta_deg_last'],2)!s:>10s} "
+                 f"{(f(e['beta_deg_min'],2) + '..' + f(e['beta_deg_max'],2)):>16s}")
+    L.append("    in shadow = on the anti-sun side AND within one Earth radius of the Earth-Sun")
+    L.append("    line; min perp/Re is the closest the satellite came to that cylinder while on")
+    L.append("    the night side (< 1 would be an eclipse).")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------- #
 # witness — per-station code rms vs arcs born inside the run
 # --------------------------------------------------------------------------- #
 def read_witness(project, arms, gap_epochs, min_arc):
@@ -1622,7 +1975,7 @@ def emit(out_dir, name, obj, text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "witness", "all"])
+    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "witness", "all"])
     ap.add_argument("--project", default=PROJECT_DEFAULT)
     ap.add_argument("--arms", default=",".join(ARMS_DEFAULT))
     ap.add_argument("--out", default=None)
@@ -1634,6 +1987,8 @@ def main():
     ap.add_argument("--sat", default="G06", help="r5: the satellite under test")
     ap.add_argument("--station", default="DJIG00DJI", help="r5b: the station under test")
     ap.add_argument("--tow", type=float, default=265470.0, help="r5c/r5d: the election epoch")
+    ap.add_argument("--r6-sats", default=",".join(R6_SATS + R6_CONTROLS),
+                    help="r6: satellites under test (the first four are flagged as the noisy set)")
     a = ap.parse_args()
     arms = [s for s in a.arms.split(",") if s]
     out_dir = a.out or os.path.join(a.project, "runs", "_lvseed")
@@ -1659,6 +2014,10 @@ def main():
                      c=read_r5c(a.project, arms, tow_focus=a.tow, sat=a.sat),
                      d=read_r5d(a.project, arms, tow_focus=a.tow, sat=a.sat))
             emit(out_dir, "r5", r, fmt_r5(r))
+        elif t == "r6":
+            r = read_r6(a.project, arm=arms[0],
+                        sats=[s for s in a.r6_sats.split(",") if s] or None)
+            emit(out_dir, "r6", r, fmt_r6(r))
         elif t == "witness":
             r = read_witness(a.project, arms, a.gap_epochs, a.min_arc)
             emit(out_dir, "witness", r, fmt_witness(r))
