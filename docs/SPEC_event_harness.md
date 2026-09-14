@@ -7422,3 +7422,25 @@ live, not silent).  Bars: §24.8's, the same rules against PV-B.  **Frozen readi
 posture card becomes the leveling vehicle + the Q3 family, and G4 (the DOY-129 event window) is graded on it next; neither does while c8c
 does ⇒ the gain needs the external LEVEL, which the producer cannot have — the code side is then bounded by the free clock and the card
 moves to the wire's phase side (R6); a divergence or a silent guard ⇒ recorded, the family not armed.
+
+**§24.15 R6 RESULTS (2026-09-14 ~04:30 local; worker commit `63a2a4a`, merged; PV-B traces only).**  None of the four classifications
+fires: the share of within-arc D_phase energy within ± 2 epochs of a declared boundary or election is 0.28–0.53 for the noisy four against
+a band that already covers 36–49 % of the rows by construction (ENRICH 0.72–1.16 — the noisiest three are DEPLETED at the boundaries); a
+per-arc linear drift takes 0.13–0.32; the coverage correlation peaks at |r| 0.043 with the wire QUIETER on set-change epochs for five of
+six; and no satellite is near eclipse (closest approach 2.1 R⊕, |β| 22–68°, from COD MGX SP3 with the Earth-fixed velocity corrected).  For
+G29 / G28 / G32 the largest term is the unexplained remainder (0.39–0.52).  Two structural facts: **G32 churns its anchor five times in
+24 min with three successors below 20°** (and is the one satellite louder on set-change epochs, 1.64× on 13 pairs); **G18 split-references
+— its signal families elect DIFFERENT anchor stations in the same epoch at 2 of its 3 election epochs** (k 170: GCGO → CHUR and GCGO → CPVG;
+k 191: REYK → BOGT and REYK → CHUR).  With R5's DJIG election these point at the coverage-only election rule, not at a per-satellite record.
+
+**R7 (pre-registered, same worker, PV-B traces): does the wire follow its anchor's code level?**  The satellite phase bias on this vehicle
+is one station's phase level (the gauge "pinned at the highest-coverage receiver tracking each satellite"), and R1 showed the per-LOS code
+level GROWS over an arc for 74–77 % of arcs — so the hypothesis: the within-arc D_phase wander is the anchor station's own code-level
+evolution (multipath / group-delay drift with elevation) carried onto the wire.  Read: per satellite and declared arc (≥ 20 epochs), the
+Pearson r and slope of D_phase(t) against (A) the anchor station's per-LOS code residual level series for that satellite (pf_rows,
+signal-pooled and C1) and (B) the tracking-set mean of the same, at matched epochs; pooled r weighted by arc length; the anchor's
+elevation per epoch and r(within-arc D rms, anchor elevation) across arcs; G32's five anchors read individually.  **Frozen reading:**
+r(A) > 0.5 and r(A) > r(B) ⇒ the wire follows its anchor's code level — the phase-datum REALIZATION is the wire defect (a one-station,
+coverage-elected, code-tracking gauge), and the card is a multi-station gauge (or a minimum anchor age + elevation with the level
+decoupled from the code after convergence) — a design card; r(B) > r(A) > 0.5 ⇒ the level tracks the code network-wide by construction (a
+leveling-memory posture knob); both < 0.3 ⇒ the wander is not code-driven, and the per-arc spectrum (white vs random walk) is recorded.
