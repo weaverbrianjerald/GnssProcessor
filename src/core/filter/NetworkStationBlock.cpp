@@ -177,9 +177,16 @@ namespace {
 /// One local column's kind label for the span field.  Built from the station's
 /// StateManager key maps through the assembly's H-column -> A_r-column map, so
 /// the labels are correct under BOTH vehicles (nothing here is carry-gated).
-/// Kinds, per the card: `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
-/// `amb:<sat>:<sig>`, plus `isb:<sys>` for a system time offset and the fallback
-/// `col<k>` for a local column no state map claims.
+///
+/// EVERY state kind the manager exposes is covered, deliberately: an unlabelled
+/// column in a span reads as `col<k>`, which is precisely the blind spot this
+/// trace exists to remove -- "the weak direction is columns 2, 3 and 4" names no
+/// mechanism.  Kinds: the card's `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
+/// `amb:<sat>:<sig>`, plus `pos:<xyz>`, `vel:<xyz>`, `clkrate`, `phclk`,
+/// `grdn` / `grde`, `dzwd`, `iono` (the single-LOS state), `ionorate:<sat>`,
+/// `isb:<sys>`, `satbias:<key>`, `satpb:<key>`, `rxpb:<key>` and
+/// `satclk:<sat>`.  The `col<k>` fallback survives only for a local column no
+/// state map claims at all.
 std::vector<std::string> buildLocalLabels(const StationAssembly& R,
                                           const StateManager& sm,
                                           Eigen::Index n_local,
@@ -197,11 +204,35 @@ std::vector<std::string> buildLocalLabels(const StationAssembly& R,
     };
 
     const std::size_t kNone = std::numeric_limits<std::size_t>::max();
-    if (sm.getClockIndex() != kNone) put(sm.getClockIndex(), "clk", false);
-    if (sm.getTropoIndex() != kNone) put(sm.getTropoIndex(), "zwd", false);
-    for (const auto& [key, idx] : sm.getCodeBiasStates()) put(idx, "rxcb:" + key, false);
-    for (const auto& [sat, idx] : sm.getIonosphereStates()) put(idx, "iono:" + sat, false);
+    auto putScalar = [&](std::size_t idx, const char* label) {
+        if (idx != kNone) put(idx, label, false);
+    };
+    // Core block (index-stable by construction).
+    if (sm.getPositionIndex() != kNone) {
+        const std::size_t p = sm.getPositionIndex();
+        put(p + 0, "pos:x", false); put(p + 1, "pos:y", false); put(p + 2, "pos:z", false);
+    }
+    if (sm.getVelocityIndex() != kNone) {
+        const std::size_t v = sm.getVelocityIndex();
+        put(v + 0, "vel:x", false); put(v + 1, "vel:y", false); put(v + 2, "vel:z", false);
+    }
+    putScalar(sm.getClockIndex(), "clk");
+    putScalar(sm.getClockRateIndex(), "clkrate");
+    putScalar(sm.getPhaseClockIndex(), "phclk");
+    putScalar(sm.getTropoIndex(), "zwd");
+    putScalar(sm.getDifferentialTropoIndex(), "dzwd");
+    putScalar(sm.getTropoGradientNorthIndex(), "grdn");
+    putScalar(sm.getTropoGradientEastIndex(), "grde");
+    putScalar(sm.getIonoIndex(), "iono");
+    // Dynamic key -> index maps.
+    for (const auto& [key, idx] : sm.getCodeBiasStates())         put(idx, "rxcb:" + key, false);
+    for (const auto& [sat, idx] : sm.getIonosphereStates())       put(idx, "iono:" + sat, false);
+    for (const auto& [sat, idx] : sm.getIonosphereRateStates())   put(idx, "ionorate:" + sat, false);
     for (const auto& [sys, idx] : sm.getSystemTimeOffsetStates()) put(idx, "isb:" + sys, false);
+    for (const auto& [key, idx] : sm.getSatBiasStates())          put(idx, "satbias:" + key, false);
+    for (const auto& [key, idx] : sm.getSatPhaseBiasStates())     put(idx, "satpb:" + key, false);
+    for (const auto& [key, idx] : sm.getReceiverPhaseBiasStates())put(idx, "rxpb:" + key, false);
+    for (const auto& [sat, idx] : sm.getSatClockStates())         put(idx, "satclk:" + sat, false);
     for (const auto& [key, idx] : sm.getAmbiguities()) {
         // "<sat>_<signal>" -> "amb:<sat>:<signal>"; an unparseable key keeps its
         // raw form rather than being dropped (a mislabelled column is still a
