@@ -306,6 +306,10 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
         config_.networkCodeBiasGfDatum(),
+        // RF-0c: the mode, and the run-latched broadcast targets (empty in every
+        // mode but broadcast_tgd, which is what makes the builder fall back to a
+        // zero target rather than guess).
+        config_.getNetworkConfig().sat_gf_datum, setup.sat_gf_target_m,
         gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
@@ -328,6 +332,20 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ++ctx.counters.n_w6_iono_none_epochs;
             ctx.counters.n_w6_iono_none_s2z_rows +=
                 static_cast<std::size_t>(cbd.n_s2z_channels);
+        }
+        // RF-0c ON-path telemetry.  Under the no-constraint posture this row IS the
+        // datum for the between-satellite geometry-free split, so the run has to be
+        // able to say how many satellites actually received one and — under
+        // broadcast_tgd — how many got a real group delay rather than a fallback zero
+        // wearing a physical name (standing invariant #4).
+        if (config_.getNetworkConfig().sat_gf_datum != NetworkSatGfDatum::NoneMode) {
+            ++ctx.counters.n_sat_gf_epochs;
+            ctx.counters.n_sat_gf_rows   += static_cast<std::size_t>(cbd.n_sat_gf_rows);
+            ctx.counters.n_sat_gf_tgd    += static_cast<std::size_t>(cbd.n_sat_gf_tgd_hits);
+            ctx.counters.n_sat_gf_tgd0   += static_cast<std::size_t>(cbd.n_sat_gf_tgd_zero);
+            ctx.counters.n_sat_gf_fallback +=
+                static_cast<std::size_t>(cbd.n_sat_gf_tgd_missing
+                                         + cbd.n_sat_gf_pair_not_l1l2);
         }
         if (within_epoch_armed) {
             cap_H = cbd.H; cap_z = cbd.z;
@@ -370,7 +388,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     if (spectrum_diag_budget > 0)   // first-N (spectrum block decrements below)
         log->warn("Network[W6-cb]{}: nshared={}, n_cb={}, folded {} code-bias gauge "
                   "rows (IF pin for {} sats + sum-to-zero for {} (const,signal) levels"
-                  "{}{})",
+                  "{}{}{})",
                   // RF-0b: in the no-constraint posture these rows are the WHOLE
                   // satellite code-bias datum, not a gauge beside an ionosphere
                   // constraint.  Naming the posture on the line that reports the row
@@ -396,6 +414,27 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
                                     "of which {} have a two-band family whose entire "
                                     "estimable content is the inter-family ISC",
                                     cbd.n_family_gf_rows, cbd.n_family_gf_only_pair)
+                      : std::string(),
+                  // RF-0c: name the datum on the line that reports the row count, so a
+                  // first-N read of any log says which S-basis produced the product it
+                  // is looking at — the zero and TGD frames differ by c*T_GD on every
+                  // code bias and by the same amount, opposite sign, in the emitted
+                  // ionosphere.
+                  cbd.n_sat_gf_rows > 0
+                      ? fmt::format(
+                            " + SAT-GF {} datum for {} sats{}",
+                            config_.getNetworkConfig().sat_gf_datum
+                                    == NetworkSatGfDatum::BroadcastTgd
+                                ? "broadcast_tgd" : "zero",
+                            cbd.n_sat_gf_rows,
+                            config_.getNetworkConfig().sat_gf_datum
+                                    == NetworkSatGfDatum::BroadcastTgd
+                                ? fmt::format(" ({} at c*T_GD, {} broadcast T_GD=0, "
+                                              "{} fallback-to-zero)",
+                                              cbd.n_sat_gf_tgd_hits, cbd.n_sat_gf_tgd_zero,
+                                              cbd.n_sat_gf_tgd_missing
+                                                  + cbd.n_sat_gf_pair_not_l1l2)
+                                : std::string())
                       : std::string());
 }
 

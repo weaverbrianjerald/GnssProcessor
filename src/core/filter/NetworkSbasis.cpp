@@ -536,6 +536,8 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     const std::function<double(const std::string&, const std::string&)>& freqOf,
     bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
     bool gf_datum,
+    NetworkSatGfDatum sat_gf_datum,
+    const std::map<std::string, double>& sat_gf_target_m,
     const std::set<std::string>& gf_family_constellations,
     const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
     const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
@@ -747,6 +749,75 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             // the GF record below is correctly inside its own success branch, and this is
             // the matching guard.
             if (f1 > 0.0 && f2 > 0.0) this_epoch_if_pin_real[sat] = { sig1, sig2 };
+        }
+        // (1a-RF0c) HARD per-satellite GEOMETRY-FREE datum (network.sat_gf_datum).
+        //
+        // The SAME estimable function as the (1b) block below — Odijk 2016 Eq. (30),
+        // (d_2 - d_1)/(mu_2 - mu_1) on the ionosphere-free pin's own pair — built here as
+        // a separate block because it is a DIFFERENT CARD with a different precondition,
+        // a different RHS and its own counters.  (1b) belongs to network.code_bias_gf_datum,
+        // which the loader refuses under frequency_mode = dual (there the IF and GF pins
+        // together leave nothing estimable, which is Odijk §5.1's own statement); RF-0c is
+        // armed independently of that gate because under dual "nothing estimable on the
+        // pinned pair" is the CORRECT answer, not a defect — RF-0b measured what happens
+        // without it (31 open directions per constellation, datumed by a 3 m shrinkage
+        // prior).  The loader hard-errors if both knobs are armed, so the two blocks can
+        // never both fold a row for the same satellite.
+        //
+        // WHY THE TARGET MAY BE NON-ZERO HERE, when (1b)'s must be 0.  d^s_GF is a datum
+        // quantity: any value is legal and the estimable parameters absorb the difference
+        // (their Table 8 — the geometry-free lump moves into the slant ionosphere,
+        // iota~ = iota + d_r,GF - d^s_GF).  Zero is the conventional choice; the broadcast
+        // T_GD is the PHYSICAL one, and it composes with the IF pin exactly rather than
+        // approximately.  IS-GPS-200 §20.3.3.3.3.2 defines the single-frequency
+        // corrections Δt_L1 = Δt_SV - T_GD and Δt_L2 = Δt_SV - gamma*T_GD against a
+        // broadcast clock referenced to the L1/L2 ionosphere-free combination, i.e.
+        // d^s_1 = c*T_GD and d^s_2 = c*gamma*T_GD in this model's sign convention.  Their
+        // IF combination a1*d_1 + a2*d_2 is IDENTICALLY zero (a1 + a2*gamma = 0 is the
+        // definition of the ionosphere-free weights), so the TGD target never fights the
+        // IF pin's own zero target; and their geometry-free combination is
+        // (d_2 - d_1)/(mu_2 - mu_1) = c*T_GD*(gamma - 1)/(gamma - 1) = c*T_GD exactly.
+        // That identity is why the RHS below is the latched metres value verbatim, with
+        // no frequency factor: it is already the pinned combination's value.
+        //
+        // mu_2 here is relative to sig1 (the builder's own convention), so the identity
+        // holds only when the pinned pair IS an (L1, L2) pair — the pair the navigation
+        // message describes.  Any other pair falls back to a zero target and is counted,
+        // because asserting a group delay for a pair T_GD never referenced would be a
+        // fabricated datum wearing a physical name.
+        if (sat_gf_datum != NetworkSatGfDatum::NoneMode && f1 > 0.0 && f2 > 0.0) {
+            const double mu2_minus_mu1 = (f1 * f1) / (f2 * f2) - 1.0;
+            if (std::abs(mu2_minus_mu1) > 1e-12) {
+                Eigen::VectorXd srow = Eigen::VectorXd::Zero(nshared);
+                bool s_ok = false;
+                try {
+                    srow(est.codeBiasColumn(sat, sig1)) = -1.0 / mu2_minus_mu1;
+                    srow(est.codeBiasColumn(sat, sig2)) =  1.0 / mu2_minus_mu1;
+                    s_ok = true;
+                } catch (...) { srow.setZero(); s_ok = false; }
+                if (s_ok && srow.cwiseAbs().sum() > 0.0) {
+                    double target = 0.0;
+                    if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
+                        // The pair must be (band 1, band 2) for T_GD to describe it.
+                        const bool l1l2 = sig1.size() >= 2 && sig2.size() >= 2 &&
+                                          sig1[1] == '1' && sig2[1] == '2';
+                        const auto tit = sat_gf_target_m.find(sat);
+                        if (!l1l2) {
+                            ++out.n_sat_gf_pair_not_l1l2;
+                        } else if (tit == sat_gf_target_m.end()) {
+                            ++out.n_sat_gf_tgd_missing;
+                        } else if (tit->second == 0.0) {
+                            ++out.n_sat_gf_tgd_zero;   // broadcast says zero: still physical
+                        } else {
+                            target = tit->second;
+                            ++out.n_sat_gf_tgd_hits;
+                        }
+                    }
+                    rows.push_back(std::move(srow));
+                    zs.push_back(target);
+                    ++out.n_sat_gf_rows;
+                }
+            }
         }
         // (1b) Per-satellite GEOMETRY-FREE pin — Odijk 2016 rank deficiency 3b
         // (Table 7), armed ONLY in the slant posture (the loader refuses it

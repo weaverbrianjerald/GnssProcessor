@@ -451,6 +451,74 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "by a consumer AS A PAIR.  The between-satellite geometry-free split is "
                   "PRIOR-determined here, not data-determined: check the null-space gate's "
                   "observed-vs-declared and the run-end W6-IONO-NONE counter.");
+        // --- RF-0c: latch the broadcast group delays, once, for the GF pin's RHS ---
+        // The navigation message is SIGNAL IN SPACE, not an external product, so reading
+        // it here does not re-introduce the external-data dependence RF-0b removed.  It
+        // is parsed independently of `brdc_rts` (that mode is about the ORBIT/CLOCK
+        // a-priori; this is about a datum value) and LATCHED: T_GD is a hardware
+        // constant the control segment updates rarely, and a datum that moved mid-run
+        // would step the emitted code biases and the estimable ionosphere together with
+        // nothing on the wire declaring it.  The per-satellite spread across the day's
+        // records is measured and reported, so a satellite whose T_GD actually changed
+        // is visible rather than silently averaged away.
+        if (config_.getNetworkConfig().sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
+            const std::filesystem::path nav_path = config_.getNavigationPath();
+            if (nav_path.empty()) {
+                log->error("Network (RF-0c): network.sat_gf_datum = broadcast_tgd needs a "
+                           "broadcast navigation file for the group delays, but "
+                           "files.navigation_path is empty.  Set it, let PathResolver "
+                           "auto-resolve a BRDC / _MN.rnx covering the day, or use "
+                           "sat_gf_datum = zero (which needs no navigation data).");
+                return 1;
+            }
+            const std::vector<BroadcastEphemeris> nav =
+                RinexNavParser::parse(nav_path.string());
+            std::map<std::string, double> first_tgd_s;   // sat -> first record's T_GD [s]
+            std::map<std::string, double> max_spread_s;  // sat -> max |T_GD - first| [s]
+            std::map<std::string, int>    n_rec;
+            for (const auto& e : nav) {
+                if (e.satellite.empty() || e.system == System::GLONASS) continue;
+                ++n_rec[e.satellite];
+                const auto it = first_tgd_s.find(e.satellite);
+                if (it == first_tgd_s.end()) {
+                    first_tgd_s[e.satellite] = e.kepler.tgd0;
+                    max_spread_s[e.satellite] = 0.0;
+                } else {
+                    max_spread_s[e.satellite] =
+                        std::max(max_spread_s[e.satellite],
+                                 std::abs(e.kepler.tgd0 - it->second));
+                }
+            }
+            if (first_tgd_s.empty()) {
+                log->error("Network (RF-0c): parsed 0 usable broadcast ephemerides from "
+                           "'{}' — no group delays, so every satellite's geometry-free "
+                           "datum would silently fall back to zero and the run would claim "
+                           "a physical datum it does not have.  Check the file is a RINEX "
+                           "3/4 navigation file covering the observation day, or use "
+                           "sat_gf_datum = zero.", nav_path.string());
+                return 1;
+            }
+            double worst_spread_m = 0.0;
+            std::string worst_sat;
+            int n_zero = 0;
+            for (const auto& [sat, tgd_s] : first_tgd_s) {
+                setup.sat_gf_target_m[sat] = Constants::SPEED_OF_LIGHT * tgd_s;
+                if (tgd_s == 0.0) ++n_zero;
+                const double sp = Constants::SPEED_OF_LIGHT * max_spread_s[sat];
+                if (sp > worst_spread_m) { worst_spread_m = sp; worst_sat = sat; }
+            }
+            log->info("Network (RF-0c): latched broadcast group delays for {} satellite(s) "
+                      "from '{}' ({} record(s) scanned); {} satellite(s) broadcast T_GD = 0 "
+                      "exactly (their geometry-free datum is then indistinguishable from "
+                      "sat_gf_datum = zero).  Largest within-day |c*dT_GD| {:.4f} m{}.  The "
+                      "FIRST record's value is used for the whole run — the datum is "
+                      "latched on purpose, so a non-zero spread here is information about "
+                      "the constellation, not an error.",
+                      setup.sat_gf_target_m.size(), nav_path.filename().string(),
+                      nav.size(), n_zero, worst_spread_m,
+                      worst_sat.empty() ? std::string{}
+                                        : fmt::format(" (on {})", worst_sat));
+        }
     } else if (config_.estimateNetworkSatCodeBias()) {
         // Card 5 belt-and-braces: the external-GIM code-bias path is post-processing-only
         // (a GIM is a daily product, unavailable in the self-sufficient brdc_rts service).
