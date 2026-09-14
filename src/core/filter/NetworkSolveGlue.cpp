@@ -346,6 +346,11 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_sat_gf_fallback +=
                 static_cast<std::size_t>(cbd.n_sat_gf_tgd_missing
                                          + cbd.n_sat_gf_pair_not_l1l2);
+            ctx.counters.n_sat_gf_extra    += static_cast<std::size_t>(cbd.n_sat_gf_extra_rows);
+            ctx.counters.n_sat_gf_isc0     += static_cast<std::size_t>(cbd.n_sat_gf_isc_zero);
+            ctx.counters.n_sat_gf_sameband += static_cast<std::size_t>(cbd.n_sat_gf_sameband_free);
+            ctx.counters.n_sat_gf_s2z_suppressed +=
+                static_cast<std::size_t>(cbd.n_s2z_suppressed);
         }
         if (within_epoch_armed) {
             cap_H = cbd.H; cap_z = cbd.z;

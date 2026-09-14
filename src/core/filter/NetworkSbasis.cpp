@@ -603,6 +603,11 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         st0_chan[skey].emplace_back(kv.first, col);
     }
 
+    // RF-0d: (constellation|signal) -> the satellites whose column the geometry-free
+    // datum pinned this epoch.  Used below to SUPPRESS the sum-to-zero row of any
+    // channel the datum already fixes completely — see the suppression block.
+    std::map<std::string, std::set<std::string>> sat_gf_pinned;
+
     // (1) Per-satellite ionosphere-free pin (clock-common gauge).
     for (const std::string& sat : sat_order) {
         std::vector<std::string>& sigs = sat_signals[sat];
@@ -816,6 +821,69 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     rows.push_back(std::move(srow));
                     zs.push_back(target);
                     ++out.n_sat_gf_rows;
+                    sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig1]
+                        .insert(sat);
+                    sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig2]
+                        .insert(sat);
+
+                    // --- RF-0d: the PER-SIGNAL extension -------------------------
+                    // RF-0c pinned the ionosphere-free PAIR only, which closes every
+                    // rank-deficiency-3b direction (the mu-shift moves all of the
+                    // satellite's columns together, so one row on the pair reaches it
+                    // — proved on a 4-signal roster).  What it does NOT do is make the
+                    // EXTRA channels' levels a datum: d(C2X) stays determined by the
+                    // stations that happen to track C2X, and on DOY-129 that is a
+                    // sparse set — RF-0c measured the consequence as a 66 m within-arc
+                    // rms on the L2X phase-bias wire after the pair pin had already cut
+                    // the worst arc 4.7x.
+                    //
+                    // So pin them too.  Each extra signal k is pinned through its
+                    // geometry-free combination against the SAME band-1 reference the
+                    // pair pin uses: (d_k - d_ref)/(mu_k - 1), at the SAME c*T_GD.
+                    // That target is not a coincidence — under the broadcast convention
+                    // d_j = c*T_GD*mu_j, so (d_k - d_ref)/(mu_k - 1) = c*T_GD for EVERY
+                    // band k, which is why one latched value serves the whole satellite.
+                    //
+                    // WHAT IT ASSERTS, said plainly: an inter-signal correction of ZERO
+                    // between channels of the same band (RINEX navigation carries no ISC
+                    // for GPS — only T_GD, BroadcastEphemerisTypes.hpp:65 — so there is
+                    // no broadcast value to use).  The real ISC is centimetre-class and
+                    // is a DATUM quantity here like the rest: a consumer applying the
+                    // emitted ionosphere and code biases as a pair absorbs it.  Every
+                    // such row is counted so the product can say how much of it is
+                    // asserted rather than broadcast.
+                    //
+                    // SAME-BAND extras are SKIPPED, not pinned: with mu_k = mu_ref their
+                    // geometry-free combination does not exist (the divisor is zero), and
+                    // their difference is the pure ISC, which needs no ionosphere to be
+                    // observable and IS estimable from the data at any coverage.  Pinning
+                    // it would throw away real content; leaving it free costs nothing.
+                    for (const std::string& sk : sigs) {
+                        if (sk == sig1 || sk == sig2) continue;
+                        const double fk = freqOf(sat, sk);
+                        if (!(fk > 0.0)) { ++out.n_sat_gf_extra_nofreq; continue; }
+                        const double mu_k = (f1 * f1) / (fk * fk);
+                        if (std::abs(mu_k - 1.0) <= 1e-12) {
+                            ++out.n_sat_gf_sameband_free;   // ISC stays estimable
+                            continue;
+                        }
+                        Eigen::VectorXd krow = Eigen::VectorXd::Zero(nshared);
+                        bool k_ok = false;
+                        try {
+                            krow(est.codeBiasColumn(sat, sig1)) = -1.0 / (mu_k - 1.0);
+                            krow(est.codeBiasColumn(sat, sk))   =  1.0 / (mu_k - 1.0);
+                            k_ok = true;
+                        } catch (...) { krow.setZero(); k_ok = false; }
+                        if (k_ok && krow.cwiseAbs().sum() > 0.0) {
+                            rows.push_back(std::move(krow));
+                            zs.push_back(target);      // the same c*T_GD, by the identity above
+                            ++out.n_sat_gf_extra_rows;
+                            if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd)
+                                ++out.n_sat_gf_isc_zero;
+                            sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sk]
+                                .insert(sat);
+                        }
+                    }
                 }
             }
         }
@@ -963,6 +1031,34 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     // genuinely re-references) — first-ever appearances excepted, matching the
     // IF-pin rule.
     for (const auto& [skey, entries] : st0_chan) {
+        // --- RF-0d: SUPPRESS a channel the geometry-free datum already fixes -----
+        // A DEFECT RF-0c shipped and this card closes.  The sum-to-zero row asserts
+        // Sum_s d^s_j = 0 over the channel's satellites.  Once the geometry-free datum
+        // has pinned every one of those columns, that row is not merely redundant: it
+        // is INCONSISTENT with them, because the pinned values sum to
+        // mu_j * c * Sum_s T_GD^s, which is nothing like zero (GPS T_GD is one-sided,
+        // roughly -12..+7 ns, so the sum over ~32 satellites is tens of metres).  Both
+        // families fold at the same gauge weight, so they simply fight, and the
+        // least-squares compromise shifts every emitted code bias of the channel by
+        // -Sum/(n+1) — a systematic the wire carries and nothing declares.  Under
+        // `zero` the two agree and the row is only redundant; the suppression is
+        // correct in both modes and is applied in both so the two differ by the datum
+        // value alone and by nothing structural.
+        //
+        // The test is COMPLETENESS, per channel: a channel with even one unpinned
+        // satellite column keeps its row, because that column's level is then still
+        // free and the sum-to-zero row is the only thing holding it.
+        if (sat_gf_datum != NetworkSatGfDatum::NoneMode) {
+            const auto pit = sat_gf_pinned.find(skey);
+            if (pit != sat_gf_pinned.end()) {
+                bool all_pinned = true;
+                for (const auto& [sat, col] : entries) {
+                    (void)col;
+                    if (!pit->second.count(sat)) { all_pinned = false; break; }
+                }
+                if (all_pinned) { ++out.n_s2z_suppressed; continue; }
+            }
+        }
         Eigen::VectorXd srow = Eigen::VectorXd::Zero(nshared);
         double zval = 0.0;
         if (cb_time_linked) {

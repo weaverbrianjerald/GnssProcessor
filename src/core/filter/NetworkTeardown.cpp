@@ -4232,16 +4232,38 @@ int networkTeardown(
                           ? static_cast<double>(ctx.counters.n_sat_gf_rows)
                                 / static_cast<double>(ctx.counters.n_sat_gf_epochs)
                           : 0.0,
-                      tgd ? fmt::format("  TARGETS: {} row(s) at a non-zero c*T_GD, {} at a "
+                      tgd ? fmt::format("  PER-SIGNAL (RF-0d): {} extra row(s) beyond the "
+                                        "ionosphere-free pair, of which {} ASSERT an "
+                                        "inter-signal correction of ZERO (RINEX navigation "
+                                        "carries no GPS ISC — that assertion is the part of "
+                                        "this 'broadcast' datum the message does not state); "
+                                        "{} same-band column(s) left ESTIMABLE on purpose (no "
+                                        "geometry-free combination exists against the "
+                                        "reference, and the pure ISC needs no ionosphere to "
+                                        "be observable); {} sum-to-zero row(s) SUPPRESSED as "
+                                        "channels the datum already pins completely (folding "
+                                        "both would fight: the pinned values sum to "
+                                        "mu*c*Sum_s T_GD, not to zero).  TARGETS: {} row(s) "
+                                        "at a non-zero c*T_GD, {} at a "
                                         "broadcast T_GD of exactly 0, {} FELL BACK to zero "
                                         "(no navigation record, or a pinned pair the "
                                         "navigation message never referenced) — the "
                                         "fallback count is the part of this product that "
                                         "is NOT the physical datum it is named for.",
+                                        ctx.counters.n_sat_gf_extra,
+                                        ctx.counters.n_sat_gf_isc0,
+                                        ctx.counters.n_sat_gf_sameband,
+                                        ctx.counters.n_sat_gf_s2z_suppressed,
                                         ctx.counters.n_sat_gf_tgd,
                                         ctx.counters.n_sat_gf_tgd0,
                                         ctx.counters.n_sat_gf_fallback)
-                          : std::string{});
+                          : fmt::format("  PER-SIGNAL (RF-0d): {} extra row(s) beyond the "
+                                        "ionosphere-free pair, {} same-band column(s) left "
+                                        "ESTIMABLE, {} sum-to-zero row(s) suppressed as "
+                                        "channels the datum already pins completely.",
+                                        ctx.counters.n_sat_gf_extra,
+                                        ctx.counters.n_sat_gf_sameband,
+                                        ctx.counters.n_sat_gf_s2z_suppressed));
     }
     // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
     // tell a live gauge from an armed-but-inert one is the fold count, so print it
