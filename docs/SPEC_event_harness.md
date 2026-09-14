@@ -7344,3 +7344,31 @@ the CHAIN-ERA difference card CE is bisecting.  Two arms and one read are added 
   DJIG's age and elevation, why PALM lost); the consumer's response around 265470.  Frozen reading: G06 carries > 30 % of PV-B's D_phase
   ⇒ the anchor election onto a newborn low arc is a wire defect with a named fix (minimum anchor age / elevation, a re-validation of the
   handover target — invariant #7) and its own card; < 10 % ⇒ an outlier record, the anchor rule still owed but not on the bars.
+
+**§24.15 R5 RESULTS (2026-09-14 ~03:15 local; worker commit `6b75e22`, merged; existing traces only).**  **G06 carries 1.78 % of PV-B's
+pooled D_phase sum of squares** (3.1 % of the rows) and is QUIETER than the pool (own within-arc rms 0.725 vs 0.953 m); excluding it moves
+the pooled D_phase by ± 2 % and makes the clock LEVEL worse (0.736 → 0.78–0.81) — **the "outlier record" reading applies**; identical on
+b7 / b1.  The noisy satellites are elsewhere: per-satellite within-arc D_phase rms **G29 2.18, G28 1.99, G32 1.94, G18 1.81 m**, then G27
+0.97 and the pool below — four satellites carry the wire's excess.  What the producer did with DJIG/G06 (93 code rows at −75 … −142 m over
+k 210..240): `network_raim.csv` **0 rows** for that satellite or station in the window (964 rows over the run); no withhold, no adaptation
+(`n_adapt` 0); only MDB saw it, twice in 31 epochs (4.7× and 4.2× its threshold, action `observe`) — **a 140 m code residual invisible to
+every acting screen**, because the LOS sits below the SH tie's 25° admission with a free per-LOS iono that absorbed 76 m of it.  The
+election: PALM00ATA's arc ended at 265440; of the 12 candidates at 265470 the rule ("highest-coverage receiver tracking each satellite,
+pref elevation 15.0°, sticky") found identical coverage (3 code + 3 phase rows) at all twelve and elected the LOWEST and YOUNGEST —
+DJIG at 15.09° (0.09° above the mask) on its first epoch, over KRGG at 84.1° with a 209-epoch arc — the run's only cold PB-gauge
+re-realization (1 cold / 60 continuous) and its worst PB frame prior-residual (|t| 12.3, ê 1.41 m); run-wide 43 elections, 20 onto
+successors below 25°, 2 onto arcs younger than 5 epochs.  The consumer (WTZZ, Germany) was unharmed — 3D 1.20 m in a smooth 1.56 → 0.89 m
+window, largest step 0.05 m, 0 resets — but was handed G06 L1C's −1.41 m declared step followed by 11 consecutive epochs of declared
+discontinuities (a decaying −0.21 … −0.10 m), a bump rate of 0.55 against a window base rate of 0.007.  **Owed, not on the bars:** an
+election tie-break on elevation and arc age (a minimum anchor age; invariant #7's re-validation of the handover target), and the screens'
+blindness to a gross error on an untied low-elevation LOS (RAIM 0 rows, MDB observe-only) — both their own cards.
+
+**R6 (pre-registered, same worker, existing PV-B traces): where the wire's excess lives.**  For G29, G28, G32, G18 (and G27, G06 as
+controls) on PV-B, the D_phase within-arc series over the full 2 h: the share of the within-arc sum of squares (a) within ± 2 epochs of a
+declared PB / CB discontinuity or an anchor election for that satellite, (b) in a per-arc linear drift, (c) the remainder; the number of
+stations tracking the satellite per epoch and r(|ΔD|, Δn_stations); the elected anchor station's elevation and arc age per satellite over
+time; and the satellite's eclipse status over the window (β angle / shadow crossing from the SP3 and the Sun).  Frozen classification:
+(a) > 50 % ⇒ the excess is the re-realization mechanism at or beside declared boundaries (the census's arcs are declared, so a > 50 %
+share means the declarations lag or lead the step); (b) > 50 % ⇒ a slowly varying satellite term (the a-priori clock / orbit model or the
+anchor's own drift); station-count r > 0.5 ⇒ coverage-driven re-referencing; an eclipse crossing inside the noisy arcs ⇒ the T3 tails
+(SPEC_amb_iono §6.10's re-admission edge) on the field.
