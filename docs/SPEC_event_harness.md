@@ -7722,3 +7722,59 @@ this vehicle — a field-blocking card independent of the screen, graded on the 
 `cta_recouple` ⇒ the anchor's re-coupling edge is the source and the anchor is NOT armable until its re-coupling marks a wire
 discontinuity (or re-validates the clock before re-engaging); none on `_cm_c10` and `pvb6` ⇒ the steps are screen-induced only and GL's
 deweight needs to feed the clocks' disc test.
+
+**§24.19 R10 RESULTS (2026-09-14 ~13:00 local; GL worker commit `3168660` — `scripts/wire_step_audit.py`, merged; eight arms, no producer run).**
+**The phase-bias wire is clean on every arm (0 unsignalled steps in 590 k rows); the CLOCK wire carries 43 unsignalled steps > 2 m on six
+of eight arms, up to 16.7 m**, every one a per-satellite re-realization (the 32-satellite median step |·| ≤ 0.012 m at each): `_cm_pvb` 1,
+`_cm_c8b` 0, `_cm_c10` 0, `_gl_on6` 2, `_gl2_on6` 1, `_cm_pvb6` 5, `g4a` 17, `g4b` 17.  **Attribution: 38 of 43 (88 %) sit at dt = 0 on a
+`T4_attrib/attrib_arc <the same satellite> refloat`** — the post-fit RAIM attribution refloat re-realizes the satellite's clock and the emitter
+ships it silently; 3 on a `PBGAUGE/handover_continuous`, 1 on a `cta_decouple` at −30 s, 1 the GROSSLOS pair; **`cta_recouple`: 0 of 43 —
+the anchor is EXONERATED** (§24.19's GL-2 attribution, and mine, were wrong); screen-off arms carry them as readily as screen-on ones — the
+defect belongs to the VEHICLE, not to card GL.  The consumer's step at the same epoch: 54.6 m once (G17 / 271170), 0.008–1.56 m otherwise.
+**Why nothing signalled them — cited:** the emitter's stage-2 per-satellite step test (`NetworkClockEmitRebase.cpp:83–95`: `dev = innov` under
+the frame hold, marked when `|dev| > jump_m` = 1.5 m, the mark reaching `markSatDiscontinuity` and a `CLK_STEP/mark` event at
+`NetworkEmitStore.cpp:345–382`) is gated on `cfg_.jump_test` = **`network.clock_disc_jump_test`, default false (`GnssConfigLoadNetwork.cpp:
+7647–7649`) and armed on NONE of these lineages** — the frame hold runs, the per-satellite test does not, and every run-end prints "step
+marks off — 0 mark(s) > 1.50 m".  G17's common-mode-removed step was +16.731 m against a median of +0.0006 — 11× the disarmed threshold,
+exactly the statistic the test computes.  **Readings:** "unsignalled steps exist ⇒ the detector is defective on this vehicle, field-blocking"
+FIRES; "> 50 % at a `cta_recouple`" does NOT (0 %); "none on c10 / pvb6 ⇒ screen-induced" is REFUTED (pvb6 has 5 with no screen).
+CLAUDE.md Amendment 5's "13 product-wide clock jumps silent to the consumer" is this defect on `carry_invariant`; the knob it names
+(`emit_clock_disc`) populates the counter, and the knob that would MARK a step has never been armed on any lineage.
+
+### 24.20 Card CS — clock step signalling (pre-registered before any arm is read)
+
+Two questions, one build-free arm pair and one read, on the GL worker's exe (`7a1cb9bf…`, main at the GL-2 merge):
+- **(A) the M4 contract:** `network.clock_disc_jump_test: true` (the existing test at its default 1.5 m) on **cs1** = `_cm_c10`'s config
+  (the posture, no screen) and **cs2** = `_gl_on6`'s config (with the screen — the G17 case), both 6 h cold, hour by hour against `_cm_c10`
+  and `_gl_on6`.  The loader's line, the run-end "step marks" count, and the audit (`wire_step_audit.py`) re-run on both.  **Bars
+  (frozen):** unsignalled clock steps > 2 m = **0** on both arms (the contract); the marks count within 2× the T4-refloat count on the
+  same satellites (a mark per re-realization, not a mark storm — marks on > 5 % of satellite-epochs is a storm); (i) / (ii) / availability
+  not worse; the consumer's per-hour p50 not worse than the control's in any hour, and **cs2's hour 4 ≤ 1.5 m** (a declared 16.7 m step is
+  what the consumer's `reactToGenerationChange` / disc handling exists for).  **Frozen reading:** all bars ⇒ the knob joins the posture
+  candidate and its ledger row (RECOMMEND_ON, field, validated here) is written on the author's go; the contract holds but cs2's hour 4
+  stays at metres ⇒ the consumer's handling of a declared multi-metre clock discontinuity is the next read (RealTimeEngineSsrBreaks);
+  a mark storm ⇒ the threshold against the refloat rate is the finding, not tuned blind.
+- **(B) the structural question (read, existing traces):** for each of the 43 steps, was the refloated station the satellite's elected
+  PHASE ANCHOR at that epoch (`PHASE_ANCHOR` rows / the incumbent), and what did the satellite's PB do (0 unsignalled PB steps — so the PB
+  held and the CLOCK took the re-realization)?  Frozen: > 50 % on the anchor station ⇒ a refloat on a satellite's anchor re-realizes that
+  satellite's wire through the clock, and the anchor-election card (§24.15 R5 / R6: a tie-break on elevation, a minimum age, and no
+  incumbent refloat without a declared handover) is the structural fix — pre-registered next; < 20 % ⇒ the T4 refloat itself moves the
+  clock regardless of the anchor, and the rule "a T4 attribution refloat forces a clock mark" is the structural fix.
+
+**§24.19 R9 RESULTS (2026-09-14 ~13:30 local; LV-SEED commit `b2f2587`, merged; `_gl_on6` with `_gl_rxoff6` / `_cm_c10` for counts).**
+**The population:** `T4_attrib/attrib_arc` refloats 904 (= `n_arc_refloat` summed exactly), `T0_gap/arc_resume` 237, `lli_slip` 205,
+`if_slip` 150, `mw_wl_slip` 73, `refsat_reset` 21, `we_refloat` 10; the run-end's **863 free-epoch latches / 572 inject-site skips are NOT
+individually traced** (10 reach a PRIORRES row) — an instrument gap.  The raw-detector half is invariant to the digit across the three arms;
+only the post-fit T4 count moves: **1 144 (c10) → 904 (gl_on6) → 953 (rx-CB off) — the gross-LOS screen removes 21 % of the "slip response",
+which was firing on gross code, not slips.**  **(b) per arc: FAILS** — level growth vs re-levels in the arc r 0.204 (final |level| 0.098;
+trimmed 0.29 / 0.25; null 0.015): real, 13× the null, far below 0.5 (median growth 0.446 m with a re-level vs 0.328 without).  **(c) the
+wire: CROSSES, then the direction split decides it** — pooled |ΔD_phase| near a re-level 0.267 m vs away 0.062 (enrichment 4.29; per-satellite
+median 3.04 vs a shuffled null 1.04, 78 % of satellites above their own null p95) — but split by trigger: the raw T0 / T1 DETECTORS (solve-
+independent, counts identical on all arms) enrich **1.16 against a null of 1.02 (3.1 % of satellites above p95 — chance)**, while the post-fit
+**T4 refloat carries the whole 3.69**.  So the coincidence is **T4 reacting to a wire excursion, not a re-level creating one**; genuine cycle
+slips leave the wire untouched.  **(d) the rate** is elevation-driven (3.93 → 1.05 events per 1 000 code rows from 10–20° to 60–91°) and 3.05×
+higher at the eight carry-less stations (p50 0.68 per LOS-hour vs 0.22), the run's three worst (BSHM 2.26, MAC1 2.05, GAMB 1.93) outside that
+set.  **Reading:** re-levels do not set the arc level (H1 stays refuted mid-arc too); the wire's steps sit on T4 refloats — and R10 says the
+same from the emitted side (88 % of the unsignalled clock steps at a T4 refloat of the same satellite).  Whether the T4 refloat CAUSES the
+clock re-realization (a refloat on the satellite's anchor station) or merely marks the epoch of an excursion born elsewhere is exactly card
+CS's part (B) read; the two are not yet separable on these traces.
