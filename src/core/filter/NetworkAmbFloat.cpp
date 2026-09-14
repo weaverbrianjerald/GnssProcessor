@@ -8,12 +8,17 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
+#include "filter/NetworkCoupling.hpp"          // rebaseCouplingPhaseBiasSprev (the D4 s_prev walk)
+#include "filter/NetworkHandoverStransform.hpp" // kStsExactTolM (one exactness tolerance)
 #include "filter/StateKeySchema.hpp"
+#include "logging/NetworkRunTraces.hpp"
 
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace GnssProcessor {
 
@@ -138,6 +143,108 @@ void networkAmbFloatApplyDrops(
                    "their birth variance ({} free-epoch latch, {} stale gap; {} already at "
                    "birth strength).  value_abs kept; the prior still folds this epoch.",
                    tow, n, n_free, n_stale, n_idem);
+}
+
+long long networkAmbFloatDeclaredHandover(
+    NetworkRunContext& ctx,
+    const std::shared_ptr<spdlog::logger>& log,
+    NetworkRunTraces& traces,
+    const std::vector<NetStation>& stations,
+    const std::vector<AnchorHandoverEvent>& handovers,
+    long long week, double tow,
+    std::set<std::pair<std::string, std::string>>& handled_out) {
+    // --- alias preamble (the seam contract) -------------------------------------
+    if (!ctx.knobs.amb_float_kf || !ctx.knobs.amb_float_declared_handover) return 0;
+    if (handovers.empty()) return 0;
+    auto& local_carry = ctx.carry.local_carry;
+    auto& prev_carry  = ctx.carry.prev_carry;
+    auto& counters    = ctx.counters;
+
+    long long n_shift_total = 0;
+    for (const AnchorHandoverEvent& h : handovers) {
+        const auto parts = StateKeys::parseAmbiguityKey(h.amb);
+        if (!parts) continue;
+        const std::string& sat = parts->satellite;
+        const std::string& sig = parts->signal;
+        // SCOPE: only a CONTINUOUS handover has a Δ.  A cold re-realization elected a
+        // successor with no usable carried level, so there is no new basis to express
+        // the family in — its erase stands, and it is counted as the refused population
+        // rather than silently transformed with Δ = 0 (which would leave every carry in
+        // the RETIRED frame, the worst of both).
+        if (!h.continuous) { ++counters.n_amb_sts_refused_cold; continue; }
+        int to_idx = -1;
+        for (std::size_t s = 0; s < stations.size(); ++s)
+            if (stations[s].name == h.to) { to_idx = static_cast<int>(s); break; }
+        if (to_idx < 0) { ++counters.n_amb_sts_refused_cold; continue; }
+        const auto in_it = local_carry.find(std::make_tuple(to_idx, sat, sig));
+        if (in_it == local_carry.end() || !std::isfinite(in_it->second.value_abs)) {
+            // The ledger said continuous but the incoming anchor holds no live carry
+            // THIS epoch — the same "no Δ" case, named separately because it is a
+            // ledger/carry disagreement rather than a cold election.
+            ++counters.n_amb_sts_refused_no_level;
+            continue;
+        }
+        const double delta = in_it->second.value_abs;
+        if (!(std::abs(delta) > 0.0)) {
+            // Already in the new basis (Δ = 0) — the transform is the identity, so take
+            // ownership of the family (no erase) and move on.  This is the common case
+            // when the same station re-pins itself.
+            handled_out.insert({sat, sig});
+            ++counters.n_amb_sts_identity;
+            continue;
+        }
+        // ---- THE TRANSFORM.  All three references on this identity move TOGETHER.
+        long long n_shift = 0;
+        for (auto& [key, lc] : local_carry) {
+            if (std::get<1>(key) != sat || std::get<2>(key) != sig) continue;
+            lc.value_abs -= delta;          // variances UNTOUCHED — an exact basis change
+            ++n_shift;
+        }
+        // The satellite PHASE BIAS absorbs the opposite shift: pinning N_{r_in} = 0 means
+        // b'_s = b_s + Δ.  Its carried prior and every coupling s_prev that references it
+        // must move with it, or the frame step is injected as row bias
+        // (NetworkChainDatum.cpp:852-866, the filed latent defect).
+        const std::map<std::pair<std::string, std::string>, double> shift_sat{
+            {{sat, sig}, +delta}};
+        long long n_pb = 0, n_cpl = 0;
+        for (auto& cp : prev_carry) {
+            if (cp.kind != SharedParamKind::PhaseBias) continue;
+            if (cp.sat != sat || cp.signal != sig) continue;
+            cp.value += delta;
+            ++n_pb;
+        }
+        for (auto& kv : local_carry)
+            n_cpl += rebaseCouplingPhaseBiasSprev(kv.second.coupling, shift_sat);
+        // ---- THE EXACTNESS SELF-CHECK (the sts_selfcheck_ok pattern).  The incoming
+        //      anchor's column must now read 0, which is what its w = 1e10 pin asserts.
+        const double x_post = in_it->second.value_abs;
+        const bool ok = std::abs(x_post) <= kStsExactTolM;
+        if (!ok) ++counters.n_amb_sts_selfcheck_fail;
+        n_shift_total += n_shift;
+        ++counters.n_amb_stransform;
+        counters.n_amb_stransform_cols += n_shift;
+        handled_out.insert({sat, sig});
+        // ---- BOTH EDGES, with identities (invariant #7).  A transform logged only as a
+        //      total is exactly the silent re-referencing the FT63 topology ledger exists
+        //      to recover.
+        traces.emitEvent(GnssTime{static_cast<int>(week), tow}, "STRANSFORM",
+                         ok ? "sts_applied" : "sts_selfcheck_fail",
+                         h.amb, h.to, delta, std::nullopt, "s_transform",
+                         fmt::format("from={};cols={};pb={};cpl={};x_post={:.3e}",
+                                     h.from.empty() ? std::string("(none)") : h.from,
+                                     n_shift, n_pb, n_cpl, x_post));
+        if (!ok && log)
+            log->warn("Network (RF-1 step 5): declared anchor S-transform on {} -> {} "
+                      "(Δ = {:.6f} m) left the incoming anchor's carried level at {:.3e} m, "
+                      "above the {:.0e} m exactness tolerance.  The carry is now in a frame "
+                      "that is NOT the pinned one — read this as a transform defect, not as "
+                      "noise.", h.amb, h.to, delta, x_post, kStsExactTolM);
+    }
+    if (log && n_shift_total > 0)
+        log->debug("Network (RF-1 step 5): TOW {:.1f} — {} declared anchor S-transform(s) "
+                   "shifted {} carried level(s); variances untouched.",
+                   tow, counters.n_amb_stransform, n_shift_total);
+    return n_shift_total;
 }
 
 }  // namespace GnssProcessor

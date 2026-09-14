@@ -39,6 +39,7 @@
 #include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkCoupling.hpp"
+#include "filter/NetworkHandoverStransform.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "logging/LogManager.hpp"
@@ -47,6 +48,7 @@
 #include <Eigen/Dense>
 
 #include <cmath>
+#include <map>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -745,6 +747,90 @@ TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
     EXPECT_DOUBLE_EQ(ambFloatBirthFloor(0.25, -1.0, p), 0.25);
     EXPECT_TRUE(std::isfinite(ambFloatBirthFloor(0.25, 0.001, p)));
     EXPECT_GE(ambFloatBirthFloor(0.25, 0.001, p), 0.25);
+}
+
+// =============================================================================
+// (8) THE DECLARED ANCHOR S-TRANSFORM (design §6.2 test 6) — RF-1 step 5.
+//
+// A frame step is a KNOWN, exact basis change, so the carry is EXPRESSED in the new
+// basis rather than erased.  The operator's three references move TOGETHER — the
+// per-station ambiguity levels, the satellite phase bias, and every coupling s_prev
+// on that phase-bias column — because a Card-1 coupling row's correct y-change under
+// a known frame step is the exact CANCELLATION of the two moves, and shifting one
+// without the other injects the frame step as row bias
+// (NetworkChainDatum.cpp:852-866, the filed latent defect the design names).
+//
+// The live seam needs the whole run context (the election, the ledger, the trace
+// streams), which a unit test cannot stand up; what IS testable, and is what the
+// defect is about, is the ALGEBRA — so these cases pin the operator's invariants on
+// the same data structures the seam mutates.
+// =============================================================================
+
+TEST(AmbFloatVehicleTest, AnchorStransformShiftsEveryCarryByTheIncomingAnchorsLevel) {
+    using Key = std::tuple<int, std::string, std::string>;
+    // Three stations carrying G07/L1C; station 1 is the incoming anchor.
+    const Key k0{0, "G07", "L1C"}, k1{1, "G07", "L1C"}, k2{2, "G07", "L1C"};
+    const Key kOther{0, "G07", "L2W"};                       // a DIFFERENT family
+    std::map<Key, LocalCarry> carry;
+    carry[k0]     = LocalCarry{12.00, 1e-4, 100.0};
+    carry[k1]     = LocalCarry{-3.50, 2e-4, 100.0};          // the incoming anchor
+    carry[k2]     = LocalCarry{ 7.25, 3e-4, 100.0};
+    carry[kOther] = LocalCarry{99.00, 5e-4, 100.0};
+    const double delta = carry[k1].value_abs;
+
+    for (auto& [k, lc] : carry) {
+        if (std::get<1>(k) != "G07" || std::get<2>(k) != "L1C") continue;
+        lc.value_abs -= delta;
+    }
+    // The incoming anchor reads 0 — what its w = 1e10 pin is about to assert.
+    EXPECT_NEAR(carry[k1].value_abs, 0.0, GnssProcessor::kStsExactTolM);
+    // Every other station moved by exactly the same Δ, so BETWEEN-STATION differences —
+    // the only datum-invariant content of the family — are preserved exactly.
+    EXPECT_DOUBLE_EQ(carry[k0].value_abs, 12.00 + 3.50);
+    EXPECT_DOUBLE_EQ(carry[k2].value_abs,  7.25 + 3.50);
+    EXPECT_DOUBLE_EQ(carry[k0].value_abs - carry[k2].value_abs, 12.00 - 7.25);
+    // A different (sat, signal) family is untouched — the transform is per-family.
+    EXPECT_DOUBLE_EQ(carry[kOther].value_abs, 99.00);
+    // VARIANCES UNTOUCHED: this is a basis change, not a refloat.  That is the whole
+    // difference from the erase it replaces and from step 4's drop.
+    EXPECT_DOUBLE_EQ(carry[k0].var, 1e-4);
+    EXPECT_DOUBLE_EQ(carry[k1].var, 2e-4);
+    EXPECT_DOUBLE_EQ(carry[k2].var, 3e-4);
+}
+
+// THE FILED LATENT DEFECT (i): the coupling s_prev on the shifted PHASE-BIAS column must
+// move WITH the levels, and only on that column.  rebaseCouplingPhaseBiasSprev is the
+// one operator both D4 and this transform call, so the rule cannot drift between them.
+TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBiasColumn) {
+    using GnssProcessor::CoupledShared;
+    using GnssProcessor::SharedParamKind;
+    const double delta = -3.5;
+    std::vector<CoupledShared> coupling = {
+        CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 1.0, 20.0, 0.1},
+        CoupledShared{SharedParamKind::PhaseBias, "G07", "L2W", 0, 0, 'C', 0, 1.0, 30.0, 0.1},
+        CoupledShared{SharedParamKind::Clock,     "G07", "",    0, 0, 'C', 0, 0.8,  5.0, 0.1},
+    };
+    const std::map<std::pair<std::string, std::string>, double> shift{{{"G07", "L1C"}, +delta}};
+    const long long n = GnssProcessor::rebaseCouplingPhaseBiasSprev(coupling, shift);
+    EXPECT_EQ(n, 1);
+    EXPECT_DOUBLE_EQ(coupling[0].s_prev, 20.0 + delta);   // the shifted PB column
+    EXPECT_DOUBLE_EQ(coupling[1].s_prev, 30.0);           // a different signal — untouched
+    EXPECT_DOUBLE_EQ(coupling[2].s_prev,  5.0);           // the CLOCK — never moved by this
+}
+
+// The transform is EXACTLY invertible and composes: applying it twice with the second
+// Δ read from the already-shifted carry is the identity, which is what makes a chain of
+// handovers frame-consistent instead of drifting.
+TEST(AmbFloatVehicleTest, AnchorStransformIsIdempotentOnceTheAnchorReadsZero) {
+    LocalCarry in{-3.5, 2e-4, 100.0};
+    LocalCarry other{12.0, 1e-4, 100.0};
+    double d1 = in.value_abs;
+    in.value_abs -= d1;  other.value_abs -= d1;
+    const double d2 = in.value_abs;                   // now 0
+    EXPECT_DOUBLE_EQ(d2, 0.0);
+    in.value_abs -= d2;  other.value_abs -= d2;       // a second transform is the identity
+    EXPECT_DOUBLE_EQ(in.value_abs, 0.0);
+    EXPECT_DOUBLE_EQ(other.value_abs, 15.5);
 }
 
 // The value must converge to the true ambiguity, not merely become precise: a

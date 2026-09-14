@@ -1958,6 +1958,19 @@ int Application::runNetwork() {
                 if (!pa_reref.empty()) {
                     ctx.carry.pa_reref_total +=
                             static_cast<long long>(pa_reref.size() - pa_before);
+                    // RF-1 step 5 (§3.6): the DECLARED ANCHOR S-TRANSFORM.  A frame step
+                    // is a KNOWN, exact basis change, so express the carry in the new
+                    // basis instead of throwing it away.  Families the transform takes
+                    // ownership of are REMOVED from the erase set below — transformed or
+                    // erased, never both — and a COLD handover (no Δ) keeps its erase,
+                    // which is the honest limit of this step and RF-2's subject.
+                    std::set<std::pair<std::string, std::string>> pa_sts_handled;
+                    networkAmbFloatDeclaredHandover(ctx, log, traces, stations, handovers,
+                                                    se.time.week, se.time.tow,
+                                                    pa_sts_handled);
+                    for (const auto& fam : pa_sts_handled) pa_reref.erase(fam);
+                }
+                if (!pa_reref.empty()) {
                     // RF-1 §7.4 D3: on an armed trace, take the entries before they
                     // are destroyed — this scope owns the station names and the epoch
                     // stamp, which the map operation itself has no business knowing.

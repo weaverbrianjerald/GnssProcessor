@@ -4663,6 +4663,26 @@ int networkTeardown(
                  C.n_amb_birth_floored, C.n_cr_gap_prune,
                  C.n_relevel_free_skips, C.n_cr_inject_stale);
     }
+    // RF-1 step 5 (§3.6): the DECLARED ANCHOR S-TRANSFORM's inventory, with the REFUSED
+    // population beside it — that split IS the honest limit of the step: a cold handover
+    // has no Δ, so its family keeps the erase, and how often that happens is RF-2's
+    // (the election policy's) subject, not this card's.
+    if (ctx.knobs.amb_float_kf && ctx.knobs.amb_float_declared_handover) {
+        const auto& C = ctx.counters;
+        log->log(C.n_amb_stransform > 0 ? spdlog::level::info : spdlog::level::warn,
+                 "Network (RF-1 step 5 declared anchor S-transform): {} transform(s) "
+                 "shifted {} carried level(s) with variances untouched, {} identity "
+                 "(Δ = 0, already in the new basis).  REFUSED: {} cold election(s) (no "
+                 "carried level for the successor ⇒ no new basis) and {} ledger/carry "
+                 "disagreement(s) — those families kept the network-wide ERASE, which is "
+                 "the {} carr(ies) the anchor re-reference still destroyed.  Exactness "
+                 "self-check FAILED on {} — a transform defect, never noise.  0 "
+                 "transforms under an armed knob means every handover this run was cold: "
+                 "read the election, not this line.",
+                 C.n_amb_stransform, C.n_amb_stransform_cols, C.n_amb_sts_identity,
+                 C.n_amb_sts_refused_cold, C.n_amb_sts_refused_no_level,
+                 ctx.carry.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
+    }
     // RF-1 step 3, design risk #3 made a GATE rather than a note: "count it, log it at
     // WARN with identities, and make a fallback rate above a small threshold a run-end
     // FAILURE rather than a note".  Under float_kf a non-SPD block silently returns those

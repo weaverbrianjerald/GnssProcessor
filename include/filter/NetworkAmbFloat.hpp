@@ -45,8 +45,11 @@
 
 #include "filter/NetworkRunTypes.hpp"
 
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace spdlog { class logger; }
@@ -55,6 +58,7 @@ namespace GnssProcessor {
 
     class GnssConfig;
     struct NetworkRunContext;
+    struct NetworkRunTraces;
     struct NetStation;
 
     /// Cause tags for a drop — the @c event vocabulary of @c network_amb_state.csv and
@@ -142,5 +146,67 @@ namespace GnssProcessor {
         const std::vector<NetStation>& stations,
         const std::vector<std::map<std::string, double>>& elev_of,
         long long week, double tow, double pl_now_s);
+
+    /**
+     * @brief RF-1 step 5 — the DECLARED ANCHOR S-TRANSFORM (design §3.6), replacing
+     *        @c networkApplyPhaseAnchorCarryReref's network-wide erase.
+     *
+     * A state that is ERASED at every anchor handover is not a state (the manager's
+     * decision of 2026-09-14, question 3).  Today a (satellite, signal) family's
+     * re-reference drops EVERY station's carry for that family — a whole-family refloat,
+     * every station, one epoch.  The frame did step, so the carried values ARE stale in
+     * the old basis; but a frame step is a KNOWN, exact basis change, so the right answer
+     * is to express the carry in the new basis rather than to throw it away:
+     *
+     *     Δ = value_abs(r_in, sat, signal)          // the incoming anchor's carried level
+     *     for every station r carrying (sat, signal):  value_abs_r −= Δ
+     *     the shared phase bias of (sat, signal):      value      += Δ
+     *     every coupling s_prev on that PB column:                += Δ
+     *     // VARIANCES UNTOUCHED — an exact basis change, not a refloat
+     *
+     * and the incoming anchor's own column then reads 0, which is exactly what its
+     * @f$w=10^{10}@f$ gauge pin is about to assert.  That identity is checked to
+     * @c kStsExactTolM and reported, never thrown — the @c sts_selfcheck_ok pattern of
+     * @ref networkHandoverStransform.
+     *
+     * ⚠ TWO FILED LATENT DEFECTS THIS MUST NOT RE-OPEN.
+     *  (i) @c NetworkChainDatum.cpp:852-866 — the D4 operator shifts @c lc.value_abs AND
+     *      every coupling @c s_prev on a shifted PB column TOGETHER, because a Card-1
+     *      coupling row's RHS is @f$y=(v-x_{lin})+\sum_j M_j\hat s_{prev,j}@f$ and a
+     *      gauge-invariant row's correct y-change under a known frame step is the exact
+     *      CANCELLATION of the two moves.  Shifting one and not the other injects the
+     *      frame step as row bias.  This function does both, plus the shared PB carried
+     *      prior, which is the third reference on the same identity;
+     *  (ii) invariant #7 — it is an EVENT with both edges: a @c STRANSFORM /
+     *      @c sts_applied row per family carries the outgoing and incoming anchors, Δ,
+     *      the number of carries shifted and the self-check residual.
+     *
+     * SCOPE.  Only a CONTINUOUS handover has a Δ: the successor was elected with a
+     * carried level, and that level is the new basis.  A COLD re-realization has no
+     * ledger entry for the successor — there is nothing to transform to — so its family
+     * keeps the ERASE, and the two populations are counted separately.  That split is
+     * the honest limit of this step, and it is why RF-2 owns the ELECTION policy that
+     * makes cold handovers rare.
+     *
+     * @param ctx         The run context (the carry, the shared prior stash, the counters).
+     * @param log         The network logger.
+     * @param traces      The trace streams — the @c STRANSFORM event rows.
+     * @param stations    The station roster (resolving the incoming anchor's index).
+     * @param handovers   THIS epoch's anchor handovers, from the election.
+     * @param week        GPS week of the epoch.
+     * @param tow         GPS time of week (s) of the epoch.
+     * @param handled_out Receives every (sat, signal) family this transform took
+     *                    ownership of; the caller REMOVES them from the erase set, so a
+     *                    family is transformed or erased, never both.
+     * @return The number of carried entries whose value was shifted.
+     */
+    long long networkAmbFloatDeclaredHandover(
+        NetworkRunContext& ctx,
+        const std::shared_ptr<spdlog::logger>& log,
+        NetworkRunTraces& traces,
+        const std::vector<NetStation>& stations,
+        const std::vector<AnchorHandoverEvent>& handovers,
+        long long week, double tow,
+        std::set<std::pair<std::string, std::string>>& handled_out);
 
 }  // namespace GnssProcessor
