@@ -4412,7 +4412,9 @@ int networkTeardown(
                  "Network (§24.6 post-fit rows): {} SIGNED per-row post-fit residual(s) written "
                  "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
                  "elev_deg); {} data row(s) the pass visited were attributed to neither "
-                 "family and NOT written (local-column-only pseudo-observations).  0 written "
+                 "family and NOT written (rows with NO shared partial at all — pivot pins "
+                 "and local prior rows; since the 2026-09-14 CLK fallback a code row with "
+                 "no satellite code-bias column is no longer among them).  0 written "
                  "under an ARMED trace means the pass never pooled a station — read the "
                  "P1-4 line.",
                  ctx.carry.pf_rows_written, ctx.carry.pf_rows_code, ctx.carry.pf_rows_phase,

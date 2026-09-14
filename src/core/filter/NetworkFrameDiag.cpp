@@ -203,7 +203,27 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
     //    phase_leveling — off on the DOY-129 reference run — which would silently
     //    put EVERY row in the code pool.  That is exactly the class of inert
     //    wiring standing invariant #4 exists to catch, so it is not used here.)
-    std::vector<char> is_sh_col, is_pb_col, is_cb_col;
+    //  - CLK: the CODE side's fallback, and the exact counterpart of the
+    //    ambiguity-column touch the PHASE side already carries (2026-09-14,
+    //    card ZP worker; found by card PV).  A satellite CODE-bias column is
+    //    NOT a property every posture has: with the biases supplied externally
+    //    (a .BIA product, "0 code biases") there are no CB columns at all, and
+    //    even with them estimated the W6 datum signal's OSB is the gauge and so
+    //    carries no column either — §24.9 saw that as "the residual-pool trace
+    //    omits every C1C row at WROC".  Both cases sent EVERY affected code row
+    //    to the unattributed counter, so the wire census saw 0 code arcs on an
+    //    external-bias posture (PV-A: 0 code + 235 335 phase rows written,
+    //    257 347 unattributed).  What every real observation equation DOES
+    //    carry is the satellite CLOCK partial, so a data row that touches a
+    //    CLK column and no ambiguity column is a CODE row.  Rows with no
+    //    shared partial at all (pivot pins, local prior rows) still touch
+    //    neither and stay unattributed — which is what that counter means now.
+    //    NOTE the residual limitation: such a row has no CB/PB label, so its
+    //    `signal` is EMPTY and it joins the per-STATION and per-SATELLITE pools
+    //    but not the per-SIGNAL one.  The receiver code-bias local column is no
+    //    help — on this lineage it is one per-constellation "GPS_DCB", not a
+    //    per-signal state.
+    std::vector<char> is_sh_col, is_pb_col, is_cb_col, is_clk_col;
     // Keyed extension: per-column sat / signal, parsed from the SAME labels the
     // bitmap pass fetches ("CLK:G01" / "CB:G01:C1W" / "PB:G01:L1C") — no extra
     // label calls, and empty vectors (zero cost) when the keyed trace is closed.
@@ -213,6 +233,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
         is_sh_col.assign(nsh, 0);
         is_pb_col.assign(nsh, 0);
         is_cb_col.assign(nsh, 0);
+        is_clk_col.assign(nsh, 0);
         if (labels) { col_sat.assign(nsh, {}); col_sig.assign(nsh, {}); }
         for (Eigen::Index c = 0; c < x_s.size(); ++c) {
             std::string lbl;
@@ -221,6 +242,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             if      (lbl.rfind("SH", 0) == 0) is_sh_col[u] = 1;
             else if (lbl.rfind("PB:", 0) == 0) is_pb_col[u] = 1;
             else if (lbl.rfind("CB:", 0) == 0) is_cb_col[u] = 1;
+            else if (lbl.rfind("CLK:", 0) == 0) is_clk_col[u] = 1;
             if (labels && lbl.rfind("SH", 0) != 0) {
                 // "KIND:sat[:signal]" — sat between the first and (optional)
                 // second colon, signal after the second.
@@ -296,7 +318,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
         for (Eigen::Index row = 0; row < v.size(); ++row) {
             // Card-1 coupling rows are statements about the CARRY, not data.
             if (R.cpl_row_start >= 0 && row >= R.cpl_row_start) continue;
-            bool sh_row = false, pb_row = false, cb_row = false;
+            bool sh_row = false, pb_row = false, cb_row = false, clk_row = false;
             const std::string* row_sat = nullptr;   // keyed: first labeled col's sat
             const std::string* row_sig = nullptr;   // keyed: first CB/PB col's signal
             for (Eigen::Index c = 0; c < R.A_s.cols(); ++c) {
@@ -305,6 +327,7 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (is_sh_col[u]) { sh_row = true; break; }
                 if (is_pb_col[u]) pb_row = true;
                 else if (is_cb_col[u]) cb_row = true;
+                else if (is_clk_col[u]) clk_row = true;
                 if (labels) {
                     if (!row_sat && !col_sat[u].empty()) row_sat = &col_sat[u];
                     if (!row_sig && !col_sig[u].empty()) row_sig = &col_sig[u];
@@ -323,13 +346,18 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (is_amb_col[static_cast<std::size_t>(c)] && std::abs(R.A_r(row, c)) > 0.5)
                     phase_row = true;
 
+            // CODE = a data row that is not phase and carries a satellite
+            // partial — the CB column when the posture estimates one, else the
+            // CLK column every observation equation has (see the CLK note at the
+            // family bitmaps).  A row with NEITHER (no shared partial at all: a
+            // pivot pin, a local prior row) is still data for pool_all but stays
+            // unattributed rather than being misfiled.
+            const bool code_row = !phase_row && (cb_row || clk_row);
+
             pool_all.push_back(r);
             if (phase_row)      pool_phase.push_back(r);
-            else if (cb_row)    pool_code.push_back(r);
-            // A row touching neither family (e.g. a clock-only pseudo-obs) still
-            // counts in pool_all — it is data — but is not attributed to either
-            // sub-pool rather than being misfiled.
-            if (keyed && (phase_row || cb_row)) {
+            else if (code_row)  pool_code.push_back(r);
+            if (keyed && (phase_row || code_row)) {
                 auto& sta_pool = phase_row ? sta_phase : sta_code;
                 sta_pool.push_back(r);
                 if (row_sat) {
@@ -342,10 +370,13 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
                 }
             }
             if (rows_on) {
-                if (phase_row || cb_row) {
+                if (phase_row || code_row) {
                     // SIGNED v (metres), the row weight, and the LOS elevation.  The
                     // sat / signal come from the same CLK/CB/PB labels the keyed
-                    // pools key on; a row with no labelled signal writes it empty.
+                    // pools key on; a row with no labelled signal writes it empty
+                    // (every code row of a posture with no satellite code biases,
+                    // and the W6 datum signal's rows even with them — the sat is
+                    // still named, off the CLK column).
                     auto& t = traces.pf_rows_trace;
                     t << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                       << stations[i].name << ','

@@ -144,6 +144,30 @@ void networkShSpectrum(NetworkRunContext& ctx, const GnssConfig& config_,
  * written.  Same label lookups as the keyed path (shared), zero cost when the
  * rows trace is closed.
  *
+ * CODE-SIDE FALLBACK (2026-09-14, card ZP worker; found by card PV).  The
+ * PHASE/CODE split above reads "a code row carries a satellite CODE-bias
+ * partial", and that is not a property every posture has.  With the satellite
+ * biases supplied EXTERNALLY (a .BIA product — "0 code biases") there are no
+ * @c CB: columns at all, and even with them estimated the W6 datum signal's OSB
+ * is the gauge and carries no column either (§24.9 saw the second case as "the
+ * residual-pool trace omits every C1C row at WROC").  Every affected code row
+ * fell to @c pf_rows_unattributed, so an external-bias run's wire census saw
+ * ZERO code arcs — PV-A wrote 0 code and 235 335 phase rows with 257 347
+ * unattributed.  The CODE side now carries the exact counterpart of the PHASE
+ * side's ambiguity-column touch: a DATA row that is not phase and touches a
+ * satellite CLOCK (@c CLK:) column is a CODE row, because every observation
+ * equation carries the satellite clock.  Rows with no shared partial at all
+ * (pivot pins, local prior rows) touch neither and stay unattributed, which is
+ * now exactly what that counter means.  ⚠ Residual limitation: such a row has
+ * no @c CB: / @c PB: label, so its @c signal is EMPTY — it joins the per-STATION
+ * and per-SATELLITE pools but NOT the per-SIGNAL one.  The receiver code-bias
+ * LOCAL column is no help: on the FT63 lineage it is one per-constellation
+ * @c GPS_DCB state, not a per-signal one.  ⚠ The SAME gap is still present in
+ * @c filter/NetworkRowClassify's @c classifyRow (@c if(cb) ObsCode; else
+ * ObsOther) which the prefit census, the seed tripwire, the topology ledger and
+ * the structural FUSE share; closing it there is SOLVE-AFFECTING whenever
+ * @c network.prefit_fuse_sigma is armed, so it needs its own card.
+ *
  * @param ctx           Run context (per-epoch results + run counters).
  * @param config_       Live config (only the trace toggles are read).
  * @param log           Main logger.
