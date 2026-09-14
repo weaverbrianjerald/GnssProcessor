@@ -7372,3 +7372,53 @@ time; and the satellite's eclipse status over the window (β angle / shadow cros
 share means the declarations lag or lead the step); (b) > 50 % ⇒ a slowly varying satellite term (the a-priori clock / orbit model or the
 anchor's own drift); station-count r > 0.5 ⇒ coverage-driven re-referencing; an eclipse crossing inside the noisy arcs ⇒ the T3 tails
 (SPEC_amb_iono §6.10's re-admission edge) on the field.
+
+**§24.14 RESULTS + §24.15 c7 / c7b (2026-09-14 ~04:00 local; worker on worktree-agent-a1e5de39467c4312c `8d2ccb2` / `13fd225`, merged;
+exe `4CD7D664…` = main's Release at 78d0875 — the ZP merge certified, smoke `87a33bf0…`; manager grade).**  Corrections the data forced:
+c4 and c5 as written in §24.14 were the GOLDEN's own values — the arms take pl2's (`layer2_max_degree` 4 → 0 + `mean_vtec_prior` 15 ± 30 →
+32.24 ± 2; `frequency_mode` triple → dual); `global_vtec_sh.max_degree` is 8 in BOTH configs (the lineage's "deg-15" is not a leaf);
+`estimation.require_bia_for_signals`, `model_corrections.require_atx_coverage`; no .BIA path key exists (PathResolver).  **Three arms cannot
+run alone on the golden base** — c1 (EXT-CB with the golden's L5 signals: the S-basis null-space gate sees 17 near-zero eigenvalues
+against a declared 1, all 240 epochs withheld — with W6 gone Card KP's OSB bound and Card 2's time-linked code-bias datum leave, and the
+L5 signals have no CODE OSB to pin them), c5 (dual alone: W6's L5 code-bias columns registered but unobserved, 13 near-zero), c6
+(`require_atx_coverage` STRICT drops exactly the L5 observations — a byte-identical gate failure to c5): **the class does not decompose**;
+EXT-CB and the L5 rows are mutually load-bearing and only the pair (c0) runs.  **c0 ≡ PV-A byte-identically** (`pf_rows`, `pf_keyed`,
+`zwd` sha256-identical, every run-end counter equal) — the 13 GOLDEN-NEWER pins are solve-inert on this lineage; on the comparable
+last-hour statistic c0's (i) is **1.19 m**, not §24.11's 0.44 (a first-hour 1 h read): the chain-era difference is 1.79 → 1.19.
+
+| arm | (i) p50 / p90 / max m | (ii) n (worst) | (iii) D_phase / D_code / clock LEVEL m | consumer p50 tail (at 2 h) | verdict |
+|---|---|---|---|---|---|
+| PV-B | 1.79 / 3.28 / 7.08 | 13 (BOGT −3.5, GOPE +2.5, GAMB −2.1) | 0.95 / 0.13 / 0.74 | 1.19 (0.55) | control |
+| c0 = pva2 (the 17 keys) | 1.19 / 3.22 / 6.67 | 13 (BSHM +4.3, MAC1 −4.2, KIT3 +1.9) | 0.96 / — / 0.06 | 2.26 (2.18) | exonerated |
+| c2 `rx_code_bias_datum` | 1.95 / 3.28 / 7.01 | 13 | 0.95 / 0.13 / 0.73 | 1.20 (0.49) | exonerated |
+| **c3 `apriori_clock_anchor_sigma_m` 0.02** | **1.08 / 1.97 / 2.86** | **7** (GOPE +1.4, GRAZ +1.1, BOGT −1.1) | 0.82 / 0.12 / **0.04** | 1.34 (0.74) | the only mover: (i) 0.60×, (ii) 0.54×, (iii) 0.86×; max 0.40×; level p99 below 25° 6.34 → 2.59 |
+| c4 SH as pl2 | 1.99 / 3.38 / 8.81 | 14 | 0.94 / 0.13 / 0.74 | 1.32 (0.61) | exonerated |
+| c7 tie cutoff 15° | 2.50 / 4.46 / 11.14 | 21 (LCK4 +5.7, GOPE +3.6, SEYG +3.4) | 0.91 / 0.14 / 0.83 | **6.84** (6.87) | regression |
+| c7b tie cutoff 20° | 2.17 / 3.77 / 11.67 | 16 (GOPE +4.4) | 1.13 / 0.13 / 0.81 | 1.96 (1.19) | regression |
+
+Availability identical (240/242) on every runnable arm.  **Grade:** no arm crosses or formally halves a named bar; c3 is the only mover
+and carries the class's whole code-side movement (c3 alone 1.08 beats the union 1.19 — c2 and c4 push back); c1 unreadable.  §24.14's first
+reading applies (c0 reproduces pva2 to Δ = 0).  **c7 / c7b refute §24.15's premise as a fix:** admitting the sub-25° LOS to the tie barely
+moves their own tail (p99 6.34 → 5.58 m) and contaminates the healthy population (above 25°: p99 3.29 → 5.29, max 6.1 → 12.0, median
+0.46 → 0.75), monotone in the cutoff on every read ((i) 1.79 / 2.17 / 2.50; (ii) 13 / 16 / 21; prires cb 3.12 / 3.28 / 4.91; consumer
+1.19 / 1.96 / 6.84) — 25° stays; the untied low-elevation columns are not the tail's cause, tying them exports it.  **What c3 says:** the
+FREE per-epoch satellite clock is a contributor to the code side — pinned to the a-priori CODE clock at 2 cm the residual tail collapses
+(station max 7.1 → 2.9 m) and the unphysical ZWDs halve — but the wire's within-arc phase (0.82) and the consumer (1.34) do not follow, so
+the consumer's remaining metre sits on the phase side (R6 reads it); and the pin is EXTERNAL data the self-contained producer cannot use.
+Its self-contained counterpart is the Q3 temporal clock anchor the SIM golden arms (`clock_temporal_anchor` + its guard family, q 3e-6)
+and the field golden does not (SPEC_clock_temporal_anchor: built default-OFF, every producer gate passed, G4 — the DOY-129 event window —
+owed as invariant #1's blocker).
+
+### 24.16 Card Q3-F — the self-contained clock time-link on the leveling vehicle (pre-registered before any arm is read)
+
+Base `_pv_b.json`, control PV-B, the CE exe: **c8** = the sim golden's clock-anchor family transplanted verbatim (`clock_temporal_anchor:
+true`, `clock_anchor_q: 3e-6`, `clock_anchor_max_gap_s` 120, `clock_anchor_k` 6, `clock_anchor_abs_m` 2, `clock_anchor_recouple_epochs` 4,
+`clock_anchor_mark`, `clock_anchor_resolve`, `clock_anchor_var_floor_m2` 1e-5, `clock_anchor_sigma_floor_m` 0.0018,
+`clock_anchor_gauge_free: false`, `clock_anchor_gauge_free_stat: proj`); **c8b** = the same with `clock_anchor_q: 2.9e-8` (the physical
+floor); **c8c** = c8 + c3 (the temporal link beside the external pin — additive, or the same information?).  Reads (i)–(v), the consumer,
+and the anchor's OWN counters (marks / resolves / re-couplings / gap breaks — the guard family is invariant #1's wired response and must be
+live, not silent).  Bars: §24.8's, the same rules against PV-B.  **Frozen reading:** c8 or c8b reproduces c3's code side ((i) ≤ 1.2 m, max ≤
+3.5 m, (ii) ≤ 8) ⇒ the free per-epoch satellite clock IS the second code-side contributor and the time-link is its self-contained fix — the
+posture card becomes the leveling vehicle + the Q3 family, and G4 (the DOY-129 event window) is graded on it next; neither does while c8c
+does ⇒ the gain needs the external LEVEL, which the producer cannot have — the code side is then bounded by the free clock and the card
+moves to the wire's phase side (R6); a divergence or a silent guard ⇒ recorded, the family not armed.
