@@ -261,6 +261,42 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         }
         st.si_rows_demoted += n_dem;
     }
+    // --- card GL: the gross line-of-sight CODE deweight ------------------------
+    // (docs/SPEC_event_harness.md §24.18.)  The exact CODE counterpart of the
+    // block above, and the ONLY actuator in this producer that can bound a gross
+    // CODE error on one line of sight: every post-fit tier screens carried-
+    // ambiguity PHASE rows (NetworkRaim.cpp:328's |A_r(row, amb_col)| > 0.5), so a
+    // code-only fault is not under-weighted there, it is unreachable.  A LOS that
+    // @ref networkGrossLosScreen declared gross folds its code rows at σ × f, a
+    // CAP and not a drop (prefer-fallback): the row keeps its sign and still
+    // re-anchors the float if the LOS's phase side goes away.
+    //
+    // PHASE rows are deliberately untouched here — the declaration already erased
+    // the LOS's carried levels and marked its ambiguities pending-reseed, which is
+    // the phase side's response; demoting the phase rows too would remove the very
+    // information the refloat needs to re-draw from.
+    //
+    // Same thread-safety contract as `phase_sigma_scale`: `gl_code_sigma_scale` is
+    // republished SERIALLY (end of the previous epoch's QC block) and only
+    // find-read here.  OFF byte-identity: the map is never populated when
+    // network.gross_los_screen is off, so `w` keeps the exact cwiseInverse result
+    // with zero additional floating-point operations.
+    if (!st.gl_code_sigma_scale.empty()) {
+        const Eigen::Index mr = std::min<Eigen::Index>(
+            m, static_cast<Eigen::Index>(em.signal_types.size()));
+        long long n_dw = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            if (sig.empty() || sig[0] == 'L') continue;           // PHASE UNTOUCHED
+            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            const auto sc = st.gl_code_sigma_scale.find(
+                em.satellite_ids[static_cast<std::size_t>(r)]);
+            if (sc == st.gl_code_sigma_scale.end() || !(sc->second > 1.0)) continue;
+            w(r) /= sc->second * sc->second;                      // σ × scale
+            ++n_dw;
+        }
+        st.gl_rows_deweighted += n_dw;
+    }
     y = em.innovations;
 }
 

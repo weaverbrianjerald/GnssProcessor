@@ -282,6 +282,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // matches how carry_invariant_pd_safe / carry_aware_covariance resolve, and because
     // if that requirement is ever relaxed this line is already correct.
     k.raim_ci_on = k.raim_on && k.carry_invariant && config_.networkRaimCarryInvariant();
+    // Card GL (docs/SPEC_event_harness.md §24.18): the gross line-of-sight screen.
+    // Resolved once here so the driver, the assembly, the seam and the teardown all
+    // read ONE bool.  Unconditional (no interlock): the screen owns its own residual
+    // walk and its own state, so it does not need any other tier to be armed — which
+    // is the point, since every other post-fit tier is phase-only.
+    k.gl_on      = config_.getNetworkConfig().gross_los_screen;
+    k.gl_deweight = k.gl_on ? config_.getNetworkConfig().gross_los_deweight : 1.0;
     k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;
