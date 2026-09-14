@@ -2274,6 +2274,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
     const bool   pl_los_scale  = ctx.knobs.pl_los_scale;  // F1: per-LOS B_eff variance scale at inject (SPEC_amb_iono_split_overcount); OFF = byte-identical
     const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: station-wide jointly-whitened local block at inject (SPEC_amb_iono_split_overcount); OFF = byte-identical
+    // RF-1 §7.4 (network.trace_amb_state): record, per FOLDED ambiguity column, the
+    // variance the fold ACTUALLY used and the ROUTE it took, into this station's own
+    // StationAssembly — the pl_los_beff discipline.  MEASURE-ONLY, and OFF the map is
+    // never touched, so the produce loop pays one bool test per folded column.
+    const bool   amb_state_tr  = ctx.knobs.trace_amb_state;
     // SPEC_slip_relevel_walk: read-only parallel consult of the latched
     // free-epoch set (filled serially in PASS-A; const for the whole produce).
     const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
@@ -3203,18 +3208,33 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     var_eff *= vce_apply.factor(NetworkCarryVceApply::kPl, sat);
                     return var_eff;
                 };
+                // RF-1 §7.4: record what this column's fold actually was, at the one
+                // site that emits a per-column row.  Called AFTER the emit decided, so
+                // a column screened out by the "never poison u_r" guard is recorded as
+                // NOT folded — which is the honest answer and exactly the population D2
+                // exists to count.
+                const auto amb_state_note = [&](const std::string& sat,
+                                                const std::string& signal,
+                                                double var_eff, AmbFoldRoute route) {
+                    if (!amb_state_tr) return;
+                    R.amb_state_fold[{sat, signal}] = {var_eff, route};
+                };
                 const auto pl_emit_row = [&](Eigen::Index col, int amb_idx,
                                              const LocalCarry& lc, double var_eff,
-                                             double gap_clamped) {
+                                             double gap_clamped,
+                                             const std::string& sat = {},
+                                             const std::string& signal = {}) {
                     if (!(var_eff > 0.0)) return;
                     if (carry_cpl_cond) {
                         cb.buildCplRow(col, x_lin(amb_idx), lc, var_eff, gap_clamped);
+                        amb_state_note(sat, signal, var_eff, AmbFoldRoute::CouplingScalar);
                         return;
                     }
                     const double lambda = 1.0 / var_eff;
                     const double eta = lambda * (lc.value_abs - x_lin(amb_idx));
                     if (!std::isfinite(eta)) return;            // belt-and-suspenders: never poison u_r
                     inj.emplace_back(col, lambda, eta);
+                    amb_state_note(sat, signal, var_eff, AmbFoldRoute::Diag);
                 };
                 struct PlPend {   // F1 ON route: an injectable column awaiting its LOS B_eff
                     Eigen::Index col; int amb_idx; const LocalCarry* lc;
@@ -3333,7 +3353,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     // the tail so it is symmetric with the block route (whose Sigma
                     // diagonal IS the finished tail).  yng_add is 0 OFF => byte-identical.
                     var_eff += yng_add;
-                    pl_emit_row(col, amb_idx, cit->second, var_eff, std::max(0.0, gap));
+                    pl_emit_row(col, amb_idx, cit->second, var_eff, std::max(0.0, gap),
+                                parts->satellite, parts->signal);
                 }
                 // --- I-in-block (network.carry_iono_in_block): collect this station's
                 //     carried per-LOS slant-iono columns for the SAME block the
@@ -3671,6 +3692,18 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         }
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
                         if (!blk_done) ++R.pl_blk_fallback;
+                        // RF-1 §7.4: the BLOCK route's fold record.  Only on success —
+                        // a fallback re-emits every pending column through pl_emit_row
+                        // below, which records the route it actually took.  That
+                        // distinction IS design risk #3 (a non-SPD factor silently
+                        // changing the vehicle on one station-epoch), made visible per
+                        // arc instead of only as a run total.
+                        if (amb_state_tr && blk_done)
+                            for (const PlPend& p : pl_pend)
+                                if (!localCarryYoung(*p.lc, loop_ep_now, pl_min_age))
+                                    amb_state_note(p.sat, p.signal,
+                                                   pl_finish_var(p.var_eff, p.sat) + p.var_add,
+                                                   AmbFoldRoute::Block);
                         // I-in-block degrade edge (invariant #4/#7): a non-SPD block means
                         // the iono carries did NOT act this station-epoch.  Unlike the ZWD
                         // there is deliberately no diagonal row to fall back to, so this is
@@ -3725,7 +3758,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                 }
                                 var_eff = pl_finish_var(var_eff, p.sat);
                                 var_eff += p.var_add;   // young-arc inflate, diagonal route
-                                pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap);
+                                pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
+                                            p.sat, p.signal);
                             }
                         }
                     }
@@ -3753,7 +3787,8 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             }
                             var_eff = pl_finish_var(var_eff, p.sat);
                             var_eff += p.var_add;   // young-arc inflate, diagonal route
-                            pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap);
+                            pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
+                                        p.sat, p.signal);
                         }
                     }
                 }

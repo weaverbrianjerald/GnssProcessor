@@ -4597,6 +4597,25 @@ int networkTeardown(
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
                   ctx.counters.n_amb_block_fallback);
+    if (config_.getNetworkConfig().trace_amb_state)
+        // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line —
+        // on this vehicle the trace rides the leveling HARVEST, so 0 rows means the
+        // carry never ran (carry_warm never reached, or carry_invariant) rather than a
+        // quiet network.  The erase split is reported beside the total because D3's
+        // whole inventory is that class, and because a run with births and trajectory
+        // rows but ZERO erase rows on a 60-station field hour would itself be the
+        // finding (the four erase paths are the population §3.4 replaces).
+        log->log(ctx.counters.n_amb_state_rows > 0 ? spdlog::level::info : spdlog::level::warn,
+                 "Network (RF-1 §7.4 carry-state trace): {} row(s) written to "
+                 "network_amb_state.csv over {} traced epoch(s) — {} carrying an event, "
+                 "of which {} are erase: rows (t4_attrib / t3_consensus / gap_prune / "
+                 "anchor_reref, each captured before the entry was deleted).  0 rows "
+                 "under an ARMED trace means the leveling harvest never ran — read the "
+                 "carry warm-up and the vehicle, not this line.  Reads: "
+                 "scripts/amb_state_read.py (D1 the variance trajectory, D2 the level "
+                 "trajectory, D3 this inventory, D4 σ̂₀(pl) by arc age).",
+                 ctx.counters.n_amb_state_rows, ctx.counters.n_amb_state_epochs,
+                 ctx.counters.n_amb_state_events, ctx.counters.n_amb_state_erase_rows);
     if (config_.getNetworkConfig().trace_sh_spectrum)
         log->info("Network (P1-3 shared-normal spectrum): {} epoch(s) written to "
                   "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).",

@@ -1251,6 +1251,19 @@ namespace GnssProcessor {
             std::uint8_t cause{0};   ///< RelevelEpochState::kCauseT4Attrib / kCauseT4Consens.
         };
         std::map<std::tuple<int, std::string, std::string>, LaneT4Pre> lane_t4_pre;
+        /// RF-1 §7.4 (@c network.trace_amb_state): THIS epoch's @c network_amb_state.csv
+        /// rows, buffered here and drained serially by @ref networkAmbStateTrace at the
+        /// end of the epoch (the @c sd_ewl_trace precedent, so the file order is
+        /// thread-count independent).
+        ///
+        /// A buffer rather than a direct write because the row sources are spread across
+        /// the epoch and some of them run AFTER the harvest: the trajectory rows come
+        /// from the leveling harvest (SB_LEVELING), while the `erase:` rows come from the
+        /// gap prune (also SB_LEVELING, after the harvest refreshed last_seen_s), the T4
+        /// attribution and T3 consensus refloats (SB_RAIM) and the phase-anchor carry
+        /// re-reference (the datum block).  Cleared by the drain, so an epoch that never
+        /// reaches it cannot leak rows into the next one.  Empty on every unarmed run.
+        std::vector<AmbStateRow> amb_state_rows;
         /// SIM-ONLY ORACLE slip response (network.cycle_slip.oracle_relevel,
         /// include/slip/NetworkSlipOracle.hpp): the run-scope truth table, the
         /// per-arc application ledger and the run-end counters.  NULL on every

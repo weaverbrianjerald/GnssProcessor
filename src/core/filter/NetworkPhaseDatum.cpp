@@ -824,7 +824,9 @@ int networkStageAnchorSlipHandovers(
 
 int networkApplyPhaseAnchorCarryReref(
         const std::set<std::pair<std::string, std::string>>& reref,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry) {
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+        std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
+            erased_out) {
     if (reref.empty() || local_carry.empty()) return 0;
     // Verbatim the eq34 D4 erase (NetworkChainDatum.cpp): drop the family's
     // per-station ambiguity carries at EVERY station — the frame stepped, so the
@@ -833,6 +835,11 @@ int networkApplyPhaseAnchorCarryReref(
     for (auto it = local_carry.begin(); it != local_carry.end();) {
         const auto& key = it->first;   // (station idx, sat, signal)
         if (reref.count({std::get<1>(key), std::get<2>(key)})) {
+            // RF-1 §7.4 D3: capture BEFORE the erase.  This is the whole-FAMILY,
+            // every-station refloat design §3.6 replaces with a declared, exact
+            // S-transformation (step 5) — its inventory is the before/after that
+            // arm is graded on.
+            if (erased_out) erased_out->emplace_back(key, it->second);
             it = local_carry.erase(it);
             ++n_erased;   // returned; the caller folds it into the retirement census
         } else {

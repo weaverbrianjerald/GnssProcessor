@@ -18,6 +18,7 @@
 #include "config/GnssConfig.hpp"              // config_ getters
 #include "filter/NetworkMdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_redundancy_census)
 #include "filter/NetworkRobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
+#include "filter/NetworkAmbStateTrace.hpp"    // ambStateNoteErase (RF-1 §7.4 D3 erase inventory)
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
 #include "products/NetworkStateSnapshot.hpp"  // networkWarmupRampLifted
@@ -1025,6 +1026,12 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                         RelevelEpochState::kCauseT4Attrib };
                                     ++ctx.counters.n_lane_t4_captured;
                                 }
+                                // RF-1 §7.4 D3: capture the entry BEFORE the erase —
+                                // this is the class design §3.4 replaces with a bounded
+                                // drop, and its "variance before" only exists here.
+                                ambStateNoteErase(ctx, se.time.week, se.time.tow,
+                                                  stations[i].name, pa.sat, pa.signal,
+                                                  lane_lit->second, "t4_attrib");
                                 local_carry.erase(lane_lit);
                                 ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 ATTRIBUTION refloat
                             }
@@ -1204,6 +1211,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                     RelevelEpochState::kCauseT4Consens };
                                 ++ctx.counters.n_lane_t4_captured;
                             }
+                            // RF-1 §7.4 D3 — see the attribution site.
+                            ambStateNoteErase(ctx, se.time.week, se.time.tow,
+                                              stations[i].name, pa.sat, pa.signal,
+                                              lane_lit->second, "t3_consensus");
                             local_carry.erase(lane_lit);
                             ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 CONSENSUS refloat
                         }

@@ -25,25 +25,37 @@
  * NOT stubbed here — a passing test for an unbuilt mechanism is worse than none.
  *
  * What a unit test can reach here: the loader (the enum grammar, the fallback, the two
- * hard-error interlocks, the two refusals and the WARN) and the carried type's new
- * fields with their defaults.  The trace's own row rule joins this file with step 2.
+ * hard-error interlocks, the two refusals and the WARN), the carried type's new fields
+ * and their defaults, and the trace writer's row rule against a synthetic carry.  What
+ * it cannot reach is the live harvest / inject seam that supplies the row — which is
+ * why @ref GnssProcessor::ambStateFormatRow is factored out of the writer, so the ROW
+ * RULE, not a paraphrase of it, is what both the seam and this file call.
  */
 
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
+#include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "logging/LogManager.hpp"
+#include "logging/NetworkRunTraces.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
+#include <vector>
 
+using GnssProcessor::AmbFoldRoute;
+using GnssProcessor::AmbStateRow;
+using GnssProcessor::ambStateFormatRow;
+using GnssProcessor::ambStateRouteName;
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
 using GnssProcessor::LogManager;
+using GnssProcessor::kAmbStateHeader;
 using GnssProcessor::NetworkAmbiguityVehicle;
 
 namespace fs = std::filesystem;
@@ -105,6 +117,37 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
     const bool ok = cfg.loadFromJson(p, log);
     std::error_code ec; fs::remove(p, ec);
     return ok;
+}
+
+/// A carried entry at a plausible settled posture; the fields the RF-1 columns read
+/// are set explicitly so a row assertion names them.
+AmbStateRow sampleRow() {
+    AmbStateRow r;
+    r.week = 2313; r.tow = 345600.0;
+    r.station = "WROC00POL"; r.sat = "G07"; r.signal = "L1C";
+    r.value_abs_m = -12.3456789; r.var_m2 = 4.5e-4; r.var_first_m2 = 0.82;
+    r.var_birth_m2 = 0.82; r.fold_var_m2 = 4.7e-4;
+    r.n_folds = 17; r.age_ep = 19; r.age_since_relevel_ep = 19;
+    r.folded = true; r.route = AmbFoldRoute::CouplingScalar; r.event.clear();
+    return r;
+}
+
+/// Split one CSV line, dropping the terminating newline and KEEPING trailing empty
+/// fields.  A `std::getline` loop would silently drop the last cell when it is empty,
+/// which is exactly the case the row rule has to get right: `event` is empty on an
+/// ordinary fold, and a reader that loses that column loses D3.
+std::vector<std::string> splitCsv(const std::string& line) {
+    std::string s = line;
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= s.size(); ++i) {
+        if (i == s.size() || s[i] == ',') {
+            out.push_back(s.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    return out;
 }
 
 }  // namespace
@@ -292,4 +335,100 @@ TEST(AmbFloatVehicleTest, RestoredCarryHasNoBirthPrior) {
     // The restored-arc AGE sentinels are untouched by this card.
     EXPECT_EQ(lc.birth_ep, LocalCarry::kBirthEpRestored);
     EXPECT_DOUBLE_EQ(lc.birth_s, LocalCarry::kBirthSRestored);
+}
+
+// =============================================================================
+// (4) THE TRACE ROW.  §7.4's header, verbatim, and the row rule that fills it.
+// =============================================================================
+
+// The header is pre-registered in the design and scripts/amb_state_read.py parses by
+// NAME — but a column reordered or renamed silently changes what every read means, so
+// the exact string is pinned here.
+TEST(AmbFloatVehicleTest, TraceHeaderIsTheDesignsHeaderVerbatim) {
+    EXPECT_EQ(std::string(kAmbStateHeader),
+              "week,tow,station,sat,signal,value_abs_m,var_m2,var_first_m2,var_birth_m2,"
+              "fold_var_m2,n_folds,age_ep,age_since_relevel_ep,folded,route,event\n");
+}
+
+TEST(AmbFloatVehicleTest, TraceRowHasSixteenColumnsInHeaderOrder) {
+    const std::string hdr(kAmbStateHeader);
+    const std::string row = ambStateFormatRow(sampleRow());
+    ASSERT_FALSE(row.empty());
+    ASSERT_EQ(row.back(), '\n');
+    EXPECT_EQ(splitCsv(hdr).size(), splitCsv(row).size());
+    EXPECT_EQ(splitCsv(row).size(), 16u);
+}
+
+TEST(AmbFloatVehicleTest, TraceRowCarriesTheIdentitiesAndTheFoldFacts) {
+    const auto c = splitCsv(ambStateFormatRow(sampleRow()));
+    ASSERT_EQ(c.size(), 16u);
+    EXPECT_EQ(c[0], "2313");
+    EXPECT_EQ(c[2], "WROC00POL");
+    EXPECT_EQ(c[3], "G07");
+    EXPECT_EQ(c[4], "L1C");
+    EXPECT_EQ(c[10], "17");          // n_folds — D1's abscissa
+    EXPECT_EQ(c[11], "19");          // age_ep
+    EXPECT_EQ(c[12], "19");          // age_since_relevel_ep
+    EXPECT_EQ(c[13], "1");           // folded
+    EXPECT_EQ(c[14], "coupling-scalar");
+    // The last cell is `event`, empty on an ordinary fold; std::getline drops a
+    // trailing empty field, so the row must still end with the separator + newline.
+    const std::string row = ambStateFormatRow(sampleRow());
+    EXPECT_EQ(row.substr(row.size() - 2), ",\n");
+}
+
+// `route` is the fold as the INJECT actually took it — the column that makes design
+// risk #3 (a joint-block fallback silently changing the vehicle on one station-epoch)
+// visible per arc rather than only as a run total.
+TEST(AmbFloatVehicleTest, RouteNamesAreTheDesignsVocabulary) {
+    EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::None), "");
+    EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::Diag), "diag");
+    EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::Block), "block");
+    EXPECT_STREQ(ambStateRouteName(AmbFoldRoute::CouplingScalar), "coupling-scalar");
+}
+
+// An UNFOLDED arc still gets a row — that is the whole point of D2/D3: the epochs a
+// carry did not act are exactly where the level is re-drawn from one epoch of code.
+TEST(AmbFloatVehicleTest, UnfoldedRowReportsZeroFoldVarAndNoRoute) {
+    AmbStateRow r = sampleRow();
+    r.folded = false;
+    r.route = AmbFoldRoute::None;
+    r.fold_var_m2 = 0.0;
+    r.event = "drop:relevel_free";
+    const auto c = splitCsv(ambStateFormatRow(r));
+    ASSERT_EQ(c.size(), 16u);
+    EXPECT_EQ(c[13], "0");
+    EXPECT_EQ(c[14], "");
+    EXPECT_EQ(c[15], "drop:relevel_free");
+}
+
+// The value and the variances are the quantities D1/D2/D4 are fitted on, so they are
+// written at full double precision — a 6-digit default would quantize fold_var at the
+// 1e-4 m² scale a settled arc lives at and flatten D1's own slope.
+TEST(AmbFloatVehicleTest, TraceRowKeepsFullPrecisionOnTheGradedQuantities) {
+    AmbStateRow r = sampleRow();
+    r.value_abs_m = -12.345678901234567;
+    r.fold_var_m2 = 1.2345678901234e-4;
+    const auto c = splitCsv(ambStateFormatRow(r));
+    ASSERT_EQ(c.size(), 16u);
+    EXPECT_NEAR(std::stod(c[5]), r.value_abs_m, 1e-12);
+    EXPECT_NEAR(std::stod(c[9]), r.fold_var_m2, 1e-18);
+}
+
+// =============================================================================
+// (5) THE OFF CONTRACT.  Default OFF ⇒ no stream, no file, no rows.
+// =============================================================================
+
+TEST(AmbFloatVehicleTest, TraceStreamStaysClosedWhenUnarmed) {
+    const fs::path dir = fs::temp_directory_path() / "ambstate_off_case";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+        GnssProcessor::NetworkRunTraces traces(dir);
+        EXPECT_FALSE(traces.amb_state_trace.is_open());
+        EXPECT_EQ(traces.amb_state_trace_path, dir / "network_amb_state.csv");
+    }
+    EXPECT_FALSE(fs::exists(dir / "network_amb_state.csv"));
+    fs::remove_all(dir, ec);
 }
