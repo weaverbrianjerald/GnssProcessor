@@ -31,6 +31,27 @@ so a frame move (median large, deviation small) is never confused with a
 per-satellite re-realization (median ~0, deviation large), which is the
 distinction the emitter's own stage-2 test is written on.
 
+THE ANCHOR READ (card CS part B, s24.20).  R10 attributed 88 % of the unsignalled
+clock steps to a `T4_attrib/attrib_arc` refloat of the SAME satellite in the SAME
+epoch.  That refloat names a (station, satellite) ARC.  The question this read
+settles is whether the refloated station was that satellite's elected PHASE
+ANCHOR at the time - i.e. whether the clock re-realization is the gauge moving
+under the satellite rather than a generic arc refloat:
+
+  * the incumbent anchor per (satellite, signal) is reconstructed by replaying the
+    handover chain (`PBGAUGE/handover_cold|handover_continuous`, whose `sat` field
+    is "<SAT>_<SIGNAL>" and whose `station` is the NEW anchor, and
+    `PHASE_ANCHOR/anchor_handover`), so `anchors(sat, t)` is the set of stations
+    holding ANY of that satellite's signals at epoch t - a set, not a scalar,
+    because the signal families demonstrably split-reference (s24.15 R6);
+  * each flagged step is then labelled ON_ANCHOR / off-anchor by whether the
+    refloated station is in that set;
+  * and the satellite's PHASE BIAS keys are checked at the same epoch, so the
+    report can state whether the PB HELD while the clock took the step.
+
+Frozen (s24.20): > 50 % on the anchor makes the anchor-election card the
+structural fix; < 20 % makes a "T4 refloat forces a clock mark" rule the fix.
+
 READ-ONLY: opens products and traces, writes nothing but its report.
 """
 import argparse
@@ -94,6 +115,53 @@ def read_events(path):
     return ev
 
 
+def read_anchor_chain(path):
+    """[(tow, sat, signal, station)] handovers, epoch-ordered.
+
+    Two writers, both replayed: `PBGAUGE/handover_cold|handover_continuous` names
+    the key as "<SAT>_<SIGNAL>" in its sat column with the NEW anchor station in
+    its station column, and `PHASE_ANCHOR/anchor_handover` names the satellite
+    with the new anchor and "OLD->NEW" in detail.  The PHASE_ANCHOR row has no
+    signal, so it is applied to EVERY signal of that satellite already seen.
+    """
+    out = []
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8", errors="replace", newline="") as f:
+        for r in csv.DictReader(f):
+            tier, ev = r.get("tier"), r.get("event", "")
+            if tier == "PBGAUGE" and ev.startswith("handover"):
+                key, sta = r.get("sat", ""), r.get("station", "")
+                if "_" in key and sta:
+                    sat, _, sig = key.partition("_")
+                    out.append((float(r["tow"]), sat, sig, sta))
+            elif tier == "PHASE_ANCHOR" and ev == "anchor_handover":
+                sat, sta = r.get("sat", ""), r.get("station", "")
+                if sat and sta:
+                    out.append((float(r["tow"]), sat, "*", sta))
+    out.sort()
+    return out
+
+
+def anchors_at(chain, sat, tow):
+    """Set of stations holding ANY signal of `sat` at `tow` (replay to that epoch)."""
+    cur = {}
+    for t, s2, sig, sta in chain:
+        if t > tow:
+            break
+        if s2 != sat:
+            continue
+        if sig == "*":
+            if cur:
+                for k in list(cur):
+                    cur[k] = sta
+            else:
+                cur["*"] = sta
+        else:
+            cur[sig] = sta
+    return set(cur.values())
+
+
 def read_consumer(path):
     """tow -> (3D error, |d3D| against the previous epoch)."""
     out = {}
@@ -117,6 +185,18 @@ def audit_arm(rundir, tow0, attrib_m):
     if not sol:
         return None
     ev = read_events(os.path.join(rundir, "logs", "network_events.csv"))
+    chain = read_anchor_chain(os.path.join(rundir, "logs", "network_events.csv"))
+    # Raw T4 rows, for the ANCHOR read: (tow, sat) -> the refloated station(s).
+    t4 = defaultdict(set)
+    evp = os.path.join(rundir, "logs", "network_events.csv")
+    if os.path.exists(evp):
+        with open(evp, encoding="utf-8", errors="replace", newline="") as f:
+            for r in csv.DictReader(f):
+                if r.get("tier") == "T4_attrib" and r.get("event") == "attrib_arc":
+                    try:
+                        t4[(float(r["tow"]), r.get("sat", ""))].add(r.get("station", ""))
+                    except (ValueError, KeyError, TypeError):
+                        pass
     cons = read_consumer(os.path.join(rundir, "logs", "closed_loop_trace.csv"))
     ev_tows = sorted(ev)
 
@@ -184,6 +264,32 @@ def audit_arm(rundir, tow0, attrib_m):
                     "consumer_3d_m": None if c3 != c3 else round(c3, 3),
                     "consumer_step_m": None if cs != cs else round(cs, 3),
                 })
+                if kind == "CLK":
+                    # --- the ANCHOR read (card CS part B) -------------------
+                    stas = set()
+                    for dt in (0.0, -DT, DT, -2 * DT, 2 * DT):
+                        stas |= t4.get((t1 + dt, sat), set())
+                    anch = anchors_at(chain, sat, t1)
+                    on = sorted(stas & anch)
+                    flagged[-1].update({
+                        "t4_stations": sorted(stas),
+                        "anchor_stations": sorted(anch),
+                        "on_anchor": bool(on),
+                        "on_anchor_stations": on,
+                    })
+                    # --- did the PB hold while the clock stepped? -----------
+                    pbmax, pbsig = 0.0, ""
+                    for (k2, s2, g2), p2 in sol.items():
+                        if k2 != "PB" or s2 != sat:
+                            continue
+                        j = bisect.bisect_left([x[0] for x in p2], t1)
+                        if 0 < j < len(p2) and p2[j][0] == t1 \
+                                and p2[j][0] - p2[j - 1][0] <= 1.5 * DT:
+                            d2 = abs(p2[j][1] - p2[j - 1][1])
+                            if d2 > pbmax:
+                                pbmax, pbsig = d2, g2
+                    flagged[-1]["pb_max_step_m"] = round(pbmax, 4)
+                    flagged[-1]["pb_worst_signal"] = pbsig
     flagged.sort(key=lambda r: -r["step_m"])
     return {"counts": counts, "hourly": dict(hourly), "rows": rows_seen,
             "flagged": flagged}
@@ -266,6 +372,35 @@ def main():
         rec = [r for r in fl if "cta_recouple" in r["near_event"]]
         print("      within +-2 ep of a cta_recouple: %d of %d (%.0f %%)"
               % (len(rec), len(fl), 100.0 * len(rec) / max(1, len(fl))))
+
+    print("\n" + "=" * 108)
+    print("(B) THE ANCHOR READ - was the T4-refloated station the satellite's elected PHASE ANCHOR?")
+    print("     and did the PHASE BIAS hold while the CLOCK took the re-realization?")
+    print("=" * 108)
+    tot = on_t = pb_held = 0
+    for arm, res in out.items():
+        fl = [r for r in res["flagged"] if r["kind"] == "CLK" and "on_anchor" in r]
+        if not fl:
+            continue
+        o = sum(1 for r in fl if r["on_anchor"])
+        h = sum(1 for r in fl if r["pb_max_step_m"] <= 0.5)
+        tot += len(fl); on_t += o; pb_held += h
+        print("\n--- %s : %d clock step(s); ON-ANCHOR %d (%.0f %%); PB held (<=0.5 m) %d (%.0f %%)"
+              % (arm, len(fl), o, 100.0 * o / len(fl), h, 100.0 * h / len(fl)))
+        print("      tow      sat   step_m  anchor?  T4 station(s)            anchor station(s)        PBmax/sig")
+        for r in fl[:a.max_list]:
+            print("  %9.0f %-4s %8.3f  %-7s %-24s %-24s %6.3f/%s"
+                  % (r["tow"], r["sat"], r["step_m"],
+                     "ON" if r["on_anchor"] else "off",
+                     ",".join(r["t4_stations"])[:24] or "-",
+                     ",".join(r["anchor_stations"])[:24] or "-",
+                     r["pb_max_step_m"], r["pb_worst_signal"] or "-"))
+    if tot:
+        print("\n  POOLED over every arm: %d unsignalled clock step(s) > %.1f m; "
+              "ON-ANCHOR %d (%.1f %%); PB HELD (<= 0.5 m) %d (%.1f %%)"
+              % (tot, a.attrib_m, on_t, 100.0 * on_t / tot, pb_held, 100.0 * pb_held / tot))
+        print("  s24.20 frozen: > 50 % on the anchor => the anchor-election card is the "
+              "structural fix; < 20 % => a 'T4 refloat forces a clock mark' rule is.")
 
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
