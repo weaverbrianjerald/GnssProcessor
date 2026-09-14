@@ -7511,3 +7511,62 @@ of any posture claim (the 2 h level budget):
   as the no-anchor control; PASS = the guard FIRES at the event with marks at the decoupling edge, a `cta_recouple` at the re-coupling edge,
   and the epochs EMITTING (adapt-and-emit, not withhold), with the wire and the consumer through the event not worse than the control's;
   "quiet-day cleanliness alone does not pass".  FAIL ⇒ the anchor stays OFF on the field and the posture card ships the vehicle alone.
+
+**§24.17 RESULTS (2026-09-14 ~07:00 local; worker commits `b3c2bc2` / `b023b06`, merged 869a2d6; exe `4CD7D664…`; manager grade).**
+- **The stack (2 h):** c9 (+ ZWD carry q 1e-7) (i) 1.06 / (ii) 8; c9b (+ rx-CB carry off) 1.08 / 9 — against c8b's 1.09 / 8: neutral on every
+  bar and within 0.15 m on the consumer; **c8b stays the posture candidate** (the ZWD carry is physical and free of cost on this vehicle,
+  but buys nothing on the bars — a posture choice, not a lever).
+- **The 6 h twin (c10 = c8b's posture, pvb6 = PV-B; hour by hour, k windows of 120):**
+
+| hour (UT) | c10 (i) p50 / p90 / max m | c10 (ii) | c10 consumer p50 | pvb6 (i) | pvb6 (ii) | pvb6 consumer p50 |
+|---|---|---|---|---|---|---|
+| 1 (00–01) | 0.87 / 1.65 / 3.4 | 17 | 10.0 (ignition) | 1.36 / 3.47 / 5.5 | 24 | 4.43 |
+| 2 (01–02) | 1.09 / 2.12 / 3.5 | 8 | 1.94 | 1.95 / 3.28 / 7.1 | 13 | 2.48 |
+| 3 (02–03) | 1.50 / 3.06 / **63.1** (DJIG) | 13 | 2.78 | 2.04 / 5.03 / 58.1 (BSHM) | 18 | 1.44 |
+| 4 (03–04) | 1.91 / 3.84 / **85.0** | 13 | 1.41 | 2.67 / 7.00 / 63.2 | 23 | 2.28 |
+| 5 (04–05) | 2.01 / 4.67 / **91.0** (BSHM 53.8; its ZWD **197 m**) | 10 | 2.04 | 2.90 / 7.02 / 89.6 | 19 | 2.53 |
+| 6 (05–06) | 2.14 / 6.15 / 83.6 | 10 | **4.37** | 2.91 / 7.40 / **160.2** | 31 | 4.72 |
+
+  **The frozen reading is the DRIFT branch on both arms**: (i) rises ≈ +0.25 m/h from hour 2 on both (the anchored arm better at every hour —
+  2.14 vs 2.91 and 10 vs 31 stations at hour 6 — but not stable), and the channel is the GROSS PER-LOS TAIL: the station code-rms max goes
+  3.5 → 63 → 85 → 91 m as DJIG/G06-class lines of sight (§24.15 R5) are admitted, never acted on, and grow, until a whole station is
+  poisoned (BSHM00ISR at hour 5: code rms 54 m, ZWD 197 m; on pvb6 its max reaches 160 m).  The consumer hovers at 1.4–2.8 m float on both
+  arms and jumps to 4.4–4.7 m in hour 6 on both (a shared wire event, not the posture).  ⚠ Exe note: the inherited `_cm_pvb` control's (i)
+  p50 1.79 was on the pre-ZP exe; the same posture on the post-ZP exe reads 1.95 (the fallback files ~25 more code rows per epoch; p90 / max
+  / (ii) / (iii) identical) — every "vs PV-B" ratio in §24.14–§24.17 is conservative by that margin.
+- **G4 (the 20:47 replay, seamless from 15:00 UT, `g4a` = c8b's posture vs `g4b` = PV-B): INCONCLUSIVE on this bed, not a mechanism
+  failure.**  All four mechanical conditions hold at the event window — 13 `cta_decouple` (a 10-satellite `nis` trip at tow 334380, |w| to
+  45), every trip a wire mark (348 = 348 run-wide), every one `cta_recouple … in_band=4` exactly four epochs later, 41 / 41 epochs
+  emitted — and the wire through the window is 5× better than the control's (D_phase 0.168 vs 0.890 m, D_code 0.030 vs 0.145).  But the
+  guard fires on 7.3 % of all epochs (57 of 780; the event cluster ranks 14th of 57), and the 20:47 excursion does not express on this
+  61-station leveling bed at all (window `clock_std` p50 4.07 / 3.85 m against whole-window maxima 4.38 / 4.52; the best window epoch ranks
+  143rd / 107th of 780 on both arms) — the documented event was a G01 pivot code-bias ratchet on a 305-station `carry_invariant` lineage.
+  The consumer through the window is worse anchored (p50 4.26 vs 2.60 m; last 30 min 3.29 vs 2.05) with a 3.7× smaller largest step
+  (0.115 vs 0.431 m) — the anchor buys smoothness and costs level there.  Per §24.17's rule a non-PASS keeps the anchor OFF on the field
+  golden; **the posture card, if armed, ships the vehicle alone until G4 has a bed on which the event expresses** (a 305-station or
+  `carry_invariant`-class replay, or a different known event on this bed).
+**Where this leaves the field wire:** the vehicle + the clock anchor at the floor is a large, measured improvement at every hour, and it
+is NOT a usable wire yet, for three named reasons in order of evidence: (1) **gross per-LOS errors are admitted at birth and no screen
+acts** — field-blocking, it poisons stations over hours (§24.18); (2) the wire's within-arc random walk in the phase-bias / level channel
+(0.3–0.9 m per hour, R7) — unopened; (3) a bulk code-residual drift of ~+0.25 m/h whose channel beyond the tail is unmeasured.
+
+### 24.18 Card GL — the gross line-of-sight screen (pre-registered before any arm is read)
+
+**Diagnosis first (code read, cited file:line):** why the post-fit RAIM pool filed ZERO rows for DJIG/G06 over k 210..240 of `_cm_pvb`
+(code residuals −75 … −142 m on three signals; `network_raim.csv` 964 rows in the run, none for that satellite or station in the window;
+MDB `mdb_exceedance` twice, action `observe`) and for BSHM00ISR in hours 5–6 of `_cm_c10` — the pool's membership rules on the leveling
+vehicle (`pl_amb`; `raim_carry_invariant` auto-disabled), any age / elevation / tie / redundancy gate, and MDB's action table.
+**Build (default OFF, byte-identical OFF, never fingerprinted; an EVENT at both edges with counters — invariant #7):** the minimal ACTING
+response the diagnosis names — preferably a scope or action change to the existing screen (e.g. MDB `observe` → an acting mode, or the
+pool admitting the untied low-elevation LOS) rather than a new mechanism; if a new screen is needed: per (station, satellite) LOS, code
+residuals beyond k·σ (k = 8) on ≥ 2 signals for ≥ 2 consecutive epochs ⇒ the LOS is declared GROSS (event, decoupling edge): its
+ambiguities refloated, its per-LOS iono re-seeded from the SH field, its code rows deweighted (×100 σ) until the residual returns under
+3σ for 2 epochs (event, re-coupling edge); the epoch always emits.  Counters: LOS declared / cleared / currently gross, rows deweighted,
+by station and satellite.  Gates: a new unit-test file, the Debug suite, smokes OFF / ON (`87a33bf0…` OFF; ON on the smoke should be
+byte-identical too unless the smoke carries a gross LOS — report), `--verify`.  **Arm:** c10's posture 6 h with the screen ON
+(`runs/_gl_on6`) against `_cm_c10`, hour by hour.  **Bars (frozen):** station code-rms max < 5 m in every hour; DJIG/G06 and BSHM bounded
+(their LOS residuals < 5 m within 5 epochs of the declaration); (i) p50 in hours 3–6 within 0.2 m of hour 2 (the drift test); (ii) and the
+consumer's per-hour p50 not worse than c10's; availability identical; the counters live.  **Frozen reading:** all bars ⇒ the gross-LOS
+admission WAS the drift's channel and the screen joins the posture; max bounded but (i) still drifts ⇒ the drift has a second channel
+in the bulk (recorded, next read); the screen declares > 5 % of LOS ⇒ the threshold is wrong — report the |v| / σ distribution, do not
+tune blind.
