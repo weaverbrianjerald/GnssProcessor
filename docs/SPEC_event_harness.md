@@ -7444,3 +7444,20 @@ r(A) > 0.5 and r(A) > r(B) ⇒ the wire follows its anchor's code level — the 
 coverage-elected, code-tracking gauge), and the card is a multi-station gauge (or a minimum anchor age + elevation with the level
 decoupled from the code after convergence) — a design card; r(B) > r(A) > 0.5 ⇒ the level tracks the code network-wide by construction (a
 leveling-memory posture knob); both < 0.3 ⇒ the wander is not code-driven, and the per-arc spectrum (white vs random walk) is recorded.
+
+**§24.15 R7 RESULTS (2026-09-14 ~05:15 local; worker commit `45ac4a3`, merged; PV-B, all 32 satellites, 295 declared arcs ≥ 20 epochs).**
+**The third branch applies — the wire's within-arc wander is NOT code-driven and NOT the anchor's.**  Pooled r(D_phase, the anchor
+station's own per-LOS code level) = **0.079** (per-signal 0.095, C1 0.094); r against the tracking-set mean = −0.010; the noisy four run
+r(A) −0.17 … +0.17 and r(B) −0.19 … +0.09; |r(A)| 0.307 against a wrong-satellite NULL of 0.310 (gap −0.003 — the raw correlation measures
+arc length and autocorrelation, not the anchor); within-arc D rms against the anchor's elevation across arcs: Pearson −0.017, Spearman
+−0.007; one satellite of 23 (G21, r(A) 0.534 with r(B) −0.375) matches the "follows its anchor" branch.  **G32 refutes the hypothesis in its
+sharpest form:** through its five anchors in 24 min at 16–28° its D rms was 0.06–0.17 m; on one 49.9° anchor (INEG00MEX) held for 152
+epochs it produced D rms 1.79 m with r(A) −0.07.  **What the arcs are instead is a random walk or steeper:** on the 67 arcs where both
+correlations fail, σ²(lag 10) / σ²(lag 1) = p10 8.4 / p50 16.6 / p90 77 (white ≈ 1, random walk ≈ 10, drift ≈ 100), 100 % above 5.  With
+R6 (not at declared boundaries, not a fitted drift, not coverage, not eclipse) the remaining candidate is a stochastic satellite-side
+within-arc process — the free satellite clock's own random walk (`filter.process_noise.sat_clock_q` 0.001 m²/s ≈ 0.17 m per 30 s step on
+the field golden, against a physical floor of 2.9e-8) absorbing whatever the phase-consistent combination lets it, which is exactly
+what card Q3-F (§24.16, the temporal clock anchor at q 3e-6 and 2.9e-8) is running now; if D_phase collapses under c8 / c8b the wander was
+the clock's; if it stays, it lives in the phase-bias / level channel and the next read targets that state's process noise and carry.
+The anchor-election defects of R5 / R6 (coverage-only rule, split-referencing families, newborn low anchors) remain OWED cards on their own
+evidence, off the bars.
