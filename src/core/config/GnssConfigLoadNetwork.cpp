@@ -3632,6 +3632,57 @@ namespace GnssProcessor {
         if (network_phase_leveling_young_inflate_max_age_ep_ <= 0)
             throw std::runtime_error("network.phase_leveling_young_inflate_max_age_ep must be > 0 "
                                      "(0 would arm a knob that can never inflate anything)");
+        // ---- RF-1 (docs/refound/RF-1_float_ambiguities_design.md §7.1): the AMBIGUITY
+        //      VEHICLE and its supporting knobs.
+        //
+        // String enum on the established loader pattern (network.trace_dd_fractional_ref,
+        // network.raim_erase_band_scope): an unknown value is an ERROR naming what the
+        // knob changes, and falls back to the default "level" rather than killing the
+        // run.  ⚠ STEP 1: the vehicle is REGISTERED and carries NO mechanism — "level"
+        // and "float_kf" are byte-identical in this build (standing invariant #6).  The
+        // cross-section interlocks (float_kf requires phase_leveling and !carry_invariant;
+        // F1/F3 are refused under it) live in validateNetworkCarryPosture_, which is the
+        // first point where network_carry_invariant_ is populated.
+        {
+            const std::string s = jval<std::string>(json, "network.ambiguity_vehicle",
+                                                    "ambiguity_vehicle",
+                                                    std::string{"level"});
+            if (s.empty() || s == "level")
+                network_config_.ambiguity_vehicle = NetworkAmbiguityVehicle::Level;
+            else if (s == "float_kf")
+                network_config_.ambiguity_vehicle = NetworkAmbiguityVehicle::FloatKf;
+            else {
+                network_config_.ambiguity_vehicle = NetworkAmbiguityVehicle::Level;
+                log->error("Network (RF-1 §7.1): network.ambiguity_vehicle = '{}' is not one of "
+                           "level|float_kf — falling back to 'level'.  The vehicle decides HOW a "
+                           "station ambiguity is carried between epochs: 'level' is today's "
+                           "zero-process-noise scalar prior carrying last epoch's marginal "
+                           "variance, 'float_kf' the float state whose carried JOINT covariance "
+                           "is folded as a proper prior with a floored birth prior and a bounded "
+                           "DROP as the slip response.  A typo here would silently ship the "
+                           "wrong vehicle in the product's provenance.", s);
+            }
+        }
+        network_config_.amb_float_birth_var_m2 =
+            jval<double>(json, "network.amb_float_birth_var_m2", "amb_float_birth_var_m2", 0.0);
+        if (network_config_.amb_float_birth_var_m2 < 0.0)
+            throw std::runtime_error("network.amb_float_birth_var_m2 must be >= 0 "
+                                     "(0 = use the arc's own first-stash variance unfloored)");
+        network_config_.amb_float_q_m2s =
+            jval<double>(json, "network.amb_float_q_m2s", "amb_float_q_m2s", 0.0);
+        if (network_config_.amb_float_q_m2s < 0.0)
+            throw std::runtime_error("network.amb_float_q_m2s must be >= 0 (the card's posture "
+                                     "is 0.0 — an ambiguity is a random constant; any nonzero "
+                                     "value is a separate, evidence-bearing arm)");
+        network_config_.amb_float_declared_handover =
+            jval<bool>(json, "network.amb_float_declared_handover",
+                       "amb_float_declared_handover", false);
+        network_config_.trace_amb_state =
+            jval<bool>(json, "network.trace_amb_state", "trace_amb_state", false);
+        network_config_.trace_amb_state_every =
+            jval<int>(json, "network.trace_amb_state_every", "trace_amb_state_every", 1);
+        if (network_config_.trace_amb_state_every < 1)
+            network_config_.trace_amb_state_every = 1;
         network_shared_carry_var_floor_pb_m2_ =
             jval<double>(json, "network.shared_carry_var_floor_pb_m2", "shared_carry_var_floor_pb_m2", 0.0);
         // T1d: convergence-gated leveling-carry warmup (default OFF = fixed epoch count).
@@ -9929,6 +9980,89 @@ namespace GnssProcessor {
                       "this posture (standing invariant #4).",
                       network_phase_leveling_, network_carry_invariant_,
                       network_carry_conditional_coupling_, network_carry_coupling_joint_whiten_);
+        // ---- RF-1 (docs/refound/RF-1_float_ambiguities_design.md §7.1): the AMBIGUITY
+        //      VEHICLE interlocks.  Placed here because network_carry_invariant_ is only
+        //      populated by loadNetworkDatumSignalling_, which runs after the carries.
+        //
+        // ONE VEHICLE, TWO BEDS (the re-founding decision of 2026-09-14): the field
+        // golden's carry (carry_invariant) and the sim golden's (leveling) diverged in
+        // July and were never re-validated as a whole, and RF-1's whole subject is the
+        // leveling carry's fold — so float_kf on a lineage that does not fold it at all
+        // is not a degraded run, it is a MEANINGLESS one.  A hard error, not a warn:
+        // invariant #4's lesson is that an inert arm reads exactly like a clean one.
+        if (network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf) {
+            if (!network_phase_leveling_ || network_carry_invariant_) {
+                log->error("Network (RF-1 §7.1): network.ambiguity_vehicle = \"float_kf\" requires "
+                           "network.phase_leveling = true AND network.carry_invariant = false "
+                           "(got phase_leveling={}, carry_invariant={}).  float_kf replaces the "
+                           "LEVELING carry's scalar prior with a float state carrying a joint "
+                           "covariance; on a carry_invariant lineage the Card-4 DD carry IS the "
+                           "ambiguity time-link and ApplicationNetworkAssembly's do_amb_carry "
+                           "skips the leveling inject outright, so there is nothing for the "
+                           "vehicle to replace and the arm could not move a byte.",
+                           network_phase_leveling_, network_carry_invariant_);
+                return false;
+            }
+            // F1 (×B_eff) and F3 (the station-wide whitened block) are the mechanisms
+            // float_kf SUBSUMES: the joint block removes the per-LOS iono over-count
+            // EXACTLY where F1 corrects it approximately, and F3's buildLocalBlock IS the
+            // fold float_kf makes structural (design §3.2 / §4.1).  Leaving either armed
+            // beside the vehicle would make the effective fold un-attributable between two
+            // knobs, so they are REFUSED WITH A LINE rather than silently ignored.
+            if (network_phase_leveling_los_scale_) {
+                log->error("Network (RF-1 §7.1): network.phase_leveling_los_scale (F1) is REFUSED "
+                           "under network.ambiguity_vehicle = \"float_kf\" and has been forced "
+                           "OFF.  F1's ×B_eff is an APPROXIMATE correction for the per-LOS iono "
+                           "over-count that the vehicle's joint block removes EXACTLY; arming "
+                           "both would apply the correction twice and make the fold "
+                           "un-attributable between two knobs.");
+                network_phase_leveling_los_scale_ = false;
+            }
+            if (network_phase_leveling_local_block_) {
+                log->error("Network (RF-1 §7.1): network.phase_leveling_local_block (F3) is "
+                           "REFUSED under network.ambiguity_vehicle = \"float_kf\" and has been "
+                           "forced OFF.  float_kf IS the joint block, made structural rather than "
+                           "optional — CouplingRowBuilder::buildLocalBlock is re-pointed by the "
+                           "vehicle with the birth / drop / handover semantics fixed, so the F3 "
+                           "knob beside it would be a second, independently-armed switch on the "
+                           "same fold.");
+                network_phase_leveling_local_block_ = false;
+            }
+            // The young-arc inflate is a TIME-DECAYING PATCH ON THE INJECT for exactly
+            // the defect float_kf's floored birth prior + bounded drop fix at the source
+            // (design §4.1).  It is not refused — it is a validated mechanism and an arm
+            // may deliberately want the contrast — but an unnoticed carry-over from an
+            // RF-0 config would confound the birth-floor calibration, so it is named.
+            if (network_phase_leveling_young_inflate_var_m2_ > 0.0)
+                log->warn("Network (RF-1 §7.1): network.phase_leveling_young_inflate_var_m2 = {} "
+                          "is armed under ambiguity_vehicle = \"float_kf\".  The young-arc "
+                          "inflate is a time-decaying patch on the INJECT for the same defect the "
+                          "vehicle's floored birth prior and bounded drop fix at the source "
+                          "(design §4.1: it should stay unarmed and be retired if RF-1 wins).  "
+                          "Two mechanisms acting on the same young-arc variance make the birth "
+                          "floor's calibration un-attributable — arm it only as a deliberate "
+                          "contrast.", network_phase_leveling_young_inflate_var_m2_);
+        }
+        // ⚠ RF-1 STEP 1: the vehicle is REGISTERED and carries NO mechanism, so both
+        // values are byte-identical in this build.  Say so at load time — a reader who
+        // sees "float_kf" in a run manifest must not conclude the mechanism ran.
+        if (network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf)
+            log->warn("Network (RF-1 step 1): network.ambiguity_vehicle = \"float_kf\" — VEHICLE "
+                      "REGISTERED, NO MECHANISM.  This build lands the knob, the types, the "
+                      "interlocks and the network_amb_state.csv trace only; the joint block "
+                      "(step 3), var_birth + the drop semantics (step 4) and the declared anchor "
+                      "S-transform (step 5) are separately armed A/Bs that have not landed, so "
+                      "this run's solve is byte-identical to \"level\".");
+        if (network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::Level
+            && (network_config_.amb_float_birth_var_m2 > 0.0
+                || network_config_.amb_float_q_m2s > 0.0
+                || network_config_.amb_float_declared_handover))
+            log->warn("Network (RF-1 §7.1): amb_float_* knobs are set (birth_var_m2={}, "
+                      "q_m2s={}, declared_handover={}) but network.ambiguity_vehicle is "
+                      "\"level\" — they are INERT on this posture (standing invariant #4).",
+                      network_config_.amb_float_birth_var_m2,
+                      network_config_.amb_float_q_m2s,
+                      network_config_.amb_float_declared_handover);
         // M2 v2 (docs/SPEC_carry_vce_apply.md): post-parse INERT guard for the `pl`
         // apply family — network_carry_invariant_ is only populated by this point.
         //
@@ -10851,6 +10985,25 @@ namespace GnssProcessor {
                       "(carry-fold + D5 readouts computed per-block in parallel, merged in "
                       "fixed block order — byte-identical to the serial fold)");
         }
+        // RF-1 §7.1: the AMBIGUITY VEHICLE, on every run — it is the product's
+        // provenance, so it is stated whether or not it is the default.  The
+        // "no mechanism" clause is part of the line for as long as steps 3–5 are
+        // unlanded: a reader must never infer the mechanism from the knob.
+        log->info("Network (RF-1): ambiguity vehicle = \"{}\" — RF-1 step 1: vehicle "
+                  "registered, no mechanism (both values solve byte-identically in this "
+                  "build).  amb_float_birth_var_m2={} m^2, amb_float_q_m2s={} m^2/s, "
+                  "amb_float_declared_handover={}, trace_amb_state={}{}.",
+                  network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                      ? "float_kf" : "level",
+                  network_config_.amb_float_birth_var_m2,
+                  network_config_.amb_float_q_m2s,
+                  network_config_.amb_float_declared_handover,
+                  network_config_.trace_amb_state,
+                  (network_config_.trace_amb_state
+                   && network_config_.trace_amb_state_every > 1)
+                      ? fmt::format(" (every {} epoch(s))",
+                                    network_config_.trace_amb_state_every)
+                      : std::string{});
     }
 
     // =================================================================

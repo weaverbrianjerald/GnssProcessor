@@ -629,6 +629,21 @@ namespace GnssProcessor {
         /// direction is unresolved, not merely that the block is ill-conditioned.
         std::ofstream station_block_trace;
         const std::filesystem::path station_block_trace_path;
+        /// RF-1 §7.4 (@c network.trace_amb_state): the per-arc AMBIGUITY CARRY-STATE
+        /// trace — one row per carried (station, satellite, signal) per traced epoch
+        /// with what was carried (@c value_abs / @c var / @c var_first / @c var_birth),
+        /// what was FOLDED (@c fold_var, @c folded, @c route) and the arc's EVENTS
+        /// (birth / drop / erase / stransform), plus an @c erase: row captured at each
+        /// of the four erase sites immediately before the entry is deleted.  The
+        /// instrument R1 did not have: it read the per-LOS CODE RESIDUAL as a proxy for
+        /// the level because nothing traced the carry itself, and the prior-residual
+        /// census is aggregated per (family, label) per epoch so it cannot give a
+        /// per-arc trajectory.  Written by @ref GnssProcessor::networkAmbStateTrace from
+        /// rows buffered in @c NetworkCarryState::amb_state_rows.  Columns:
+        /// @ref GnssProcessor::kAmbStateHeader; reads: scripts/amb_state_read.py.
+        /// MEASURE-ONLY, and default OFF ⇒ no file, no rows (byte-identical).
+        std::ofstream amb_state_trace;
+        const std::filesystem::path amb_state_trace_path;
         /// S1 (@c network.trace_phase_anchor): one row per GAUGE-PINNED ambiguity per
         /// PROCESSED epoch — @c week,tow,cons,signal,sat,anchor_sta.  The
         /// (constellation, signal, satellite) -> anchoring STATION map that realizes the

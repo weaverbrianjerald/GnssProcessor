@@ -13,6 +13,7 @@
 #include "app/NetworkRunContext.hpp"    // NetworkKnobs / NetworkServiceCounters (INC-4)
 #include "logging/CsvRotator.hpp"       // maybeRotateCsv (P1 rotation, INC-4)
 #include "filter/NetworkPivotHandover.hpp" // formatPivotMap (health heartbeat, INC-4)
+#include "filter/NetworkAmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
@@ -64,6 +65,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
+      amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
       sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
@@ -489,6 +491,47 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open station-block audit trace {}",
                       station_block_trace_path.string());
+    }
+    if (nc.trace_amb_state) {
+        // RF-1 §7.4: the per-arc carry-state trace.  One `#` provenance line naming the
+        // object, the fold predicate and the event vocabulary, then the pre-registered
+        // header (scripts/amb_state_read.py skips `#` and parses by column NAME).  The
+        // provenance line is load-bearing twice over: `fold_var_m2` is the variance the
+        // fold ACTUALLY used (not the hand model), and the four `drop:` causes on the
+        // LEVEL vehicle are today's response paths recorded in the vocabulary RF-1's
+        // bounded drop will use — which is what makes the RF-0 baseline and an RF-1 arm
+        // comparable row for row.
+        amb_state_trace.open(amb_state_trace_path);
+        if (amb_state_trace)
+            amb_state_trace
+                << "# network_amb_state.csv - RF-1 7.4 (docs/refound/"
+                   "RF-1_float_ambiguities_design.md, network.trace_amb_state). One row "
+                   "per CARRIED (station, satellite, signal) per traced epoch, written "
+                   "after that epoch's leveling harvest, plus one 'erase:' row per "
+                   "entry deleted this epoch captured immediately BEFORE deletion. "
+                   "value_abs_m / var_m2 are POST-harvest (this epoch's solve); "
+                   "var_first_m2 is the arc's unfloored first-stash variance and "
+                   "var_birth_m2 the same floored by network.amb_float_birth_var_m2 "
+                   "(equal when the floor is 0). fold_var_m2 is the variance the PASS-B "
+                   "inject ACTUALLY folded with (after q*gap, the F1 B_eff scale, the "
+                   "var floor and the M2 VCE factor), 0 when folded=0; route is the "
+                   "route the inject took (diag | block | coupling-scalar), empty when "
+                   "folded=0. n_folds counts only epochs a prior ACTED, so it is not "
+                   "age_ep: age_ep counts loop epochs since the first stash (-1 = "
+                   "warm-resume-restored, 0 = unknown) and age_since_relevel_ep epochs "
+                   "since the last re-level (-1 = unstamped => mature). event is '' | "
+                   "birth | drop:<cause> | erase:<cause> | stransform; on the LEVEL "
+                   "vehicle the drop causes are the response paths that skip an inject "
+                   "(relevel_free, stale_gap, reseed) and the erase causes are the "
+                   "paths that delete the entry (t4_attrib, t3_consensus, gap_prune, "
+                   "anchor_reref). The prior residual D4 standardizes is formed offline "
+                   "from CONSECUTIVE rows of one arc: e = value_abs(t-1) - value_abs(t) "
+                   "over fold_var_m2(t), the same pair network_prior_residual.csv's pl "
+                   "family folds.\n"
+                << kAmbStateHeader;
+        else
+            log->warn("Network: failed to open ambiguity carry-state trace {}",
+                      amb_state_trace_path.string());
     }
     if (nc.trace_phase_anchor) {
         // S1 anchor partition (docs/SPEC_lane_spectrometer.md §3.3).  One row per
@@ -1488,6 +1531,26 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // armed-only rule, so an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
                                           : std::string())
+               // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §3.5 / §7.1): the
+               // AMBIGUITY VEHICLE is the product's provenance, so the manifest records
+               // it — and §3.5's whole reason for the q knob existing is that its 0.0
+               // default be EXPLICIT here rather than implied.  Emitted ONLY when the
+               // posture is non-default (the trace_postfit_rows / trace_station_block
+               // precedent above), so an unarmed run's manifest bytes are unchanged.
+               << ((nc.ambiguity_vehicle != NetworkAmbiguityVehicle::Level
+                    || nc.trace_amb_state || nc.amb_float_birth_var_m2 > 0.0
+                    || nc.amb_float_q_m2s > 0.0 || nc.amb_float_declared_handover)
+                       ? fmt::format("\"ambiguity_vehicle\":\"{}\","
+                                     "\"amb_float_birth_var_m2\":{},"
+                                     "\"amb_float_q_m2s\":{},"
+                                     "\"amb_float_declared_handover\":{},"
+                                     "\"trace_amb_state\":{},",
+                                     nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                                         ? "float_kf" : "level",
+                                     nc.amb_float_birth_var_m2, nc.amb_float_q_m2s,
+                                     nc.amb_float_declared_handover ? "true" : "false",
+                                     nc.trace_amb_state ? "true" : "false")
+                       : std::string())
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config — and, because `adm_screen` is solve-affecting, to know that
@@ -2096,6 +2159,9 @@ void NetworkRunTraces::closeAll() {
     // Same rationale: a NEW member, and the station-block audit is the graded
     // artifact of a §24.10 card-ZP arm — its tail must be flushed at teardown.
     if (station_block_trace.is_open()) station_block_trace.close();
+    // RF-1 §7.4: same rationale — a NEW member, and the carry-state trace is the
+    // instrument step 2 exists to produce, so its tail must be flushed at teardown.
+    if (amb_state_trace.is_open()) amb_state_trace.close();
 }
 
 } // namespace GnssProcessor

@@ -96,6 +96,7 @@
 #include "filter/NetworkWlRunTypes.hpp" // INC-9b: hoisted runNetwork()-local WL/RAII types
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
 #include "filter/NetworkPhaseDatum.hpp"    // INC-8b: census + ensemble datum + anchor election + drop-and-heal
+#include "filter/NetworkAmbStateTrace.hpp" // RF-1 §7.4: per-arc carry-state trace (drain + erase capture)
 #include "filter/NetworkChainDatum.hpp"    // INC-8b: Card-3 eq34 single-receiver-chain datum
 #include "filter/NetworkAnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "filter/NetworkSignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
@@ -1956,8 +1957,22 @@ int Application::runNetwork() {
                 if (!pa_reref.empty()) {
                     ctx.carry.pa_reref_total +=
                             static_cast<long long>(pa_reref.size() - pa_before);
+                    // RF-1 §7.4 D3: on an armed trace, take the entries before they
+                    // are destroyed — this scope owns the station names and the epoch
+                    // stamp, which the map operation itself has no business knowing.
+                    std::vector<std::pair<std::tuple<int, std::string, std::string>,
+                                          LocalCarry>> pa_reref_erased;
                     const int n_erased = networkApplyPhaseAnchorCarryReref(
-                            pa_reref, ctx.carry.local_carry);
+                            pa_reref, ctx.carry.local_carry,
+                            ctx.knobs.trace_amb_state ? &pa_reref_erased : nullptr);
+                    for (const auto& [k, lc] : pa_reref_erased) {
+                        const int sidx = std::get<0>(k);
+                        ambStateNoteErase(
+                            ctx, se.time.week, se.time.tow,
+                            (sidx >= 0 && sidx < static_cast<int>(stations.size()))
+                                ? stations[sidx].name : std::string{},
+                            std::get<1>(k), std::get<2>(k), lc, "anchor_reref");
+                    }
                     ctx.carry.pa_reref_erase_total += n_erased;
                     ctx.counters.n_cr_phase_datum_reref += n_erased;   // retirement census: FRAME step
                     log->debug("Network[1(d)]: {} marked (sat,signal) family(ies) "
@@ -2564,6 +2579,12 @@ int Application::runNetwork() {
                            sigma0_adapt, total_pins, vce_wants_cb, vce_wants_pb, dt,
                            datum_changed, changed_consts, n_clock, n_present, n_pb, n_cb,
                            n_dropped_sats, n_adapt);
+        // RF-1 §7.4: drain THIS epoch's buffered carry-state rows.  Placed last inside
+        // the bracket because it is the first point after EVERY row source has run —
+        // the leveling harvest and the gap prune (SB_LEVELING), the T4 / T3 refloats
+        // (SB_RAIM) and the phase-anchor carry re-reference (the datum block).  A no-op
+        // with an empty buffer, which is every unarmed run.
+        networkAmbStateTrace(ctx, log, traces);
         subEnd(SB_STASH_STATUS);   // D0b: close the stash + epoch-status tail (before the readout)
 
         // D0: per-epoch section-timer readout (emitted-epoch path).  Deltas of the

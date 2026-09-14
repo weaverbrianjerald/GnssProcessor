@@ -15,6 +15,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
+#include "filter/NetworkAmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkClockAnchor.hpp"      // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
@@ -58,6 +59,19 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
     k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
     k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
+    // RF-1 §7.1 (docs/refound/RF-1_float_ambiguities_design.md): the AMBIGUITY VEHICLE
+    // and its supporting knobs.  ⚠ STEP 1: the vehicle is registered and carries no
+    // mechanism — nothing on the solve path reads amb_float_kf, so both values are
+    // byte-identical; the joint block (step 3), var_birth + the drop (step 4) and the
+    // declared anchor S-transform (step 5) are separately armed A/Bs.
+    k.amb_float_kf = config_.getNetworkConfig().ambiguity_vehicle
+                     == NetworkAmbiguityVehicle::FloatKf;
+    k.amb_birth_var_floor = config_.getNetworkConfig().amb_float_birth_var_m2;
+    k.amb_float_q_m2s = config_.getNetworkConfig().amb_float_q_m2s;
+    k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
+    k.trace_amb_state = config_.getNetworkConfig().trace_amb_state;
+    k.trace_amb_state_every =
+        std::max(1, config_.getNetworkConfig().trace_amb_state_every);
     // AGE-AWARE young-arc inflate (SPEC_amb_iono_split_overcount §6.17–§6.18).  The
     // loader has already disabled it (V0 -> 0) off the leveling vehicle, so the live
     // predicate is Knobs::on() alone.
@@ -3919,6 +3933,28 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     const double pl_var_floor = ctx.knobs.pl_var_floor;
     const bool   pl_los_scale = ctx.knobs.pl_los_scale;   // F1: mirror the injector's per-LOS B_eff in the fold-variance readback
     const bool   pl_local_block = ctx.knobs.pl_local_block; // F3: stash the harvest cross-covariance block beside the per-column carry
+    // RF-1 §3.3(b): the birth-prior FLOOR the stash records in LocalCarry::var_birth.
+    // 0.0 (default) ⇒ var_birth == var_first to the ULP, and nothing reads either.
+    const double amb_birth_var_floor = ctx.knobs.amb_birth_var_floor;
+    // RF-1 §7.4 (network.trace_amb_state): the per-arc carry-state trace.  The stride
+    // gates TRAJECTORY rows only — an EVENT (birth / drop / erase) is written on every
+    // epoch, because an inventory that skips events is not an inventory.  OFF the whole
+    // block below is unreachable (byte-identical).
+    const bool amb_state_on = ctx.knobs.trace_amb_state;
+    const bool amb_state_tr =
+        amb_state_on
+        && (ctx.knobs.trace_amb_state_every <= 1
+            || (static_cast<long long>(ctx.counters.n_loop_epochs)
+                % ctx.knobs.trace_amb_state_every) == 0);
+    // Age in EPOCHS for the trace's relevel clock: the run's OWN observed inter-epoch
+    // spacing, exactly as the young-arc inflate derives it, so the column means the same
+    // thing at 1 s and 30 s cadence and no nominal rate is invented.  ⚠ Read here and
+    // not later: ctx.carry.pl_prev_now_s is advanced to THIS epoch at the very end of
+    // this function, so inside the stash loop it still holds the previous stamp.
+    const double amb_state_dt_ep_s = [&] {
+        const double dt = pl_now_s - ctx.carry.pl_prev_now_s;
+        return (std::isfinite(dt) && dt > 0.0 && dt <= pl_max_gap_s) ? dt : 0.0;
+    }();
     const bool   zwd_on = ctx.knobs.zwd_on;
     const bool   iono_on = ctx.knobs.iono_on;             // QUEUE 8b
     const double iono_q = ctx.knobs.iono_q;
@@ -4580,6 +4616,25 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             {static_cast<int>(i), pa.amb_key}) > 0;
                     LocalCarry nlc{value_abs, var, pl_now_s, std::move(coupling)};
                     nlc.var_first = var_first;
+                    // RF-1 §3.3(b) (docs/refound/RF-1_float_ambiguities_design.md): the
+                    // BIRTH PRIOR actually in force — var_first floored by the posture's
+                    // code-noise scale, set ONCE at birth and kept across every re-stash
+                    // and re-level exactly as var_first is (an erase-and-rebirth restarts
+                    // it because the entry is GONE).  ⚠ STEP 1: WRITE-ONLY.  The floor
+                    // defaults to 0.0, so this is var_first to the ULP, nothing reads it,
+                    // and the solve is byte-identical; the DROP that restores it is step
+                    // 4.  Maintained here rather than at the drop site because "what the
+                    // arc was worth when it was born" is a property of the BIRTH, and the
+                    // harvest is the only place that sees an arc's first stash.
+                    nlc.var_birth =
+                        (oldc != local_carry.end() && oldc->second.var_birth > 0.0)
+                            ? oldc->second.var_birth
+                            : std::max(var_first, amb_birth_var_floor);
+                    // RF-1 §7.2: the drop stamp is carried forward untouched — nothing in
+                    // this build writes it (the drop is step 4), so it stays 0 for the
+                    // life of the arc and the trace's `event` column reads "" for it.
+                    nlc.dropped_ep =
+                        (oldc != local_carry.end()) ? oldc->second.dropped_ep : 0;
                     localCarryStampBirth(
                         nlc, (oldc != local_carry.end() ? &oldc->second : nullptr),
                         static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
@@ -4588,6 +4643,72 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                         yng_created, yng_freed, pl_now_s);
                     if (yng_created)     ++ctx.counters.n_yng_stamp_create;
                     else if (yng_freed)  ++ctx.counters.n_yng_stamp_free;
+                    // RF-1 §7.4 (network.trace_amb_state): the arc's TRAJECTORY row,
+                    // written from the one site that sees the pre-stash entry and the
+                    // post-stash value together.  MEASURE-ONLY — nothing below is read
+                    // back, and OFF the whole block is unreachable.
+                    //
+                    // `folded` / `route` / `fold_var` are NOT re-derived here: they are
+                    // the record PASS B wrote into R.amb_state_fold at the site that
+                    // actually emitted the row, so a joint-block fallback or a "never
+                    // poison u_r" screen reads as what it was rather than as what the
+                    // knob posture implies.  n_folds counts only the epochs a prior
+                    // ACTED, which is why it is not derivable from birth_ep: the epochs
+                    // it skips — the free-epoch latch, the gap cliff, a pending reseed —
+                    // are exactly the ones this card is about.
+                    long long nlc_n_folds =
+                        (oldc != local_carry.end()) ? oldc->second.n_folds : 0;
+                    if (amb_state_on) {
+                        const auto ff = R.amb_state_fold.find({pa.sat, pa.signal});
+                        const bool did_fold = (ff != R.amb_state_fold.end());
+                        if (did_fold) ++nlc_n_folds;
+                        AmbStateRow row;
+                        row.week    = static_cast<long long>(std::floor(pl_now_s / 604800.0));
+                        row.tow     = std::fmod(pl_now_s, 604800.0);
+                        row.station = stations[i].name;
+                        row.sat     = pa.sat;
+                        row.signal  = pa.signal;
+                        row.value_abs_m  = value_abs;
+                        row.var_m2       = var;
+                        row.var_first_m2 = nlc.var_first;
+                        row.var_birth_m2 = nlc.var_birth;
+                        row.fold_var_m2  = did_fold ? ff->second.first : 0.0;
+                        row.folded       = did_fold;
+                        row.route        = did_fold ? ff->second.second : AmbFoldRoute::None;
+                        row.n_folds      = nlc_n_folds;
+                        // Age reads the stamps AFTER localCarryStampBirth, so a restored
+                        // arc reports the −1 sentinel rather than being re-branded a
+                        // newborn (SPEC_event_harness §15.4's whole point), and an
+                        // unstamped relevel clock reports −1 = "mature", not "age 0".
+                        row.age_ep = (nlc.birth_ep > 0)
+                            ? (static_cast<long long>(ctx.counters.n_loop_epochs) - nlc.birth_ep)
+                            : nlc.birth_ep;
+                        row.age_since_relevel_ep =
+                            (nlc.relevel_s > 0.0 && amb_state_dt_ep_s > 0.0)
+                                ? static_cast<long long>(
+                                      std::llround((pl_now_s - nlc.relevel_s)
+                                                   / amb_state_dt_ep_s))
+                                : -1;
+                        // The EVENT vocabulary is design §7.4's, used on the LEVEL
+                        // vehicle for today's response paths so an RF-0 baseline and an
+                        // RF-1 arm are comparable row for row: a `drop:` here is an
+                        // inject that did not happen because the response skipped it,
+                        // which is precisely what RF-1 replaces with a bounded drop.
+                        // Precedence is the inject's own order of tests.
+                        const bool reseed_now =
+                            stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
+                        const double gap_now = (oldc != local_carry.end())
+                            ? (pl_now_s - oldc->second.last_seen_s) : 0.0;
+                        if (yng_created)          row.event = "birth";
+                        else if (reseed_now)      row.event = "drop:reseed";
+                        else if (yng_freed)       row.event = "drop:relevel_free";
+                        else if (gap_now > pl_max_gap_s) row.event = "drop:stale_gap";
+                        // The stride gates TRAJECTORY rows; an EVENT row is always
+                        // written, so D3's inventory is complete at any stride.
+                        if (amb_state_tr || !row.event.empty())
+                            ctx.carry.amb_state_rows.push_back(std::move(row));
+                    }
+                    nlc.n_folds = nlc_n_folds;
                     local_carry[lkey] = std::move(nlc);
                 }
                 if (hblk && cross.size() == hblk->C.rows()) {
@@ -4908,6 +5029,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
             long long n_pruned = 0;
             for (auto it = local_carry.begin(); it != local_carry.end();) {
                 if (pl_now_s - it->second.last_seen_s > pl_max_gap_s) {
+                    // RF-1 §7.4 D3: capture BEFORE the erase.  This is the one
+                    // retirement path design §3.4 KEEPS as an erase ("this is a
+                    // different arc"), so its inventory is the control against which
+                    // the three that become bounded drops are read.
+                    if (amb_state_on) {
+                        const int sidx = std::get<0>(it->first);
+                        ambStateNoteErase(
+                            ctx,
+                            static_cast<long long>(std::floor(pl_now_s / 604800.0)),
+                            std::fmod(pl_now_s, 604800.0),
+                            (sidx >= 0 && sidx < static_cast<int>(stations.size()))
+                                ? stations[sidx].name : std::string{},
+                            std::get<1>(it->first), std::get<2>(it->first),
+                            it->second, "gap_prune");
+                    }
                     it = local_carry.erase(it);
                     ++n_pruned;
                 } else {

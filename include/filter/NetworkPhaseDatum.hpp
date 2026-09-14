@@ -447,10 +447,20 @@ int networkStageAnchorSlipHandovers(
  * @param local_carry  ctx.carry.local_carry — the phase-leveling per-station
  *                     ambiguity carry, keyed (station idx, sat, signal).  Inert
  *                     (empty map) unless network.phase_leveling.
+ * @param erased_out   RF-1 §7.4 (optional, null on every unarmed run): receives one
+ *                     (key, entry) pair per erased entry, captured BEFORE the erase,
+ *                     so @c network_amb_state.csv can carry this class in its D3
+ *                     inventory.  The caller — which is the only scope that knows the
+ *                     station NAMES and the epoch stamp — turns them into rows.  An
+ *                     out-parameter rather than a context handle so this function stays
+ *                     a pure map operation and its existing unit test keeps calling it
+ *                     with two arguments.
  * @return Number of local carry entries erased.
  */
 int networkApplyPhaseAnchorCarryReref(
         const std::set<std::pair<std::string, std::string>>& reref,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry);
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+        std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
+            erased_out = nullptr);
 
 } // namespace GnssProcessor

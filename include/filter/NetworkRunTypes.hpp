@@ -470,6 +470,96 @@ struct LocalCarry {
     /// only on CREATE and on FREE, never on an ordinary re-stash, so a restored
     /// entry's 0 survives every harvest until the arc is actually re-levelled.)
     double relevel_s{0.0};
+    /// RF-1 §3.3(b)/§7.2: the BIRTH PRIOR actually in force for this arc (m²) — the
+    /// object a DROP restores.  Set ONCE at the arc's birth stash to
+    /// @c max(var_first, network.amb_float_birth_var_m2), kept across every re-stash
+    /// and every re-level exactly like @ref var_first, and restarted only by an
+    /// erase-and-rebirth (which deletes the entry).
+    ///
+    /// It is a SEPARATE field from @ref var_first on purpose.  @c var_first is the
+    /// arc's own first-stash conditional variance — a measurement of what the model
+    /// reported — and is the denominator of
+    /// @c network.phase_datum_handover_max_var_ratio, which must keep reading the
+    /// unfloored quantity.  @c var_birth is what the arc is WORTH at birth: the same
+    /// number floored by the posture's code-noise scale, because two routes hand back
+    /// a phase-STIFF variance for a CODE-quality value (a band-scoped free determined
+    /// against its sibling band's still-stiff carry, and the SH tie row that separates
+    /// a new arc's ambiguity from its iono at the tie's optimistic precision — design
+    /// §1.4).  Flooring @c var_first in place would silently move the handover ratio's
+    /// denominator.
+    ///
+    /// ⚠ RF-1 STEP 1: maintained WRITE-ONLY.  With the default floor of 0.0 it equals
+    /// @c var_first exactly, nothing reads it, and the solve is byte-identical; the
+    /// drop that restores it lands in step 4.  NOT snapshotted today — design §6.1
+    /// names it as the field that must join the warm-resume record when seams come
+    /// back, or a restored arc cannot be dropped correctly.
+    double var_birth{0.0};
+    /// RF-1 §7.4: how many times this arc's carried prior has actually been FOLDED —
+    /// the abscissa of the D1 variance-trajectory fit (@c log var = a − b·log n over
+    /// the first 30 folds) and the bucket key of the D4 σ̂₀(pl)-by-arc-age read.
+    ///
+    /// It is deliberately NOT derivable from @ref birth_ep: an arc's age counts every
+    /// epoch since its first stash, while the fold count skips exactly the epochs the
+    /// carry did not act — the free-epoch latch, the gap cliff, a pending reseed, a
+    /// non-finite @c x_lin — which are precisely the epochs RF-1 is about.  Incremented
+    /// at the harvest under the SAME reproduced inject predicate the prior-residual
+    /// census standardizes on, preserved across every re-stash, and restarted only by
+    /// an erase-and-rebirth (which deletes the entry).
+    ///
+    /// TRACE-SUPPORT ONLY: maintained whenever @c network.trace_amb_state is armed and
+    /// read by nothing on the solve path, so an unarmed run never touches it.
+    long long n_folds{0};
+    /// RF-1 §7.2: loop-epoch index (@c n_loop_epochs) of this arc's LAST DROP — the
+    /// re-coupling edge's own clock, distinct from @ref relevel_s (which is stamped by
+    /// the leveling vehicle's CREATE / FREE events) and from @ref birth_ep.  0 = never
+    /// dropped.  Read by the @c network_amb_state.csv event column and, from step 4,
+    /// by the drop's own idempotence guard (one drop per arc per epoch).
+    /// ⚠ RF-1 STEP 1: declared and never written — the drop lands in step 4.
+    long long dropped_ep{0};
+};
+
+/// RF-1 §7.4: WHICH ROUTE the PASS-B inject actually folded a carried ambiguity
+/// column through this epoch — the `route` column of @c network_amb_state.csv.
+///
+/// It is recorded at the inject rather than inferred at the harvest from the knob
+/// posture, because the two can disagree on a single station-epoch: @c
+/// CouplingRowBuilder::buildLocalBlock returns false on a non-SPD factor after its
+/// ridge retry and the caller falls back to per-column rows.  Under the float_kf
+/// vehicle that fallback is a VEHICLE CHANGE on one station-epoch — design risk #3 —
+/// and this column is what makes it visible per arc rather than only as a run total.
+enum class AmbFoldRoute {
+    None,           ///< No prior was folded for this column this epoch (skipped: freed / stale-gap / pending reseed / no carry / non-finite / gauge-pinned).
+    Diag,           ///< A plain diagonal local prior row (Λ, η) — the legacy per-column route.
+    Block,          ///< A row of the station-wide jointly-whitened local block (F3 / the float_kf vehicle's structural fold).
+    CouplingScalar  ///< A Card-1 conditional COUPLING row: +1 on the local column, M_r on the free shared border — RF-0's route.
+};
+
+/// RF-1 §7.4: ONE row of @c network_amb_state.csv — the per-arc carry-state trace.
+///
+/// Fields are exactly the design's pre-registered header, in its order, so a reader
+/// (scripts/amb_state_read.py) can parse by name and a grader can reproduce the
+/// pre-registered reads D1–D4 without re-deriving what a column means.  Rows are
+/// buffered per epoch in @c NetworkCarryState and drained serially by
+/// @ref networkAmbStateTrace, on the @c sd_ewl_trace precedent, so the file order is
+/// thread-count independent and the four erase sites (which run in different seams,
+/// some after the harvest) can all contribute to the same epoch's block.
+struct AmbStateRow {
+    long long   week{0};            ///< GPS week of the epoch.
+    double      tow{0.0};           ///< GPS time of week (s) — the join key of every trace CSV in the run.
+    std::string station;            ///< Station name.
+    std::string sat;                ///< Satellite (e.g. G07).
+    std::string signal;             ///< RINEX signal (e.g. L1C).
+    double      value_abs_m{0.0};   ///< The carried ABSOLUTE float ambiguity after this epoch's harvest (m).  On an erase row: the value the entry held when it was deleted.
+    double      var_m2{0.0};        ///< The carried posterior variance after this epoch's harvest (m²) — the conditional under Card-1.
+    double      var_first_m2{0.0};  ///< @ref LocalCarry::var_first — the arc's FIRST-stash variance, unfloored.
+    double      var_birth_m2{0.0};  ///< @ref LocalCarry::var_birth — the floored birth prior the drop restores (RF-1 step 4).
+    double      fold_var_m2{0.0};   ///< The variance the fold ACTUALLY used this epoch (0 when @ref folded is false).
+    long long   n_folds{0};         ///< @ref LocalCarry::n_folds AFTER this epoch — D1's abscissa.
+    long long   age_ep{0};          ///< Loop epochs since the arc's first stash (−1 = warm-resume-restored, 0 = unknown).
+    long long   age_since_relevel_ep{0}; ///< Epochs since @ref LocalCarry::relevel_s (−1 = unstamped ⇒ mature).
+    bool        folded{false};      ///< Did a carried prior actually act on this column this epoch?
+    AmbFoldRoute route{AmbFoldRoute::None}; ///< …and through which route (@ref AmbFoldRoute).
+    std::string event;              ///< "" | birth | drop:<cause> | erase:<cause> | stransform.
 };
 
 /// One carried-ambiguity entry as a warm resume restores it from a snapshot's
@@ -988,6 +1078,19 @@ struct StationAssembly {
     /// (empty OFF); read by the serial harvest so its fold-variance mirror (carry-VCE
     /// / prires standardization) reports the weight the fold ACTUALLY used.
     std::map<std::pair<std::string, std::string>, int> pl_los_beff;
+    /// RF-1 §7.4 (@c network.trace_amb_state): per FOLDED (sat, signal) ambiguity
+    /// column of this station-epoch, the variance the fold ACTUALLY used and the
+    /// ROUTE it took.  Filled only when the trace is armed (empty OFF — the map is
+    /// never touched, so an unarmed run pays one bool test per column and nothing
+    /// else); read by the serial harvest, which owns the row write.  Exactly the
+    /// @c pl_los_beff discipline: recorded in the PARALLEL produce phase into this
+    /// station's own object, consumed serially afterwards.
+    ///
+    /// A column ABSENT from this map was not folded this epoch — the harvest writes
+    /// its row with @c folded = 0 and names the cause in @c event.  That is the
+    /// population D2 and D3 exist to count, so the absence is the record, not a gap.
+    std::map<std::pair<std::string, std::string>, std::pair<double, AmbFoldRoute>>
+        amb_state_fold;
     long long                 pl_los_scale_rows{0};            ///< F1: rows whose variance was multiplied by a B_eff > 1 (produce-phase local; summed serially).
     long long                 pl_los_scale_hist[4]{0, 0, 0, 0}; ///< F1: LOS groups by B_eff = 1 / 2 / 3 / ≥4 (produce-phase local; summed serially).
     /// F3 (network.phase_leveling_local_block, SPEC_amb_iono_split_overcount): this
