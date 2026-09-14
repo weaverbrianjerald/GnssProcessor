@@ -7634,3 +7634,26 @@ stand-down is the same rule one axis over, and the population RAIM's `raim_min_s
   hour ⇒ the ionosphere REPRESENTATION (degree 8, one layer, 5 TECU) is the bulk channel — the card is the representation, by local time;
   the growth tracks the elevation trend (setting arcs) ⇒ multipath / group-delay at low elevation — an elevation-weighting card, and the
   floor is real; neither ⇒ the level channel's memory (the frozen rx-CB seeds aging) — decided by a 6 h `carry_rx_code_bias: false` twin.
+
+**§24.19 R8 RESULTS (2026-09-14 ~10:00 local; worker commit `6a6d73e`, merged; `_gl_on6` hours 2–6 with `_cm_c10` as contrast; no twin
+needed).**  Neither pre-registered branch crosses its bar.  Per-LOS level growth against the tie-residual growth: r **0.378** (against the
+level 0.422), Spearman 0.13 / 0.07, trimmed 0.28 / 0.18 — real against the naive null (0.03) but only +0.18 / +0.20 against the
+WITHIN-STATION null (0.198 / 0.223) that keeps station structure; against the elevation trend r **−0.056** (null 0.033) — refused, though the
+binned medians do fall 0.043 → 0.016 m/h from setting to rising arcs; local solar time (circular R 0.058, null 0.052) and latitude: nothing.
+**Half of the first branch is nonetheless true:** the SH-tie residual grows monotonically with the hour — p50 1.64 → 2.39 m (+46 %), p90 4.5 →
+7.2 m (+59 %) — faster than the field's own a₀₀ (27.6 → 35.7 TECU, +29 %), still rising after normalising through hour 5: the
+representation IS degrading over the window; it just does not predict WHICH lines of sight grow.  Per hour: gross-named stations carry the
+worse (i) in four of five hours and invert only in hour 4 (the G17 stand-down hour); the clock anchor's decouples are non-uniform (25 / 114
+/ 46 / 69 / 57; run-end 321 trips, 352 re-couplings, 81.8 % of folds at the variance floor); D_phase per hour (0.87 / 0.29 / 0.70 / 0.97 /
+0.51) does not track (i) at all.  **The third reading applies: the bulk drift is named by neither the representation nor low-elevation
+group delay, which leaves the level channel's own memory** — and the two facts on the table point there: the rx-CB carry withheld **6 704
+folds at its 10σ gate with EIGHT stations carrying nothing for the whole six hours** (CAS1 CPVG GOPE KOKV LCK4 LMMF MRO1 OAFA — GOPE and
+LCK4 among the persistent unphysical-ZWD stations), and its flagged-row count FALLS (31 → 14) while (i) rises.
+
+**R8b (pre-registered): the 6 h `carry_rx_code_bias: false` twin.**  `runs/_gl_rxoff6` = `_gl_on6`'s config + `network.carry_rx_code_bias:
+false`, 6 h cold, main's Release rebuilt after the GL merge (hash, smoke `87a33bf0…`), hour by hour against `_gl_on6`.  **Frozen reading:**
+(i) in hours 3–6 within 0.2 m of hour 2 (and the eight carry-less stations no longer distinguished) ⇒ the rx-CB carry's frozen first-epoch
+memory and its frame-blind gate (§21.18) ARE the bulk drift — the level channel's memory, exactly invariant #1's stale-value warp — and
+the card is the gate's frame (§21.18's open fix) or the carry's retirement on this vehicle; the drift stays ⇒ the carry is exonerated on
+the drift too and, by elimination, the representation's monotone degradation is the residual suspect — a representation-by-local-time
+card (degree / layer / tie by hour), pre-registered next, not now.
