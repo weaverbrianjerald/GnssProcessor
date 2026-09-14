@@ -2307,8 +2307,16 @@ def _slope(xs, ys):
     return s
 
 
+# The eight stations whose rx-CB carry withheld > 90 % of their epochs on _gl_on6
+# (the run-end "carried NOTHING" list).  R8b asks whether they are still
+# distinguished on (i) and (ii) once the carry is off.
+CARRYLESS_8 = ["CAS100ATA", "CPVG00CPV", "GOPE00CZE", "KOKV00USA",
+               "LCK400IND", "LMMF00MTQ", "MRO100AUS", "OAFA00ARG"]
+
+
 def read_r8(project, arm="_gl_on6", contrast="_cm_c10", hours=(2, 3, 4, 5, 6),
-            min_rows=30, ep_per_hour=120, nperm=1000):
+            min_rows=30, ep_per_hour=120, nperm=1000, carryless=None):
+    carryless = set(carryless or CARRYLESS_8)
     hk = {h: ((h - 1) * ep_per_hour + 1, h * ep_per_hour) for h in hours}
     out = dict(arm=arm, contrast=contrast, hours=list(hours), min_rows=min_rows, per_hour={})
 
@@ -2347,6 +2355,8 @@ def read_r8(project, arm="_gl_on6", contrast="_cm_c10", hours=(2, 3, 4, 5, 6),
     _h, prr = _scan_csv(os.path.join(logs, "network_events.csv"),
                         lambda d, f: d.get("tier") == "PRIORRES"
                         and "family=rxcb" in (d.get("detail") or ""), limit=10 ** 7)
+    zwd = pd.read_csv(os.path.join(logs, "network_zwd.csv"))
+    zwd["k"] = np.rint((zwd["tow"].to_numpy() - TOW0) / DT_S).astype(int) + 1
 
     def hour_of(line):
         k = int(round((float(line.split(",")[1]) - TOW0) / DT_S)) + 1
@@ -2411,6 +2421,21 @@ def read_r8(project, arm="_gl_on6", contrast="_cm_c10", hours=(2, 3, 4, 5, 6),
         pp = out["per_hour"][h]
         pp["tie_abs_p50_over_a00_m_per_tecu"] = (
             pp["tie_abs_p50"] / pp["a00_tecu_p50"] if pp["a00_tecu_p50"] else float("nan"))
+        # the eight rx-CB carry-less stations against the rest, on (i) and (ii)
+        zh = zwd[(zwd["k"] >= k0) & (zwd["k"] <= k1)]
+        zmed = zh.groupby("station")["zwd_m"].median()
+        ci = [float(v) for k, v in med.items() if str(k) in carryless]
+        ri = [float(v) for k, v in med.items() if str(k) not in carryless]
+        cz = [abs(float(v)) for k, v in zmed.items() if str(k) in carryless]
+        rz = [abs(float(v)) for k, v in zmed.items() if str(k) not in carryless]
+        pp["carryless"] = dict(
+            stations=sorted(carryless), n_present=len(ci),
+            i_p50_carryless=q(ci, .5), i_p50_rest=q(ri, .5),
+            i_max_carryless=float(max(ci)) if ci else float("nan"),
+            i_ratio=float(q(ci, .5) / q(ri, .5)) if ri and q(ri, .5) else float("nan"),
+            zwd_abs_p50_carryless=q(cz, .5), zwd_abs_p50_rest=q(rz, .5),
+            n_over_0p5_carryless=int(sum(1 for v in cz if v > 0.5)),
+            n_over_0p5_rest=int(sum(1 for v in rz if v > 0.5)))
         cc = census_hour(contrast, h)
         out["per_hour"][h]["contrast_D_phase_rms"] = cc.get("D_phase_rms")
 
@@ -2559,6 +2584,18 @@ def fmt_r8(R):
           "    family 'rxcb' (the FLAGGED subset, not the fold count - the run-end totals are",
           "    quoted in the report; no network_prior_residual.csv is armed on this run).",
           "  D_ph = the per-hour census's declared within-arc D_phase rms."]
+    c0 = P[hs[0]]["carryless"]
+    L += ["", "THE EIGHT rx-CB CARRY-LESS STATIONS against the rest "
+              f"({', '.join(c0['stations'])})",
+          f"  {'h':>2s} {'n present':>9s} {'(i) p50 8':>10s} {'(i) p50 rest':>13s} {'ratio':>6s} "
+          f"{'(i) max 8':>10s} {'|ZWD| p50 8':>12s} {'rest':>7s} {'n>0.5 8/rest':>13s}"]
+    for h in hs:
+        c = P[h]["carryless"]
+        L.append(f"  {h:2d} {c['n_present']:9d} {f(c['i_p50_carryless'],3)!s:>10s} "
+                 f"{f(c['i_p50_rest'],3)!s:>13s} {f(c['i_ratio'],2)!s:>6s} "
+                 f"{f(c['i_max_carryless'],2)!s:>10s} {f(c['zwd_abs_p50_carryless'],3)!s:>12s} "
+                 f"{f(c['zwd_abs_p50_rest'],3)!s:>7s} "
+                 f"{(str(c['n_over_0p5_carryless']) + '/' + str(c['n_over_0p5_rest'])):>13s}")
     L += ["", f"(a) per-LOS code level by hour: {R['n_los']} LOS present in >= 2 of hours "
               f"{hs[0]}-{hs[-1]} with >= {R['min_rows']} code rows in the hour", ""]
     hdr = (f"{'read':46s} {'n':>5s} {'r':>7s} {'rho':>7s} {'r_trim':>7s} {'ntrim':>6s} "
@@ -2699,7 +2736,8 @@ def main():
         elif t == "r8":
             r = read_r8(a.project, arm=a.r8_arm, contrast=a.r8_contrast,
                         min_rows=a.min_settled_rows)
-            emit(out_dir, "r8", r, fmt_r8(r))
+            # one output per arm — R8b reads two arms and they must not collide
+            emit(out_dir, f"r8{a.r8_arm}", r, fmt_r8(r))
         elif t == "witness":
             r = read_witness(a.project, arms, a.gap_epochs, a.min_arc)
             emit(out_dir, "witness", r, fmt_witness(r))
