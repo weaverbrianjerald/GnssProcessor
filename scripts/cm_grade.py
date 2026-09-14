@@ -131,6 +131,18 @@ ARM_KNOBS = {
     "c8c": ("the same anchor (q 3e-6) + network.apriori_clock_anchor_sigma_m 0.02 (c3's external pin)",
             ["Card Q3", "clock_temporal_anchor", "clock_anchor", "TEMPORAL CLOCK ANCHOR", "gauge-free",
              "apriori_clock_anchor", "a-priori clock"]),
+    # s24.17 leg 1 — THE STACK on top of c8b (which is the control for these two).
+    "c9": ("c8b + network.carry_zwd true + zwd_carry_q 1e-7 (s24.12's b2b on the anchored clock)",
+           ["Card Q3", "clock_anchor", "ZWD carry", "carry_zwd", "B9"]),
+    "c9b": ("c9 + network.carry_rx_code_bias false (s24.12's b1 on top of the stack)",
+            ["Card Q3", "clock_anchor", "ZWD carry", "carry_zwd", "B9", "carry_rx_code_bias", "rx-CB carry", "rx-CB"]),
+    # s24.17 legs 2 and 3 — the long twin and the G4 event window.
+    "c10": ("THE 6 H TWIN, posture arm (the leg-1 winner's knobs, 6 h cold)",
+            ["Card Q3", "clock_anchor", "carry_zwd", "carry_rx_code_bias", "max_duration"]),
+    "pvb6": ("THE 6 H TWIN, control: _pv_b.json, 6 h cold", ["max_duration", "carry_invariant", "phase_datum"]),
+    "g4a": ("G4 event window (15:00 -> 21:30 UT), posture arm",
+            ["Card Q3", "clock_anchor", "carry_zwd", "start_offset", "max_duration"]),
+    "g4b": ("G4 event window, no-anchor control (_pv_b.json)", ["start_offset", "max_duration", "carry_invariant"]),
     "pva2": ("PV-A re-run 2 h on the post-ZP exe (config/test_suite/_pv_a.json, paths only) — its (i) / (iv) "
              "now readable on the same last-hour window",
              ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",

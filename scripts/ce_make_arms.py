@@ -102,6 +102,33 @@ C8 = _sim_cta()
 C8B = [(k, 2.9e-8 if k == "network.clock_anchor_q" else v) for k, v in C8]
 C8C = C8 + C3          # the sim anchor PLUS c3's external a-priori pin
 
+# ---------------------------------------------------------------- s24.17 leg 1 (THE STACK)
+# c8b is the s24.16 winner (the Q3 anchor at the physical q, no external pin).  s24.12's b2b
+# (carry_zwd as a random walk at q 1e-7) and b1 (carry_rx_code_bias off) were each exonerated
+# ALONE on PV-B's under-determined clock; they are re-asked on top of the anchored clock.
+C9 = C8B + [("network.carry_zwd", True), ("network.zwd_carry_q", 1e-7)]
+C9B = C9 + [("network.carry_rx_code_bias", False)]
+
+# ---------------------------------------------------------------- s24.17 legs 2 and 3
+# The winner of leg 1 is not known when this file is written, so it is a CLI choice (--winner,
+# default c8b, which is also s24.17's stated fallback).  `c10` / `g4a` carry it; `pvb6` / `g4b`
+# are the same windows on the bare _pv_b.json control.
+#
+# DURATION: `processing.max_duration_s` is the knob that bounds the PROCESSED span;
+# `network.max_duration_s` only clips the RINEX PARSE (CLAUDE.md's trap, restated in
+# runs/_cm_pvb/posture_diff.md), and _pv_b.json inherits 3600 there — harmless for a 2 h arm
+# because it does not bound the epoch loop, but the long legs raise it well past the window so
+# the parse can never be the thing that ends the run.
+#
+# OFFSET: CLAUDE.md requires a HALF-EPOCH BACK-OFF on every `start_offset_hours` — a bare hour
+# value sits on the double-residue boundary.  15:00 UT is 15 h; the armed value is 15 h − 15 s.
+LONG6 = [("processing.max_duration_s", 21600.0), ("network.max_duration_s", 86400.0)]
+G4_START_H = 15.0 - 15.0 / 3600.0     # 14.995833…  = 15:00 UT less half an epoch
+G4WIN = [("network.start_offset_hours", G4_START_H),
+         ("processing.max_duration_s", 23400.0),      # 15:00 -> 21:30 UT
+         ("network.max_duration_s", 86400.0)]
+WINNERS = {"c8b": C8B, "c9": C9, "c9b": C9B}
+
 # arm -> (description, [(dotted json path, value), ...], base override or "")
 ARMS = {
     "c1": ("CODE OSB, correctly specified: external_sat_code_bias + estimate_sat_code_bias off + "
@@ -132,6 +159,14 @@ ARMS = {
     "c8b": ("the same anchor at the Q3 physical q: clock_anchor_q 3e-6 -> 2.9e-8", C8B, ""),
     "c8c": ("the same anchor (q 3e-6) PLUS c3's external pin apriori_clock_anchor_sigma_m 0.02 — the "
             "temporal anchor and the a-priori anchor together", C8C, ""),
+    "c9": ("THE STACK: c8b (Q3 anchor at q 2.9e-8) + network.carry_zwd true + zwd_carry_q 1e-7", C9, ""),
+    "c9b": ("THE STACK + network.carry_rx_code_bias false", C9B, ""),
+    # leg 2 — the 6 h twin (knobs completed from --winner at generation time)
+    "c10": ("THE 6 H TWIN, posture arm: the leg-1 winner's knobs, 6 h cold", None, ""),
+    "pvb6": ("THE 6 H TWIN, control: _pv_b.json unchanged, 6 h cold", LONG6, ""),
+    # leg 3 — G4, the DOY-129 20:47 (tow 334020) event window, seamless 15:00 -> 21:30 UT
+    "g4a": ("G4 event window, posture arm: the leg-1 winner's knobs, seamless 15:00 -> 21:30 UT", None, ""),
+    "g4b": ("G4 event window, no-anchor control: _pv_b.json over the same window", G4WIN, ""),
     "pva2": ("PV-A re-run 2 h on the post-ZP exe (config/test_suite/_pv_a.json unchanged; only the two "
              "run paths move) so its (i) / (iv) read on the same last-hour window",
              [], os.path.join(REPO, "config", "test_suite", "_pv_a.json")),
@@ -177,6 +212,8 @@ def main():
     ap.add_argument("--prefix", default="_cm_")
     ap.add_argument("--arms", default="c0,c1,c2,c3,c4,c5,c6,c7,c7b,c8,c8b,c8c,pva2")
     ap.add_argument("--out-dir", default="", help="also write <arm>.json here (default: run dir only)")
+    ap.add_argument("--winner", default="c8b", choices=("c8b", "c9", "c9b"),
+                    help="leg-1 stack winner whose knobs c10 / g4a carry (s24.17 default: c8b)")
     ap.add_argument("--force", action="store_true", help="overwrite an existing arm.json")
     a = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
@@ -187,6 +224,10 @@ def main():
         if arm not in ARMS:
             sys.exit(f"unknown arm {arm}")
         desc, knobs, base_override = ARMS[arm]
+        if knobs is None:                       # c10 / g4a — completed from --winner
+            win = WINNERS[a.winner]
+            knobs = win + (LONG6 if arm == "c10" else G4WIN)
+            desc = desc.replace("the leg-1 winner's knobs", f"arm {a.winner}'s knobs")
         base_path = base_override or a.base
         with open(base_path, encoding="utf-8") as fh:
             base_txt = fh.read()
