@@ -1108,6 +1108,13 @@ struct StationAssembly {
     long long                 pl_blk_pair_missing{0};  ///< F3: (i,j) pairs zeroed because the two columns were harvested at different epochs (or one carries no harvest block).
     long long                 pl_blk_col_refused{0};   ///< F3: block columns dropped by the scalar-row "never poison" screen (non-finite RHS / σ² ≤ 0).
     long long                 pl_blk_fallback{0};      ///< F3: block factorization failed after the ridge retry → this station-epoch emitted F1/diagonal rows instead.
+    /// RF-1 step 3 (design risk #3): the DIMENSION of the block that failed to factorize
+    /// this station-epoch, 0 when none did.  Under the @c float_kf vehicle a fallback is
+    /// not a degradation of an optional knob — it is a VEHICLE CHANGE on one
+    /// station-epoch — so the serial scatter logs it at WARN with the station's identity
+    /// and this dimension, and the run-end bar fails the run above 1 % of attempted
+    /// station-epochs.  Produce-phase local, like every other @c pl_blk_* count.
+    long long                 pl_blk_fallback_dim{0};
     long long                 pl_blk_young_cols{0};    ///< F3 age gate (network.phase_leveling_local_block_min_age_ep): injectable columns YOUNGER than the gate this station-epoch — kept OUT of the block and emitted as per-column rows (F1-scaled if armed).
     long long                 pl_blk_yng_scaled{0};    ///< AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2): block columns whose row/column of Σ was CONGRUENCE-scaled this station-epoch.  Read against @c yng_cols below: a gap means columns were computed young but their block never reached the scaling (refused by the scalar screen, or the station took the per-column route).
     // RX-CLK-in-block (network.carry_rx_clock_in_block): the station's receiver-clock

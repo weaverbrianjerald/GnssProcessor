@@ -3691,7 +3691,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_rxclk_blk_cols.push_back(rc.col);
                         }
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
-                        if (!blk_done) ++R.pl_blk_fallback;
+                        if (!blk_done) {
+                            ++R.pl_blk_fallback;
+                            // RF-1 step 3, design risk #3: record the failed block's
+                            // DIMENSION so the serial scatter can WARN with identities.
+                            // Kept here (produce-phase local) rather than logged here:
+                            // this loop runs in parallel and a log from it would be
+                            // thread-order noise.
+                            R.pl_blk_fallback_dim =
+                                static_cast<long long>(bc.size());
+                        }
                         // RF-1 §7.4: the BLOCK route's fold record.  Only on success —
                         // a fallback re-emits every pending column through pl_emit_row
                         // below, which records the route it actually took.  That
@@ -4238,6 +4247,27 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // F3 (network.phase_leveling_local_block): fold the per-station block telemetry
     // (same discipline).  Keyed on the KNOB, not the live predicate, so an armed-but-
     // inert posture still prints its zeros at run end (invariant #4).
+    // RF-1 step 3 (design risk #3): a non-SPD block is a VEHICLE CHANGE on one
+    // station-epoch under float_kf — the arc silently reverts to the per-column route the
+    // card exists to replace — so it is named with its identities here, in the SERIAL
+    // scatter (the produce loop is parallel and would interleave).  Rate-limited to the
+    // first 20 so a pathological posture cannot flood the log; the run-end bar carries
+    // the totals either way.
+    if (ctx.knobs.pl_blk_from_vehicle)
+        for (std::size_t si = 0; si < asm_res.size(); ++si) {
+            if (asm_res[si].pl_blk_fallback <= 0) continue;
+            if (ctx.counters.n_amb_block_fallback < 20)
+                log->warn("Network (RF-1 step 3): station '{}' TOW {:.1f} — the joint local "
+                          "block (dim {}) was NON-SPD after the ridge retry, so this "
+                          "station-epoch folded the carried prior as INDEPENDENT per-column "
+                          "rows instead.  Under ambiguity_vehicle = float_kf that is a "
+                          "VEHICLE CHANGE on one station-epoch, not a degraded option: those "
+                          "columns carry today's over-count for this epoch.  The run FAILS if "
+                          "the rate exceeds 1 % of attempted station-epochs.",
+                          si < stations.size() ? stations[si].name : std::string("?"),
+                          pl_now_s, asm_res[si].pl_blk_fallback_dim);
+            ctx.counters.n_amb_block_fallback += asm_res[si].pl_blk_fallback;
+        }
     if (pl_local_block)
         for (const StationAssembly& Rc : asm_res) {
             ctx.counters.n_pl_blk_blocks       += Rc.pl_blk_blocks;

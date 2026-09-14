@@ -110,6 +110,9 @@ int networkTeardown(
     const Coordinates::Llh& cl_truth_llh,
     const std::filesystem::path& log_dir_) {
     // --- Alias preamble (byte-copies of the run-TU pre-loop alias block). ---
+    /// RF-1 step 3: the joint-block PD-fallback bar's verdict, folded into the run's
+    /// return code at the tail.  0 until the bar below sets it.
+    int amb_block_rc = 0;
     const auto& nc = config_.getNetworkConfig();
     const ClosedLoopConfig& cl = nc.closed_loop;
     const bool closed_loop_on = setup.closed_loop_on;
@@ -4625,17 +4628,55 @@ int networkTeardown(
     // exactly a counter nobody looked at, and design §7.4's D3 states the converse rule:
     // a float_kf run with 0 drops is a miswire, not a quiet run.
     if (ctx.knobs.amb_float_kf || config_.getNetworkConfig().trace_amb_state)
-        log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\" (step 1: REGISTERED, NO "
-                  "MECHANISM — the solve is byte-identical to \"level\"), birth_var_floor={} "
-                  "m^2, q={} m^2/s, declared_handover={}.  Mechanism counters (steps 3-5, "
-                  "unlanded): {} drop(s) over {} epoch(s), {} declared S-transform(s) moving "
-                  "{} column(s), {} joint-block fallback(s).",
+        log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\"{}, birth_var_floor={} "
+                  "m^2, q={} m^2/s, declared_handover={}.  Mechanism counters: {} drop(s) "
+                  "over {} epoch(s), {} declared S-transform(s) moving {} column(s), {} "
+                  "joint-block fallback(s).",
                   ctx.knobs.amb_float_kf ? "float_kf" : "level",
+                  ctx.knobs.pl_blk_from_vehicle
+                      ? " — the joint block was STRUCTURAL (step 3)"
+                      : " — the zero-q scalar carry",
                   ctx.knobs.amb_birth_var_floor, ctx.knobs.amb_float_q_m2s,
                   ctx.knobs.amb_float_declared_handover,
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
                   ctx.counters.n_amb_block_fallback);
+    // RF-1 step 3, design risk #3 made a GATE rather than a note: "count it, log it at
+    // WARN with identities, and make a fallback rate above a small threshold a run-end
+    // FAILURE rather than a note".  Under float_kf a non-SPD block silently returns those
+    // station-epochs to the per-column route the whole card exists to replace, so a run
+    // that fell back on more than 1 % of its attempted station-epochs did not run the
+    // vehicle it claims in its manifest — and must not be graded as if it had.
+    if (ctx.knobs.pl_blk_from_vehicle) {
+        const long long attempted = ctx.counters.n_pl_blk_blocks
+                                  + ctx.counters.n_pl_blk_fallback;
+        const double rate = attempted > 0
+            ? static_cast<double>(ctx.counters.n_pl_blk_fallback) / static_cast<double>(attempted)
+            : 0.0;
+        if (attempted == 0) {
+            log->error("Network (RF-1 step 3) RUN-END FAILURE: ambiguity_vehicle = float_kf "
+                       "but ZERO joint blocks were attempted over the whole run — the fold "
+                       "never took the vehicle's route, so this run carries today's "
+                       "over-count under a float_kf manifest (standing invariant #4).  Check "
+                       "carry_conditional_coupling, the carry warm-up, and whether any "
+                       "station ever had an injectable carried column.");
+            amb_block_rc = 1;
+        } else if (rate > 0.01) {
+            log->error("Network (RF-1 step 3) RUN-END FAILURE: the joint local block fell "
+                       "back to per-column rows on {} of {} attempted station-epochs "
+                       "({:.2f} %) — above the 1 % bar.  A fallback is a VEHICLE CHANGE on "
+                       "that station-epoch (design risk #3), so above the bar the arm is a "
+                       "MIXTURE of the two vehicles and its delta is not attributable.  Do "
+                       "not grade this run.",
+                       ctx.counters.n_pl_blk_fallback, attempted, 100.0 * rate);
+            amb_block_rc = 1;
+        } else {
+            log->info("Network (RF-1 step 3): joint local block folded on {} of {} attempted "
+                      "station-epochs; {} PD fallback(s) ({:.3f} %, bar 1 %).",
+                      ctx.counters.n_pl_blk_blocks, attempted,
+                      ctx.counters.n_pl_blk_fallback, 100.0 * rate);
+        }
+    }
     if (config_.getNetworkConfig().trace_amb_state)
         // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line —
         // on this vehicle the trace rides the leveling HARVEST, so 0 rows means the
@@ -5351,7 +5392,9 @@ int networkTeardown(
                    "pairs stay station-local sponges, and confirm >= 2 overlapping stations.");
         return 1;
     }
-    return inject_rc;
+    // RF-1 step 3: the PD-fallback bar is a RUN-END FAILURE, not a note (design risk #3).
+    // Folded last so a run that also produced zero epochs still reports that first.
+    return inject_rc != 0 ? inject_rc : amb_block_rc;
 }
 
 } // namespace GnssProcessor

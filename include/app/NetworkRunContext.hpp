@@ -108,7 +108,19 @@ namespace GnssProcessor {
         /// (F1 applies only on a factorization fallback).  Live only with carry_cpl_cond
         /// and NOT carry_cpl_joint (loader warns INERT otherwise).  Default OFF =
         /// byte-identical.
+        /// ⚠ RF-1 step 3: this is the RESOLVED LIVE PREDICATE, not the knob —
+        /// @c network.phase_leveling_local_block OR the @c float_kf vehicle, which makes
+        /// the joint block STRUCTURAL (design §3.2: "the carried covariance folded as a
+        /// proper KF prior IS F3; what RF-1 changes is that it stops being an optional
+        /// knob and becomes the vehicle's definition").  @ref pl_blk_from_vehicle says
+        /// which of the two supplied it, so run-end telemetry can name the source.
         bool pl_local_block{};
+        /// RF-1 step 3: the joint block is live because the VEHICLE is @c float_kf
+        /// (rather than because the F3 knob is armed — which the loader refuses under the
+        /// vehicle).  Read only by telemetry and by the PD-fallback failure bar, never by
+        /// the fold itself: the fold reads @ref pl_local_block and cannot tell the two
+        /// sources apart, which is the point.
+        bool pl_blk_from_vehicle{};
         /// network.phase_leveling_local_block_min_age_ep — F3 block ADMISSION age gate: a
         /// carried leg younger than this many loop epochs (since its first stash) is kept
         /// OUT of the station block and emitted as a per-column row (F1-scaled if armed).

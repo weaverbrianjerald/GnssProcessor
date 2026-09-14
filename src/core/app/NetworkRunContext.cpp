@@ -56,7 +56,18 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_max_gap_s = config_.networkPhaseLevelingMaxGapS();
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
     k.pl_los_scale = config_.networkPhaseLevelingLosScale();
-    k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
+    // RF-1 step 3 (docs/refound/RF-1_float_ambiguities_design.md §3.2 / §7.2): under the
+    // float_kf vehicle the station-wide jointly-whitened local block is STRUCTURAL, not a
+    // knob — `buildLocalBlock` re-pointed as the vehicle's definition of the fold.  So
+    // this member is the RESOLVED LIVE PREDICATE, and every downstream consumer (the
+    // PASS-B inject, the harvest's cross-covariance stash, the run-end readout, the
+    // trace's `route`) picks the vehicle up with no further branch.  The F3 KNOB itself
+    // stays refused under float_kf at load: one switch on one fold, never two.
+    // ⚠ read the vehicle off the CONFIG here, not off `k`: the amb_float_* members are
+    // filled a few lines below, and an ordering flip would silently disarm the block.
+    k.pl_blk_from_vehicle = config_.getNetworkConfig().ambiguity_vehicle
+                            == NetworkAmbiguityVehicle::FloatKf;
+    k.pl_local_block = config_.networkPhaseLevelingLocalBlock() || k.pl_blk_from_vehicle;
     k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
     k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
     // RF-1 §7.1 (docs/refound/RF-1_float_ambiguities_design.md): the AMBIGUITY VEHICLE

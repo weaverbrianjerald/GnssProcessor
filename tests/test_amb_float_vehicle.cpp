@@ -37,9 +37,13 @@
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
+#include "filter/NetworkCoupling.hpp"
+#include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkRunTypes.hpp"
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
+
+#include <Eigen/Dense>
 
 #include <cmath>
 #include <filesystem>
@@ -57,6 +61,7 @@ using GnssProcessor::LocalCarry;
 using GnssProcessor::LogManager;
 using GnssProcessor::kAmbStateHeader;
 using GnssProcessor::NetworkAmbiguityVehicle;
+using GnssProcessor::NetworkEstimator;
 
 namespace fs = std::filesystem;
 
@@ -431,4 +436,264 @@ TEST(AmbFloatVehicleTest, TraceStreamStaysClosedWhenUnarmed) {
     }
     EXPECT_FALSE(fs::exists(dir / "network_amb_state.csv"));
     fs::remove_all(dir, ec);
+}
+
+// =============================================================================
+// (6) THE 1/n GATE (design §6.2 test 2) — the single most direct test of §3.2,
+//     run at the REAL seam: CouplingRowBuilder::buildLocalBlock over a registered
+//     NetworkEstimator, driven through the producer's own recursion
+//     (assemble -> fold -> solve -> harvest -> fold ...).
+//
+// THE FIXTURE, and why it is the right minimal one.  ONE station, ONE satellite,
+// TWO bands, no shared border.  Local states [dt_r, I, N1, N2]; four rows per
+// epoch — two code (sigma 1 m) and two phase (sigma 3 mm) — so the block is
+// exactly determined each epoch and the ONLY thing that can make the carried
+// variance fall is the prior fold.  That is the F1 comment made executable: the
+// B = 2 carried columns of ONE line of sight are tied to each other through the
+// station-common receiver clock and through the LOS's own free slant iono, so
+// folding them as TWO independent marginals asserts those directions twice per
+// epoch where the joint block asserts them once.
+//
+// THE ALGEBRA THE TEST PINS.  Let S be the Schur complement of one epoch's normal
+// matrix onto (N1, N2) after eliminating (dt_r, I).  A birth epoch has no prior,
+// so C_1 = S^-1.  Folding the JOINT prior adds exactly C_{n-1}^-1 on that
+// subspace, so C_n = (S + C_{n-1}^-1)^-1 = S^-1/n — i.e. var(n)*n/var(1) = 1 for
+// every n, to numerical precision.  Folding diag(1/C_11, 1/C_22) instead is the
+// legacy route, and the contrast between the two is the test.
+// =============================================================================
+
+namespace {
+
+/// GPS L1/L2 iono scaling gamma = (f1/f2)^2 — the real ratio, so the two carried
+/// columns are correlated through I exactly as they are in the producer.
+constexpr double kGamma = (154.0 / 120.0) * (154.0 / 120.0);
+constexpr Eigen::Index kColN1 = 2, kColN2 = 3;
+
+/// The station's per-epoch design over [dt_r, I, N1, N2]: P1, P2, L1, L2.
+Eigen::MatrixXd oneEpochDesign() {
+    Eigen::MatrixXd A(4, 4);
+    A << 1.0,     1.0, 0.0, 0.0,
+         1.0,  kGamma, 0.0, 0.0,
+         1.0,    -1.0, 1.0, 0.0,
+         1.0, -kGamma, 0.0, 1.0;
+    return A;
+}
+
+Eigen::VectorXd oneEpochWeights() {
+    Eigen::VectorXd w(4);
+    const double sc = 1.0 / (1.0 * 1.0), sp = 1.0 / (0.003 * 0.003);
+    w << sc, sc, sp, sp;
+    return w;
+}
+
+/// A reproducible per-epoch noise draw — a fixed xorshift, so the recursion
+/// wanders and converges like a real one and the test stays deterministic.
+struct Lcg {
+    unsigned long long s{88172645463325252ULL};
+    double next() {                       // ~U(-0.5, 0.5)
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        return static_cast<double>(s % 1000000ULL) / 1000000.0 - 0.5;
+    }
+};
+
+struct RecursionResult {
+    std::vector<double> var_n;    ///< harvested (N_rr^-1)_{N1,N1} after each epoch
+    std::vector<double> value_n;  ///< the carried absolute N1 after each epoch
+};
+
+/// One arm of the producer's recursion.  @p joint selects the vehicle's fold (the
+/// whitened joint block) over the legacy one (N independent diagonal priors).
+///
+/// @p drift_m_per_ep adds a slow PHASE-ONLY common bias (metres per epoch) that the
+/// model has no state for — a drifting receiver phase bias, which the four-row design
+/// cannot put in @c dt_r (that is common to the code rows too) nor in @c I (dispersive).
+/// It therefore ratchets into the carried ambiguities, which is design §3.5's
+/// "any real drift in what the ambiguity column ABSORBS has nowhere to go".  0 = the
+/// clean fixture.
+RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0.0) {
+    const Eigen::MatrixXd A_r = oneEpochDesign();
+    const Eigen::VectorXd w   = oneEpochWeights();
+    Eigen::VectorXd x_true(4);
+    x_true << 0.0, 2.0, 7.5, 11.3;      // dt_r, I (m at L1), N1, N2 (m)
+
+    NetworkEstimator est;
+    GnssProcessor::GlobalVtecShConfig shc{};
+    std::map<std::tuple<GnssProcessor::SharedParamKind, std::string, std::string>, double> tu_hist;
+    const NetworkEstimator::Datum datum{};          // no shared border, nothing to pin
+    const std::vector<Eigen::Index> carried{kColN1, kColN2};
+
+    Lcg rng;
+    RecursionResult out;
+    bool have_carry = false;
+    LocalCarry c1, c2;
+
+    for (int n = 1; n <= n_epochs; ++n) {
+        est.beginEpoch();
+        GnssProcessor::StationAssembly R;
+        R.A_s = Eigen::MatrixXd::Zero(4, est.numShared());
+        R.A_r = A_r;
+        R.w   = w;
+        R.y   = A_r * x_true;
+        // Code noise at the metre scale, phase noise at the millimetre scale, so the
+        // recursion has something to average and `value` convergence is meaningful.
+        R.y(0) += 1.0   * rng.next();
+        R.y(1) += 1.0   * rng.next();
+        R.y(2) += 0.003 * rng.next();
+        R.y(3) += 0.003 * rng.next();
+        // The un-modelled PHASE-ONLY drift, on the two phase rows only.
+        const double drift = drift_m_per_ep * static_cast<double>(n - 1);
+        R.y(2) += drift;
+        R.y(3) += drift;
+
+        if (have_carry && joint) {
+            // THE VEHICLE'S FOLD.  Sigma's diagonal is each column's carried variance;
+            // its off-diagonals come from the SHARED harvest block, which is exactly
+            // what makes this a joint prior rather than two marginals.
+            GnssProcessor::CouplingRowBuilder cb{
+                est, shc, /*q_clock=*/0.0, /*q_cb=*/0.0, /*q_pb=*/0.0,
+                /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
+                /*gauge=*/false, /*reinit=*/false, tu_hist, R};
+            const bool ok = cb.buildLocalBlock({
+                GnssProcessor::LocalBlockCol{kColN1, 0.0, &c1, c1.var, 0.0, 1.0},
+                GnssProcessor::LocalBlockCol{kColN2, 0.0, &c2, c2.var, 0.0, 1.0}});
+            EXPECT_TRUE(ok) << "buildLocalBlock went non-SPD at epoch " << n;
+            cb.appendCouplingRows();
+        }
+        const std::size_t id = est.addStation(R.A_s, R.A_r, R.w, R.y);
+        if (have_carry && !joint) {
+            // THE LEGACY FOLD.  N independent diagonal rows, each asserting its own
+            // column's MARGINAL precision — the over-count the card names.
+            Eigen::VectorXd lam(2), eta(2);
+            lam << 1.0 / c1.var, 1.0 / c2.var;
+            eta << lam(0) * c1.value_abs, lam(1) * c2.value_abs;   // x_lin = 0
+            est.addStationPrior(id, carried, lam, eta);
+        }
+        const Eigen::VectorXd x_s = est.solve(datum);
+        const Eigen::VectorXd xr  = est.reconstructStation(id, x_s);
+
+        // The harvest: each carried column's PURE conditional variance and the SAME
+        // solve read at the sibling — the gather the block's off-diagonals are.
+        const auto r1 = est.stationRegression(id, kColN1, /*carry_aware=*/false, &carried);
+        const auto r2 = est.stationRegression(id, kColN2, /*carry_aware=*/false, &carried);
+        auto blk = std::make_shared<GnssProcessor::PlHarvestBlock>();
+        blk->C = Eigen::MatrixXd::Zero(2, 2);
+        blk->C.row(0) = r1.cross.transpose();
+        blk->C.row(1) = r2.cross.transpose();
+        blk->stamp_s = static_cast<double>(n);
+
+        c1 = LocalCarry{xr(kColN1), r1.cond_var, static_cast<double>(n)};
+        c2 = LocalCarry{xr(kColN2), r2.cond_var, static_cast<double>(n)};
+        c1.blk = blk; c1.blk_idx = 0;
+        c2.blk = blk; c2.blk_idx = 1;
+        have_carry = true;
+
+        out.var_n.push_back(r1.cond_var);
+        out.value_n.push_back(xr(kColN1));
+    }
+    return out;
+}
+
+/// b in `log var = a - b log n`, fitted by OLS over the whole trajectory — the
+/// same statistic scripts/amb_state_read.py's D1 reports from the field trace.
+double fitB(const std::vector<double>& var_n) {
+    const std::size_t n = var_n.size();
+    double mx = 0.0, my = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        mx += std::log(static_cast<double>(i + 1));
+        my += std::log(var_n[i]);
+    }
+    mx /= static_cast<double>(n); my /= static_cast<double>(n);
+    double sxx = 0.0, sxy = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double dx = std::log(static_cast<double>(i + 1)) - mx;
+        sxx += dx * dx;
+        sxy += dx * (std::log(var_n[i]) - my);
+    }
+    return -sxy / sxx;
+}
+
+}  // namespace
+
+// THE BAR (design §7.6 S4 / §7.4 D1): the joint fold makes the carried variance
+// fall as EXACTLY 1/n.  Asserted at every fold, not only at the end, so a
+// trajectory that is right only on average cannot pass.
+TEST(AmbFloatVehicleTest, JointBlockFoldMakesTheCarriedVarianceFallAsOneOverN) {
+    const RecursionResult j = runRecursion(/*joint=*/true, 30);
+    ASSERT_EQ(j.var_n.size(), 30u);
+    for (std::size_t i = 0; i < j.var_n.size(); ++i) {
+        const double ratio = j.var_n[i] * static_cast<double>(i + 1) / j.var_n[0];
+        EXPECT_NEAR(ratio, 1.0, 1e-6)
+            << "fold " << (i + 1) << ": var(n)*n/var(1) = " << ratio;
+    }
+    EXPECT_NEAR(fitB(j.var_n), 1.0, 1e-4);
+}
+
+// …and the LEGACY fold on the SAME fixture does NOT — the contrast is what proves
+// the joint block is doing the work rather than the fixture being easy.  The
+// legacy route folds each column's MARGINAL precision as an independent row, so
+// the station-common direction and the LOS's iono direction are asserted twice
+// per epoch and the variance collapses faster than 1/n, exactly as the F1 comment
+// predicts and as the field trace measured (b = 3.44, RF-1 steps 1-2).
+TEST(AmbFloatVehicleTest, LegacyDiagonalFoldCollapsesFasterThanOneOverN) {
+    const RecursionResult d = runRecursion(/*joint=*/false, 30);
+    ASSERT_EQ(d.var_n.size(), 30u);
+    const double b = fitB(d.var_n);
+    EXPECT_GT(b, 1.15) << "legacy b = " << b << " — the over-count did not appear, so the "
+                          "1/n test above is not discriminating on this fixture";
+    const double ratio30 = d.var_n[29] * 30.0 / d.var_n[0];
+    EXPECT_LT(ratio30, 0.5) << "legacy var(30)*30/var(1) = " << ratio30;
+    // And the two arms must actually differ — a guard against both routes silently
+    // taking the same code path.
+    const RecursionResult j = runRecursion(/*joint=*/true, 30);
+    EXPECT_LT(d.var_n[29], 0.5 * j.var_n[29]);
+}
+
+// The value must converge to the true ambiguity, not merely become precise: a
+// variance that falls as 1/n around a WRONG level is exactly design risk #1 (the
+// card could deliver a correctly-converging state carrying a wrong level).
+//
+// The bar is the estimator's OWN claimed precision, not a hand-picked metre
+// figure: with zero epoch redundancy the ambiguity is separated from the LOS iono
+// by CODE, so the settled error is a metre-scale draw averaged over n folds and
+// any absolute bar would be a restatement of the noise model.  |error| < 3 sigma
+// of the carried variance is the honest statement, and it tests BOTH halves at
+// once — a variance that fell too fast would fail it even with the value right.
+TEST(AmbFloatVehicleTest, JointBlockFoldConvergesToTheTrueAmbiguity) {
+    const RecursionResult j = runRecursion(/*joint=*/true, 30);
+    const double e1  = std::abs(j.value_n[0]  - 7.5);
+    const double e30 = std::abs(j.value_n[29] - 7.5);
+    EXPECT_LT(e30, e1) << "first-fold |error| " << e1 << " -> settled " << e30;
+    EXPECT_LT(e30, 3.0 * std::sqrt(j.var_n[29]))
+        << "settled |error| " << e30 << " m against 3 sigma = "
+        << 3.0 * std::sqrt(j.var_n[29]) << " m (sigma = "
+        << std::sqrt(j.var_n[29]) << " m)";
+}
+
+// D4 IN ONE ASSERTION, and the reason the two halves of the card are separable.
+//
+// Add the drift the ambiguity absorbs (a phase-only receiver bias the model has no
+// state for) and BOTH routes' levels move — the level's CONTENT is not what the
+// fold fixes, which is exactly the "vehicle correct but not sufficient" branch of
+// §7.6's frozen readings.  What separates them is the variance they claim while it
+// happens: the legacy route has already collapsed, so its standardized error is far
+// larger.  That ratio is D4's σ̂₀ contrast (field 101 on the collapsed route, 0.23 on
+// the sim's block route) reproduced at the seam, on 30 folds instead of 6 hours.
+//
+// ⚠ The clean fixture (no drift) does NOT show this — there both routes land on the
+// truth and σ̂₀ stays near 1 whatever the variance does.  A collapsed variance is
+// only DISHONEST against something that moves; that is why the field's σ̂₀ grows with
+// arc age and why this case carries the drift explicitly rather than inheriting it.
+TEST(AmbFloatVehicleTest, LegacyDiagonalFoldClaimsAPrecisionTheDriftingLevelDoesNotDeserve) {
+    constexpr double kDrift = 0.004;    // 4 mm/epoch of un-modelled phase bias
+    const RecursionResult d = runRecursion(/*joint=*/false, 30, kDrift);
+    const RecursionResult j = runRecursion(/*joint=*/true,  30, kDrift);
+    const double zd = std::abs(d.value_n[29] - 7.5) / std::sqrt(d.var_n[29]);
+    const double zj = std::abs(j.value_n[29] - 7.5) / std::sqrt(j.var_n[29]);
+    EXPECT_GT(zd, 2.0 * zj)
+        << "legacy |error|/sigma = " << zd << " vs joint " << zj
+        << " (legacy var " << d.var_n[29] << " vs joint " << j.var_n[29] << ")";
+    // …and the drift is genuinely absorbed by the carry on BOTH routes — the
+    // control that stops this passing because one route simply diverged.
+    EXPECT_GT(std::abs(d.value_n[29] - 7.5), 0.01);
+    EXPECT_GT(std::abs(j.value_n[29] - 7.5), 0.01);
 }
