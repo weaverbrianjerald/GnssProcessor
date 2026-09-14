@@ -2242,6 +2242,390 @@ def fmt_r7(R):
 
 
 # --------------------------------------------------------------------------- #
+# R8 — §24.19: which channel carries the BULK drift (hours 2-6 of _gl_on6)
+# --------------------------------------------------------------------------- #
+def perm_null(x, y, n=1000, seed=20260914, groups=None):
+    """|r| under permutation of y.  With `groups`, y is permuted WITHIN each group,
+    so a station-level (or satellite-level) structure survives the null and only the
+    pairing is destroyed."""
+    rng = np.random.default_rng(seed)
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    if len(x) < 5:
+        return float("nan"), float("nan")
+    g = np.asarray(groups, object)[m] if groups is not None else None
+    idx = defaultdict(list)
+    if g is not None:
+        for i, gg in enumerate(g):
+            idx[gg].append(i)
+    out = np.empty(n)
+    for i in range(n):
+        yy = y.copy()
+        if g is None:
+            rng.shuffle(yy)
+        else:
+            for _k, ii in idx.items():
+                if len(ii) > 1:
+                    yy[ii] = rng.permutation(yy[ii])
+        out[i] = abs(pearson(x, yy))
+    return float(out.mean()), float(np.quantile(out, 0.95))
+
+
+def circ_lin_r(theta_deg, y):
+    """Circular-linear correlation of a linear y with a CIRCULAR theta (local solar
+    time).  A plain Pearson against an hour-of-day number is wrong at the wrap, so
+    use R = sqrt((rc^2 + rs^2 - 2 rc rs rcs)/(1 - rcs^2))."""
+    t = np.radians(np.asarray(theta_deg, float))
+    y = np.asarray(y, float)
+    m = np.isfinite(t) & np.isfinite(y)
+    t, y = t[m], y[m]
+    if len(t) < 5:
+        return float("nan")
+    rc, rs = pearson(np.cos(t), y), pearson(np.sin(t), y)
+    rcs = pearson(np.cos(t), np.sin(t))
+    den = 1.0 - rcs * rcs
+    if den <= 0:
+        return float("nan")
+    return float(math.sqrt(max(0.0, (rc * rc + rs * rs - 2 * rc * rs * rcs) / den)))
+
+
+def circ_lin_null(theta_deg, y, n=1000, seed=20260914):
+    rng = np.random.default_rng(seed)
+    y = np.asarray(y, float)
+    out = np.empty(n)
+    for i in range(n):
+        yy = y.copy()
+        rng.shuffle(yy)
+        out[i] = circ_lin_r(theta_deg, yy)
+    return float(np.nanmean(out)), float(np.nanquantile(out, 0.95))
+
+
+def _slope(xs, ys):
+    s, _c, _r = ols_slope(xs, ys)
+    return s
+
+
+# The eight stations whose rx-CB carry withheld > 90 % of their epochs on _gl_on6
+# (the run-end "carried NOTHING" list).  R8b asks whether they are still
+# distinguished on (i) and (ii) once the carry is off.
+CARRYLESS_8 = ["CAS100ATA", "CPVG00CPV", "GOPE00CZE", "KOKV00USA",
+               "LCK400IND", "LMMF00MTQ", "MRO100AUS", "OAFA00ARG"]
+
+
+def read_r8(project, arm="_gl_on6", contrast="_cm_c10", hours=(2, 3, 4, 5, 6),
+            min_rows=30, ep_per_hour=120, nperm=1000, carryless=None):
+    carryless = set(carryless or CARRYLESS_8)
+    hk = {h: ((h - 1) * ep_per_hour + 1, h * ep_per_hour) for h in hours}
+    out = dict(arm=arm, contrast=contrast, hours=list(hours), min_rows=min_rows, per_hour={})
+
+    stations = load_stations(project, arm)
+    shcfg = load_sh_cfg(project, arm)
+    df = load_pf_rows(project, arm)
+    code = df[df["kind"] == "code"]
+
+    # ---------- (c) the SH-tie residual and the field's a00, per hour ----------
+    ion = load_iono(project, arm)
+    ion = ion[ion["station"].isin(stations.keys())]
+    ion = ion[(ion["k"] >= hk[hours[0]][0]) & (ion["k"] <= hk[hours[-1]][1])].copy()
+    sh = pd.read_csv(os.path.join(arm_dir(project, arm), "logs", "network_vtec_sh.csv"))
+    if "layer" not in sh.columns:
+        sh = sh.assign(layer=0)
+    sh["k"] = np.rint((sh["tow"].to_numpy() - TOW0) / DT_S).astype(int) + 1
+    sh = sh[(sh["k"] >= hk[hours[0]][0]) & (sh["k"] <= hk[hours[-1]][1])]
+    pred, map0 = sh_predict(ion, sh, stations, shcfg)
+    ion["sh_pred_m"] = pred
+    ion["tie_raw_m"] = ion["iono_total_m"].to_numpy(float) - pred
+    ion["tie_dm_m"] = ion["tie_raw_m"] - ion.groupby(["station", "k"], observed=True)[
+        "tie_raw_m"].transform("mean")
+    ion["hour"] = ((ion["k"] - 1) // ep_per_hour + 1).astype(int)
+    a00 = sh[(sh["n"] == 0) & (sh["m"] == 0) & (sh["trig"] == "C") & (sh["layer"] == 0)]
+    a00 = a00.assign(hour=((a00["k"] - 1) // ep_per_hour + 1).astype(int))
+
+    # ---------- (b) (i) per hour, split by a gross declaration ----------
+    logs = os.path.join(arm_dir(project, arm), "logs")
+    keyed = pd.read_csv(os.path.join(logs, "network_pf_keyed.csv"))
+    keyed["k"] = np.rint((keyed["tow"].to_numpy() - TOW0) / DT_S).astype(int) + 1
+    sta_rows = keyed[keyed["kind"] == "STA"]
+    _h, gl = _scan_csv(os.path.join(logs, "network_events.csv"),
+                       lambda d, f: d.get("tier") == "GROSSLOS", limit=10 ** 6)
+    _h, clk = _scan_csv(os.path.join(logs, "network_events.csv"),
+                        lambda d, f: d.get("tier") == "CLK_ANCHOR", limit=10 ** 6)
+    _h, prr = _scan_csv(os.path.join(logs, "network_events.csv"),
+                        lambda d, f: d.get("tier") == "PRIORRES"
+                        and "family=rxcb" in (d.get("detail") or ""), limit=10 ** 7)
+    zwd = pd.read_csv(os.path.join(logs, "network_zwd.csv"))
+    zwd["k"] = np.rint((zwd["tow"].to_numpy() - TOW0) / DT_S).astype(int) + 1
+
+    def hour_of(line):
+        k = int(round((float(line.split(",")[1]) - TOW0) / DT_S)) + 1
+        return (k - 1) // ep_per_hour + 1
+
+    # ---------- (e) the wire's D_phase per hour (the census already run per hour) --
+    def census_hour(a, h):
+        r = {}
+        for tag, fn in (("hour_window", f"win__{a.lstrip('_')}_summary.json"),
+                        ("full_run_split", f"_{a.lstrip('_')}_summary.json")):
+            p = os.path.join(arm_dir(project, a), f"census_h{h}", fn)
+            if not os.path.isfile(p):
+                continue
+            S = json.load(open(p))
+            t = S.get(str(("median", "phase", "declared")), {}).get("table") or []
+            lv = S.get(str(("level", "clk"))) or []
+            if tag == "hour_window" and t:
+                r["D_phase_rms"] = float(t[0][4])
+                r["clk_level_p50"] = float(lv[0][2]) if lv else float("nan")
+                r["n_arcs"] = S.get(str(("median", "phase", "declared")), {}).get("n_arcs")
+            elif t and len(t) >= h:
+                r["D_phase_rms_fullrun_split"] = float(t[h - 1][4])
+        return r
+
+    for h in hours:
+        k0, k1 = hk[h]
+        ihr = ion[ion["hour"] == h]
+        ahr = a00[a00["hour"] == h]
+        s = sta_rows[(sta_rows["k"] >= k0) & (sta_rows["k"] <= k1)]
+        med = s.groupby("key")["rms_code"].median()
+        glh = {ln.split(",")[5] for ln in gl if hour_of(ln) == h and ln.split(",")[5]}
+        decl = {ln.split(",")[5] for ln in gl
+                if hour_of(ln) == h and ln.split(",")[3] == "gross_los_declare"}
+        wi = [float(v) for k, v in med.items() if str(k) in glh]
+        wo = [float(v) for k, v in med.items() if str(k) not in glh]
+        out["per_hour"][h] = dict(
+            k=[k0, k1], tow=[TOW0 + DT_S * (k0 - 1), TOW0 + DT_S * (k1 - 1)],
+            tie_abs_p50=q(np.abs(ihr["tie_dm_m"]), .5), tie_abs_p90=q(np.abs(ihr["tie_dm_m"]), .9),
+            tie_raw_abs_p50=q(np.abs(ihr["tie_raw_m"]), .5),
+            tie_raw_abs_p90=q(np.abs(ihr["tie_raw_m"]), .9),
+            iono_abs_p50=q(ihr["iono_total_m"], .5), sh_pred_p50=q(ihr["sh_pred_m"], .5),
+            n_tie_rows=int(len(ihr)),
+            a00_tecu_p50=q(ahr["value_tecu"], .5), a00_tecu_first=float(ahr["value_tecu"].iloc[0])
+            if len(ahr) else float("nan"),
+            a00_tecu_last=float(ahr["value_tecu"].iloc[-1]) if len(ahr) else float("nan"),
+            i_p50_all=q(list(med.values), .5), i_p90_all=q(list(med.values), .9),
+            i_max_all=float(max(med.values)) if len(med) else float("nan"),
+            n_sta_gross=len(glh), n_sta_declared=len(decl),
+            i_p50_gross=q(wi, .5), i_p50_clean=q(wo, .5),
+            n_gross=len(wi), n_clean=len(wo),
+            clk_anchor=dict((a, sum(1 for ln in clk if hour_of(ln) == h
+                                    and ln.split(",")[3] == a))
+                            for a in ("cta_decouple", "cta_recouple", "cta_disc_landed")),
+            rxcb_priorres_rows=sum(1 for ln in prr if hour_of(ln) == h),
+            gross_events=dict((a, sum(1 for ln in gl if hour_of(ln) == h
+                                      and ln.split(",")[3] == a))
+                              for a in ("gross_los_declare", "gross_los_clear",
+                                        "gross_los_expire", "gross_los_station_standdown")),
+            **census_hour(arm, h))
+        # a bigger ionosphere makes a bigger ABSOLUTE representation error, so the
+        # tie residual is also reported normalised by the field's own mean
+        pp = out["per_hour"][h]
+        pp["tie_abs_p50_over_a00_m_per_tecu"] = (
+            pp["tie_abs_p50"] / pp["a00_tecu_p50"] if pp["a00_tecu_p50"] else float("nan"))
+        # the eight rx-CB carry-less stations against the rest, on (i) and (ii)
+        zh = zwd[(zwd["k"] >= k0) & (zwd["k"] <= k1)]
+        zmed = zh.groupby("station")["zwd_m"].median()
+        ci = [float(v) for k, v in med.items() if str(k) in carryless]
+        ri = [float(v) for k, v in med.items() if str(k) not in carryless]
+        cz = [abs(float(v)) for k, v in zmed.items() if str(k) in carryless]
+        rz = [abs(float(v)) for k, v in zmed.items() if str(k) not in carryless]
+        pp["carryless"] = dict(
+            stations=sorted(carryless), n_present=len(ci),
+            i_p50_carryless=q(ci, .5), i_p50_rest=q(ri, .5),
+            i_max_carryless=float(max(ci)) if ci else float("nan"),
+            i_ratio=float(q(ci, .5) / q(ri, .5)) if ri and q(ri, .5) else float("nan"),
+            zwd_abs_p50_carryless=q(cz, .5), zwd_abs_p50_rest=q(rz, .5),
+            n_over_0p5_carryless=int(sum(1 for v in cz if v > 0.5)),
+            n_over_0p5_rest=int(sum(1 for v in rz if v > 0.5)))
+        cc = census_hour(contrast, h)
+        out["per_hour"][h]["contrast_D_phase_rms"] = cc.get("D_phase_rms")
+
+    # ---------- (a) per-LOS level by hour ----------
+    code = code[(code["k"] >= hk[hours[0]][0]) & (code["k"] <= hk[hours[-1]][1])].copy()
+    code["hour"] = ((code["k"] - 1) // ep_per_hour + 1).astype(int)
+    g = code.groupby(["station", "sat", "hour"], observed=True).agg(
+        level=("resid_m", "mean"), n=("resid_m", "size"), elev=("elev_deg", "mean"))
+    g = g[g["n"] >= min_rows].reset_index()
+    tie = ion.groupby(["station", "sat", "hour"], observed=True).agg(
+        tie=("tie_dm_m", "mean"), tie_abs=("tie_dm_m", lambda v: float(np.mean(np.abs(v)))),
+        n_tie=("tie_dm_m", "size")).reset_index()
+    g = g.merge(tie, on=["station", "sat", "hour"], how="left")
+
+    los = []
+    for (sta, sat), grp in g.groupby(["station", "sat"], observed=True):
+        grp = grp.sort_values("hour")
+        if len(grp) < 2:
+            continue
+        hh = grp["hour"].to_numpy(float)
+        lv = grp["level"].to_numpy(float)
+        el = grp["elev"].to_numpy(float)
+        ta = grp["tie_abs"].to_numpy(float)
+        ts = grp["tie"].to_numpy(float)
+        st = stations.get(str(sta), {})
+        lon = st.get("lon_deg", float("nan"))
+        kmid = float(grp["hour"].mean() - 0.5) * ep_per_hour + 1
+        tmid = TOW0 + DT_S * (kmid - 1)
+        lst_deg = float((math.degrees(math.radians(lon)
+                                      - mean_sun_longitude(2313, tmid)) + 540.0) % 360.0 - 180.0)
+        los.append(dict(
+            station=str(sta), sat=str(sat), n_hours=len(grp),
+            hours=[int(x) for x in hh],
+            level_first=float(lv[0]), level_last=float(lv[-1]),
+            growth_abs=_slope(hh, np.abs(lv)), growth_signed=_slope(hh, lv),
+            delta_abs=float(abs(lv[-1]) - abs(lv[0])),
+            elev_trend_deg_per_h=_slope(hh, el), elev_mean=float(el.mean()),
+            tie_abs_mean=float(np.nanmean(ta)) if np.isfinite(ta).any() else float("nan"),
+            tie_abs_growth=_slope(hh, ta), tie_signed_growth=_slope(hh, ts),
+            lat_deg=st.get("lat_deg", float("nan")), lon_deg=lon,
+            # local solar time as an ANGLE (0 = local solar noon), and in hours
+            lst_angle_deg=lst_deg, lst_hours=float((lst_deg / 15.0 + 12.0) % 24.0)))
+    out["n_los"] = len(los)
+    out["los"] = los
+
+    def corr(field_x, field_y, group=None, label=""):
+        x = [r[field_x] for r in los]
+        y = [r[field_y] for r in los]
+        nm, np95 = perm_null(x, y, n=nperm)
+        gm, gp95 = (perm_null(x, y, n=nperm, groups=[r[group] for r in los])
+                    if group else (float("nan"),) * 2)
+        # the same heavy-tail guard every read in this file carries: a Pearson on a
+        # tailed pool is a statement about its tail, so quote Spearman and the
+        # 1-99 percentile trim beside it
+        xa, ya = np.asarray(x, float), np.asarray(y, float)
+        fin = np.isfinite(xa) & np.isfinite(ya)
+        tm = fin.copy()
+        if fin.sum() > 20:
+            for v in (xa, ya):
+                lo, hi = np.quantile(v[fin], [0.01, 0.99])
+                tm &= (v >= lo) & (v <= hi)
+        return dict(label=label, n=int(fin.sum()),
+                    r=pearson(x, y), rho=spearman(x, y), slope=_slope(x, y),
+                    n_trim=int(tm.sum()), r_trim=pearson(xa[tm], ya[tm]),
+                    slope_trim=_slope(xa[tm], ya[tm]),
+                    null_absr_mean=nm, null_absr_p95=np95,
+                    null_within_station_mean=gm, null_within_station_p95=gp95)
+
+    C = {}
+    C["growth_vs_tie_growth"] = corr("tie_abs_growth", "growth_abs", "station",
+                                     "|level| growth vs |tie residual| growth")
+    C["growth_vs_tie_level"] = corr("tie_abs_mean", "growth_abs", "station",
+                                    "|level| growth vs mean |tie residual|")
+    C["growth_vs_elev_trend"] = corr("elev_trend_deg_per_h", "growth_abs", "station",
+                                     "|level| growth vs elevation trend (+ = rising)")
+    C["growth_vs_elev_mean"] = corr("elev_mean", "growth_abs", "station",
+                                    "|level| growth vs mean elevation")
+    C["growth_vs_abslat"] = dict(corr("lat_deg", "growth_abs", None,
+                                      "|level| growth vs latitude"),
+                                 r_abs_lat=pearson([abs(r["lat_deg"]) for r in los],
+                                                   [r["growth_abs"] for r in los]))
+    gy = [r["growth_abs"] for r in los]
+    th = [r["lst_angle_deg"] for r in los]
+    clm, clp = circ_lin_null(th, gy, n=min(nperm, 500))
+    C["growth_vs_local_solar_time"] = dict(
+        label="|level| growth vs LOCAL SOLAR TIME (circular-linear R)",
+        n=len(los), circ_lin_R=circ_lin_r(th, gy),
+        null_mean=clm, null_p95=clp)
+    out["correlations"] = C
+
+    # binned views (a circular or non-monotone effect a correlation would miss)
+    def bins(field, edges, label):
+        rows = []
+        v = np.array([r[field] for r in los], float)
+        gg = np.array([r["growth_abs"] for r in los], float)
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            m = (v >= lo) & (v < hi) & np.isfinite(gg)
+            if m.sum():
+                rows.append(dict(bin=f"{lo:g}..{hi:g}", n=int(m.sum()),
+                                 med_growth=float(np.median(gg[m])),
+                                 p90_growth=float(np.quantile(gg[m], .9))))
+        return dict(label=label, rows=rows)
+    out["bins"] = dict(
+        lst=bins("lst_hours", [0, 3, 6, 9, 12, 15, 18, 21, 24], "local solar time (h)"),
+        elev_trend=bins("elev_trend_deg_per_h", [-30, -10, -3, 3, 10, 30],
+                        "elevation trend (deg/hour; negative = setting)"),
+        lat=bins("lat_deg", [-90, -45, -20, 20, 45, 90], "station latitude (deg)"),
+        elev=bins("elev_mean", [10, 20, 30, 45, 60, 91], "mean elevation (deg)"))
+    return out
+
+
+def fmt_r8(R):
+    P = R["per_hour"]
+    hs = R["hours"]
+    L = [f"R8 - sec 24.19: which channel carries the BULK drift?  {R['arm']} hours "
+         f"{hs[0]}-{hs[-1]} (contrast {R['contrast']})",
+         "frozen reading: growth tracks the tie residual (r > 0.5) AND the tie residual grows",
+         "  => the ionosphere REPRESENTATION is the bulk channel; growth tracks the elevation",
+         "  trend (setting arcs) => low-elevation multipath / group delay and the floor is real;",
+         "  neither => the level channel's memory (the frozen rx-CB seeds aging).",
+         "",
+         "(b)+(c)+(d)+(e) PER HOUR"]
+    hdr = (f"{'h':>2s} {'(i) p50':>8s} {'p90':>7s} {'max':>7s} {'gross p50':>10s} {'clean p50':>10s} "
+           f"{'nG/nC':>8s} {'|tie| p50':>9s} {'p90':>7s} {'/a00':>6s} {'a00':>7s} "
+           f"{'CTA dec':>8s} {'rec':>5s} "
+           f"{'rxcb':>6s} {'D_ph':>6s} {'c10 D_ph':>8s} {'clkLVL':>7s}")
+    L += [hdr, "-" * len(hdr)]
+    for h in hs:
+        p = P[h]
+        L.append(f"{h:2d} {f(p['i_p50_all'],3)!s:>8s} {f(p['i_p90_all'],3)!s:>7s} "
+                 f"{f(p['i_max_all'],2)!s:>7s} {f(p['i_p50_gross'],3)!s:>10s} "
+                 f"{f(p['i_p50_clean'],3)!s:>10s} "
+                 f"{(str(p['n_gross']) + '/' + str(p['n_clean'])):>8s} "
+                 f"{f(p['tie_abs_p50'],3)!s:>9s} {f(p['tie_abs_p90'],3)!s:>7s} "
+                 f"{f(p['tie_abs_p50_over_a00_m_per_tecu'],4)!s:>6s} "
+                 f"{f(p['a00_tecu_p50'],2)!s:>7s} {p['clk_anchor']['cta_decouple']:8d} "
+                 f"{p['clk_anchor']['cta_recouple']:5d} {p['rxcb_priorres_rows']:6d} "
+                 f"{f(p.get('D_phase_rms'),4)!s:>6s} {f(p.get('contrast_D_phase_rms'),4)!s:>8s} "
+                 f"{f(p.get('clk_level_p50'),3)!s:>7s}")
+    L += ["  (i) = per-station code rms (pf_keyed STA) median over stations, that hour.",
+          "  'gross p50' / 'clean p50' = the same split by whether the station is named in ANY",
+          "    GROSSLOS row that hour (declare / standdown / clear / expire).",
+          "  |tie| = |iono_total - SH(IPP)| with the per-(station,epoch) mean removed (the free",
+          "    datum the all-ones R block leaves); tie_raw is in the JSON beside it.",
+          "  CTA dec/rec = clock-anchor decouple / recouple events; rxcb = PRIORRES rows of",
+          "    family 'rxcb' (the FLAGGED subset, not the fold count - the run-end totals are",
+          "    quoted in the report; no network_prior_residual.csv is armed on this run).",
+          "  D_ph = the per-hour census's declared within-arc D_phase rms."]
+    c0 = P[hs[0]]["carryless"]
+    L += ["", "THE EIGHT rx-CB CARRY-LESS STATIONS against the rest "
+              f"({', '.join(c0['stations'])})",
+          f"  {'h':>2s} {'n present':>9s} {'(i) p50 8':>10s} {'(i) p50 rest':>13s} {'ratio':>6s} "
+          f"{'(i) max 8':>10s} {'|ZWD| p50 8':>12s} {'rest':>7s} {'n>0.5 8/rest':>13s}"]
+    for h in hs:
+        c = P[h]["carryless"]
+        L.append(f"  {h:2d} {c['n_present']:9d} {f(c['i_p50_carryless'],3)!s:>10s} "
+                 f"{f(c['i_p50_rest'],3)!s:>13s} {f(c['i_ratio'],2)!s:>6s} "
+                 f"{f(c['i_max_carryless'],2)!s:>10s} {f(c['zwd_abs_p50_carryless'],3)!s:>12s} "
+                 f"{f(c['zwd_abs_p50_rest'],3)!s:>7s} "
+                 f"{(str(c['n_over_0p5_carryless']) + '/' + str(c['n_over_0p5_rest'])):>13s}")
+    L += ["", f"(a) per-LOS code level by hour: {R['n_los']} LOS present in >= 2 of hours "
+              f"{hs[0]}-{hs[-1]} with >= {R['min_rows']} code rows in the hour", ""]
+    hdr = (f"{'read':46s} {'n':>5s} {'r':>7s} {'rho':>7s} {'r_trim':>7s} {'ntrim':>6s} "
+           f"{'slope':>9s} {'NULL':>6s} {'NULLp95':>8s} {'NULLsta':>8s}")
+    L += [hdr, "-" * len(hdr)]
+    for _k, c in R["correlations"].items():
+        if "circ_lin_R" in c:
+            L.append(f"{c['label']:46s} {c['n']:5d} {f(c['circ_lin_R'])!s:>7s} {'-':>7s} "
+                     f"{'-':>7s} {'-':>6s} {'-':>9s} {f(c['null_mean'])!s:>6s} "
+                     f"{f(c['null_p95'])!s:>8s} {'-':>8s}")
+            continue
+        L.append(f"{c['label']:46s} {c['n']:5d} {f(c['r'])!s:>7s} {f(c['rho'])!s:>7s} "
+                 f"{f(c['r_trim'])!s:>7s} {c['n_trim']:6d} {f(c['slope'],4)!s:>9s} "
+                 f"{f(c['null_absr_mean'])!s:>6s} "
+                 f"{f(c['null_absr_p95'])!s:>8s} {f(c['null_within_station_mean'])!s:>8s}")
+    L += ["  NULL = |r| under 1000 permutations of the second variable; NULLsta permutes WITHIN",
+          "    station, so the station-level structure survives and only the pairing dies.",
+          "    r_trim = the same Pearson on the 1-99 percentile trim of BOTH variables - the",
+          "    heavy-tail guard every other read in this file carries.",
+          "    Local solar time is CIRCULAR, so it gets a circular-linear R, not a Pearson."]
+    for key, b in R["bins"].items():
+        L += ["", f"  growth binned by {b['label']}:",
+              f"    {'bin':>12s} {'n':>6s} {'med growth m/h':>15s} {'p90':>8s}"]
+        for r in b["rows"]:
+            L.append(f"    {r['bin']:>12s} {r['n']:6d} {f(r['med_growth'],4)!s:>15s} "
+                     f"{f(r['p90_growth'],4)!s:>8s}")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------- #
 # witness — per-station code rms vs arcs born inside the run
 # --------------------------------------------------------------------------- #
 def read_witness(project, arms, gap_epochs, min_arc):
@@ -2298,7 +2682,7 @@ def emit(out_dir, name, obj, text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "r7",
+    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8",
                                      "witness", "all"])
     ap.add_argument("--project", default=PROJECT_DEFAULT)
     ap.add_argument("--arms", default=",".join(ARMS_DEFAULT))
@@ -2311,6 +2695,8 @@ def main():
     ap.add_argument("--sat", default="G06", help="r5: the satellite under test")
     ap.add_argument("--station", default="DJIG00DJI", help="r5b: the station under test")
     ap.add_argument("--tow", type=float, default=265470.0, help="r5c/r5d: the election epoch")
+    ap.add_argument("--r8-arm", default="_gl_on6", help="r8: the arm under test")
+    ap.add_argument("--r8-contrast", default="_cm_c10", help="r8: the no-screen contrast")
     ap.add_argument("--r7-min-arc", type=int, default=20,
                     help="r7: minimum declared-arc length in epochs")
     ap.add_argument("--r6-sats", default=",".join(R6_SATS + R6_CONTROLS),
@@ -2347,6 +2733,11 @@ def main():
         elif t == "r7":
             r = read_r7(a.project, arm=arms[0], min_arc_ep=a.r7_min_arc)
             emit(out_dir, "r7", r, fmt_r7(r))
+        elif t == "r8":
+            r = read_r8(a.project, arm=a.r8_arm, contrast=a.r8_contrast,
+                        min_rows=a.min_settled_rows)
+            # one output per arm — R8b reads two arms and they must not collide
+            emit(out_dir, f"r8{a.r8_arm}", r, fmt_r8(r))
         elif t == "witness":
             r = read_witness(a.project, arms, a.gap_epochs, a.min_arc)
             emit(out_dir, "witness", r, fmt_witness(r))

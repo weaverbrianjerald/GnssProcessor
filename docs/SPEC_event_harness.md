@@ -7634,3 +7634,58 @@ stand-down is the same rule one axis over, and the population RAIM's `raim_min_s
   hour ⇒ the ionosphere REPRESENTATION (degree 8, one layer, 5 TECU) is the bulk channel — the card is the representation, by local time;
   the growth tracks the elevation trend (setting arcs) ⇒ multipath / group-delay at low elevation — an elevation-weighting card, and the
   floor is real; neither ⇒ the level channel's memory (the frozen rx-CB seeds aging) — decided by a 6 h `carry_rx_code_bias: false` twin.
+
+**§24.19 R8 RESULTS (2026-09-14 ~10:00 local; worker commit `6a6d73e`, merged; `_gl_on6` hours 2–6 with `_cm_c10` as contrast; no twin
+needed).**  Neither pre-registered branch crosses its bar.  Per-LOS level growth against the tie-residual growth: r **0.378** (against the
+level 0.422), Spearman 0.13 / 0.07, trimmed 0.28 / 0.18 — real against the naive null (0.03) but only +0.18 / +0.20 against the
+WITHIN-STATION null (0.198 / 0.223) that keeps station structure; against the elevation trend r **−0.056** (null 0.033) — refused, though the
+binned medians do fall 0.043 → 0.016 m/h from setting to rising arcs; local solar time (circular R 0.058, null 0.052) and latitude: nothing.
+**Half of the first branch is nonetheless true:** the SH-tie residual grows monotonically with the hour — p50 1.64 → 2.39 m (+46 %), p90 4.5 →
+7.2 m (+59 %) — faster than the field's own a₀₀ (27.6 → 35.7 TECU, +29 %), still rising after normalising through hour 5: the
+representation IS degrading over the window; it just does not predict WHICH lines of sight grow.  Per hour: gross-named stations carry the
+worse (i) in four of five hours and invert only in hour 4 (the G17 stand-down hour); the clock anchor's decouples are non-uniform (25 / 114
+/ 46 / 69 / 57; run-end 321 trips, 352 re-couplings, 81.8 % of folds at the variance floor); D_phase per hour (0.87 / 0.29 / 0.70 / 0.97 /
+0.51) does not track (i) at all.  **The third reading applies: the bulk drift is named by neither the representation nor low-elevation
+group delay, which leaves the level channel's own memory** — and the two facts on the table point there: the rx-CB carry withheld **6 704
+folds at its 10σ gate with EIGHT stations carrying nothing for the whole six hours** (CAS1 CPVG GOPE KOKV LCK4 LMMF MRO1 OAFA — GOPE and
+LCK4 among the persistent unphysical-ZWD stations), and its flagged-row count FALLS (31 → 14) while (i) rises.
+
+**R8b (pre-registered): the 6 h `carry_rx_code_bias: false` twin.**  `runs/_gl_rxoff6` = `_gl_on6`'s config + `network.carry_rx_code_bias:
+false`, 6 h cold, main's Release rebuilt after the GL merge (hash, smoke `87a33bf0…`), hour by hour against `_gl_on6`.  **Frozen reading:**
+(i) in hours 3–6 within 0.2 m of hour 2 (and the eight carry-less stations no longer distinguished) ⇒ the rx-CB carry's frozen first-epoch
+memory and its frame-blind gate (§21.18) ARE the bulk drift — the level channel's memory, exactly invariant #1's stale-value warp — and
+the card is the gate's frame (§21.18's open fix) or the carry's retirement on this vehicle; the drift stays ⇒ the carry is exonerated on
+the drift too and, by elimination, the representation's monotone degradation is the residual suspect — a representation-by-local-time
+card (degree / layer / tie by hour), pre-registered next, not now.
+
+**§24.19 R8b RESULTS (2026-09-14 ~11:00 local; worker commit `579ae70`, merged; main's Release rebuilt after the GL merge, exe `f33ce82e…`,
+smoke `87a33bf0…`; `runs/_gl_rxoff6` = `_gl_on6` + `carry_rx_code_bias: false`, 6 h, 720/720, the carry provably inert — arming line and
+both run-end counters gone, zero rxcb rows every hour).**  **The drift STAYS: the rx-CB carry is exonerated on the bulk drift.**  (i) p50 above
+hour 2: +0.37 / +0.87 / +0.75 / +0.41 m with the carry off against +0.40 / +0.99 / +0.80 / +0.58 with it on — a 10–30 % shave, nowhere near the
+0.2 m bar; the eight carry-less stations are STILL distinguished at the same ratios with the carry off (1.64 / 1.19 / 0.81 / 0.85 / 0.93; |ZWD|
+2–2.6× the rest) — their carry was withheld BECAUSE they are the bad stations, not the reverse.  The tie residual grows the same way (p50 1.70 →
+2.39 m, p90 4.6 → 6.9); the per-LOS tie correlation reads 0.71 / 0.66 on this arm only because its within-station null rises to 0.49 / 0.53 with
+it (gap ≈ +0.2, unchanged).  Two unasked findings: the carry off REMOVED the hour-4 consumer blow-up (25.5 → 2.69 m p50; the 240-min mark
+19.0 → 1.78) — confounded, the screen's firing pattern changed with the solve (G17 led `_gl_on6` with 13 declarations and does not appear in
+`_gl_rxoff6`'s list, where G24 leads with 19: the ten-station G17 stand-down did not recur rather than being cured) — and WORSENED the tail
+((i) max 5.37 → 19.7 m at hour 4, 6.77 → 10.6 at hour 6).  **Reading:** the carry is not the channel; the representation's monotone
+degradation remains a suspect by elimination only (r ≈ +0.2 over the structure-preserving null) — too weak to build on.  One population
+was never tested: **the mid-arc RE-LEVELS.**  §24.13's H1 refuted the level BORN at arc start; R6 tested the wire's energy beside DECLARED
+boundaries and elections; neither looked at the slip response's own re-levelings — 394 free-epoch latches in 2 h (~3 per epoch), each
+re-seeding a zero-q level from one epoch of code with its station-common error — invariant #1's re-coupling trap, the very walk
+`relevel_free_epoch` killed on the sim (720/720) and has never been graded on the field.  R1's "74–77 % of levels GROW over the arc" and R7's
+"random walk or steeper within the arc" are both what accumulating re-levels look like.
+
+**R9 (pre-registered, LV-SEED worker, existing traces of `_gl_on6` / `_gl_rxoff6` / `_cm_c10`): the re-level population.**  (a) The
+re-level events per (station, sat, signal) and epoch from `network_events.csv` / the slip traces (free-epoch latches, T4 refloats,
+`relevel`-class rows — the worker names the rows and quotes one of each) — their count per hour beside (i) per hour, and per station beside
+the station's hourly code rms (Spearman across stations, per hour); (b) per LOS arc, the number of re-levels inside the arc against the
+arc's level growth (R1's |m_late − m_early|) and against its final |level| — r with a size-matched null; (c) the wire: per satellite, |ΔD|
+at epochs where ANY tracking station re-levelled that satellite (± 1 epoch) against epochs where none did — the enrichment ratio and a
+shuffled null (as R4 / R6), pooled and for the noisy four; (d) the re-level rate by elevation and by station (the eight carry-less stations
+beside the rest).  **Frozen reading:** (c) enrichment > 1.5 over the null AND (b) r > 0.5 ⇒ the slip response's re-leveling IS the wire's
+random walk and the bulk drift's channel — the card is the level's re-seed (a re-level that averages over the arc's accumulated code, or
+the lane-preserving refloat SPEC_lane_slip_response owes) and the standing slip-response cost of FP-2 (§20.3) is the same defect; (c) ≈ 1
+and (b) < 0.3 ⇒ re-levels are exonerated and the representation card is pre-registered next; a rate > 1 per LOS per hour at the eight
+stations against < 0.3 elsewhere ⇒ the re-level rate is itself the bad-station signature (false slips on noisy code), and the detector's
+field thresholds are the card.
