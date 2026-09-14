@@ -74,3 +74,4 @@ Everything else (code residuals, ZWD, σ̂₀, DD fractions, level channels) is 
 | 2026-09-14 | decision recorded; RF-0 and the RF-1 design read launched | — |
 | 2026-09-14 | RF-1 design read landed — [RF-1_float_ambiguities_design.md](RF-1_float_ambiguities_design.md) | the ambiguity is a managed level, not a state; the covariance fold exists (F3); the anchor handover erases every station's carry |
 | 2026-09-14 | RF-1 decisions — [RF-1_decision_2026-09-14.md](RF-1_decision_2026-09-14.md) | build GO in the design's commit order; steps 1–2 (knob + measure-only trace) launched, their D1–D4 read gates the mechanism |
+| 2026-09-14 | RF-0 baseline landed — [RF-0_baseline_2026-09-14.md](RF-0_baseline_2026-09-14.md) | field consumer 1.0–3.3 m with no trend, sim 0.57 m at hour 6 and converging; dual needs `rx_code_bias_datum`; SH-off falls to the external GIM (RF-0b pre-registered) |
