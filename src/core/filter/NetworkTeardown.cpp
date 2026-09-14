@@ -4578,6 +4578,25 @@ int networkTeardown(
                  "epoch ever reached the wire — read the emission counters.",
                  ctx.carry.sb_rows_written, ctx.carry.sb_epochs_written,
                  ctx.carry.sb_stations_skipped, ctx.carry.sb_decomp_failed);
+    // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §7.2): the AMBIGUITY-VEHICLE
+    // run-end readout.  Emitted only when the vehicle is non-default or the trace is
+    // armed, so an unarmed run's stdout is unchanged (structural byte-identity,
+    // invariant #6).  ⚠ STEP 1: the four mechanism counters are PLACEHOLDERS and read 0
+    // by construction — they are printed anyway because invariant #4's failure mode is
+    // exactly a counter nobody looked at, and design §7.4's D3 states the converse rule:
+    // a float_kf run with 0 drops is a miswire, not a quiet run.
+    if (ctx.knobs.amb_float_kf || config_.getNetworkConfig().trace_amb_state)
+        log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\" (step 1: REGISTERED, NO "
+                  "MECHANISM — the solve is byte-identical to \"level\"), birth_var_floor={} "
+                  "m^2, q={} m^2/s, declared_handover={}.  Mechanism counters (steps 3-5, "
+                  "unlanded): {} drop(s) over {} epoch(s), {} declared S-transform(s) moving "
+                  "{} column(s), {} joint-block fallback(s).",
+                  ctx.knobs.amb_float_kf ? "float_kf" : "level",
+                  ctx.knobs.amb_birth_var_floor, ctx.knobs.amb_float_q_m2s,
+                  ctx.knobs.amb_float_declared_handover,
+                  ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
+                  ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
+                  ctx.counters.n_amb_block_fallback);
     if (config_.getNetworkConfig().trace_sh_spectrum)
         log->info("Network (P1-3 shared-normal spectrum): {} epoch(s) written to "
                   "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).",

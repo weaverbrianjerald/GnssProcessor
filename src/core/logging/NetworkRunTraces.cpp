@@ -1488,6 +1488,26 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // armed-only rule, so an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
                                           : std::string())
+               // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §3.5 / §7.1): the
+               // AMBIGUITY VEHICLE is the product's provenance, so the manifest records
+               // it — and §3.5's whole reason for the q knob existing is that its 0.0
+               // default be EXPLICIT here rather than implied.  Emitted ONLY when the
+               // posture is non-default (the trace_postfit_rows / trace_station_block
+               // precedent above), so an unarmed run's manifest bytes are unchanged.
+               << ((nc.ambiguity_vehicle != NetworkAmbiguityVehicle::Level
+                    || nc.trace_amb_state || nc.amb_float_birth_var_m2 > 0.0
+                    || nc.amb_float_q_m2s > 0.0 || nc.amb_float_declared_handover)
+                       ? fmt::format("\"ambiguity_vehicle\":\"{}\","
+                                     "\"amb_float_birth_var_m2\":{},"
+                                     "\"amb_float_q_m2s\":{},"
+                                     "\"amb_float_declared_handover\":{},"
+                                     "\"trace_amb_state\":{},",
+                                     nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                                         ? "float_kf" : "level",
+                                     nc.amb_float_birth_var_m2, nc.amb_float_q_m2s,
+                                     nc.amb_float_declared_handover ? "true" : "false",
+                                     nc.trace_amb_state ? "true" : "false")
+                       : std::string())
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config — and, because `adm_screen` is solve-affecting, to know that

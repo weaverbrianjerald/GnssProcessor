@@ -470,6 +470,37 @@ struct LocalCarry {
     /// only on CREATE and on FREE, never on an ordinary re-stash, so a restored
     /// entry's 0 survives every harvest until the arc is actually re-levelled.)
     double relevel_s{0.0};
+    /// RF-1 §3.3(b)/§7.2: the BIRTH PRIOR actually in force for this arc (m²) — the
+    /// object a DROP restores.  Set ONCE at the arc's birth stash to
+    /// @c max(var_first, network.amb_float_birth_var_m2), kept across every re-stash
+    /// and every re-level exactly like @ref var_first, and restarted only by an
+    /// erase-and-rebirth (which deletes the entry).
+    ///
+    /// It is a SEPARATE field from @ref var_first on purpose.  @c var_first is the
+    /// arc's own first-stash conditional variance — a measurement of what the model
+    /// reported — and is the denominator of
+    /// @c network.phase_datum_handover_max_var_ratio, which must keep reading the
+    /// unfloored quantity.  @c var_birth is what the arc is WORTH at birth: the same
+    /// number floored by the posture's code-noise scale, because two routes hand back
+    /// a phase-STIFF variance for a CODE-quality value (a band-scoped free determined
+    /// against its sibling band's still-stiff carry, and the SH tie row that separates
+    /// a new arc's ambiguity from its iono at the tie's optimistic precision — design
+    /// §1.4).  Flooring @c var_first in place would silently move the handover ratio's
+    /// denominator.
+    ///
+    /// ⚠ RF-1 STEP 1: maintained WRITE-ONLY.  With the default floor of 0.0 it equals
+    /// @c var_first exactly, nothing reads it, and the solve is byte-identical; the
+    /// drop that restores it lands in step 4.  NOT snapshotted today — design §6.1
+    /// names it as the field that must join the warm-resume record when seams come
+    /// back, or a restored arc cannot be dropped correctly.
+    double var_birth{0.0};
+    /// RF-1 §7.2: loop-epoch index (@c n_loop_epochs) of this arc's LAST DROP — the
+    /// re-coupling edge's own clock, distinct from @ref relevel_s (which is stamped by
+    /// the leveling vehicle's CREATE / FREE events) and from @ref birth_ep.  0 = never
+    /// dropped.  Read by the @c network_amb_state.csv event column and, from step 4,
+    /// by the drop's own idempotence guard (one drop per arc per epoch).
+    /// ⚠ RF-1 STEP 1: declared and never written — the drop lands in step 4.
+    long long dropped_ep{0};
 };
 
 /// One carried-ambiguity entry as a warm resume restores it from a snapshot's

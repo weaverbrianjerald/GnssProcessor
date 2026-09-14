@@ -121,6 +121,31 @@ namespace GnssProcessor {
         /// (no memory until it matures).  false = "diagonal" (per-column rows — measured
         /// harmful, SPEC_amb_iono §6.11 arm 5).
         bool pl_blk_young_free{};
+        /// RF-1 §7.1 (docs/refound/RF-1_float_ambiguities_design.md):
+        /// network.ambiguity_vehicle == "float_kf" — the float STATE with a carried joint
+        /// covariance, a floored birth prior and a bounded DROP as the slip response.
+        /// ⚠ RF-1 STEP 1: the vehicle is REGISTERED and carries NO mechanism, so this
+        /// flag is read by the run-end telemetry and the trace's provenance line and by
+        /// nothing that touches the solve — both values are byte-identical in this build.
+        bool amb_float_kf{};
+        /// RF-1 §3.3(b): network.amb_float_birth_var_m2 — the FLOOR (m²) applied to the
+        /// arc's first-stash variance when the harvest records @ref LocalCarry::var_birth.
+        /// 0.0 (default) = unfloored, so var_birth == var_first to the ULP.
+        double amb_birth_var_floor{};
+        /// RF-1 §3.5: network.amb_float_q_m2s — process noise on the ambiguity block
+        /// under float_kf.  The card's posture is 0.0; carried here so the run manifest
+        /// and the run-end telemetry can state it.  ⚠ INERT in step 1.
+        double amb_float_q_m2s{};
+        /// RF-1 §3.6 (step 5): network.amb_float_declared_handover — the anchor handover
+        /// as a declared, exact carry S-transformation instead of a network-wide erase.
+        /// ⚠ INERT in step 1.
+        bool amb_float_declared_handover{};
+        /// RF-1 §7.4: network.trace_amb_state — the per-arc carry-state trace
+        /// (@c network_amb_state.csv).  Measure-only; default OFF ⇒ no file, no rows.
+        bool trace_amb_state{};
+        /// RF-1 §7.4: network.trace_amb_state_every — epoch stride of the TRAJECTORY rows
+        /// (>= 1).  EVENT rows ignore it.
+        int  trace_amb_state_every{1};
     /// AGE-AWARE young-arc variance inflation (network.phase_leveling_young_inflate_*,
     /// SPEC_amb_iono_split_overcount §6.17–§6.18): a carried ambiguity column whose LAST
     /// RE-LEVEL (@ref LocalCarry::relevel_s) is recent carries a CODE-quality level at a
@@ -2529,6 +2554,25 @@ namespace GnssProcessor {
         long long n_cr_inject_stale_max_week = 0; ///< GPS week of that epoch
         double    cr_inject_stale_max_tow = 0.0;  ///< TOW (s) of that epoch — THE attribution handle for a cliff
         long long n_cr_inject_stale_max_sta  = 0; ///< distinct stations in that epoch's stale set (separates a fleet-wide era from one station dropping out)
+
+        // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §7.2 / §7.4) — the
+        //     AMBIGUITY-VEHICLE telemetry.  Standing invariant #4: these counters ARE
+        //     the ON-path evidence, and design §7.4's D3 states the rule in the other
+        //     direction too — "a float_kf run with 0 drops is a MISWIRE, not a quiet
+        //     run".  ⚠ STEP 1: only @c n_amb_state_rows / @c n_amb_state_events /
+        //     @c n_amb_state_epochs can be nonzero (the trace); the drop, erase-by-drop
+        //     and S-transform counters are PLACEHOLDERS for steps 4–5 and are reported
+        //     at run end so an arm that arms a mechanism and moves none of them is
+        //     visible immediately rather than after a grade.
+        long long n_amb_drop              = 0;  ///< RF-1 step 4: carried priors DROPPED back to their birth prior (value_abs kept).  0 in this build.
+        long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.  0 in this build.
+        long long n_amb_stransform        = 0;  ///< RF-1 step 5: declared anchor S-transformations applied to the carry.  0 in this build.
+        long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.  0 in this build.
+        long long n_amb_block_fallback    = 0;  ///< RF-1 step 3 risk #3: station-epochs whose joint block fell back to per-column rows — a VEHICLE CHANGE on one station-epoch, which is why it is counted rather than noted.  0 in this build.
+        long long n_amb_state_rows        = 0;  ///< network_amb_state.csv: TRAJECTORY rows written (one per carried (station,sat,signal) per traced epoch).
+        long long n_amb_state_events      = 0;  ///< network_amb_state.csv: rows carrying a non-empty `event` (birth / drop / erase / stransform).
+        long long n_amb_state_epochs      = 0;  ///< network_amb_state.csv: epochs that wrote at least one row.
+        long long n_amb_state_erase_rows  = 0;  ///< network_amb_state.csv: `erase:<cause>` rows — entries captured at the four erase sites BEFORE deletion.
 
         // F1 (network.phase_leveling_los_scale, SPEC_amb_iono_split_overcount) — the
         //     inject-side per-LOS variance scale's ON-path telemetry (invariant #4).

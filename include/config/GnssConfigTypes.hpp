@@ -837,6 +837,39 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief WHICH VEHICLE carries a network ambiguity between epochs
+     *        (@c network.ambiguity_vehicle, docs/refound/RF-1_float_ambiguities_design.md §7.1).
+     *
+     * The re-founding decision of 2026-09-14 names the ambiguity's carry as the first
+     * mechanism to replace.  Today (@c Level) an ambiguity is a per-epoch FREE parameter
+     * made time-linked by a zero-process-noise SCALAR prior that carries last epoch's
+     * marginal variance: it is born with no prior at all from one epoch of data at a
+     * variance the model reports rather than the value deserves, and any of four
+     * un-instrumented reset paths returns it to that state (design §1.8).  @c FloatKf makes
+     * it a float STATE of the station's local block whose carried JOINT covariance is
+     * folded as a proper prior, with a recorded and floored birth prior and a slip response
+     * that DROPS the prior back to that birth prior instead of skipping one inject or
+     * erasing the entry (design §3).
+     *
+     * ⚠ RF-1 STEP 1 (this build): the vehicle is REGISTERED and carries NO mechanism.
+     * Both values produce a byte-identical solve — the knob exists so the arms of steps
+     * 3–5 are each a copy of the RF-0 golden with ONE knob changed, and so the run
+     * manifest records which vehicle a product was made on.  Steps 3 (the joint block),
+     * 4 (@c var_birth + the drop) and 5 (the declared anchor S-transform) are separately
+     * armed A/Bs behind this same enum plus their own knobs.
+     *
+     * SOLVE-AFFECTING once the mechanism lands, hence fingerprint-relevant: when warm
+     * resumes come back the vehicle joins the datum-relevant config fingerprint and
+     * @ref LocalCarry::var_birth must join the snapshot record, or a restored arc cannot
+     * be dropped correctly (design §6.1 — named here so the seam card does not
+     * rediscover it).
+     */
+    enum class NetworkAmbiguityVehicle {
+        Level,  ///< (default) the ZERO-q phase-leveling scalar carry — today's vehicle, byte-identical.
+        FloatKf ///< The float state with a carried joint covariance, an honest floored birth prior and a bounded DROP as the slip response (RF-1 steps 3–5; inert until they land).
+    };
+
+    /**
      * @brief BAND SCOPE of the whole-satellite DETECTOR refloats (§Z).
      *
      * The other half of the same finding.  MW and LLI already act per pair /
@@ -1419,6 +1452,68 @@ namespace GnssProcessor {
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an
         /// erase), so it is fingerprinted like any other carry-shaping knob.
         NetworkRaimEraseBandScope raim_erase_band_scope{ NetworkRaimEraseBandScope::All };
+        /// RF-1 §7.1: WHICH VEHICLE carries a network ambiguity between epochs
+        /// (@ref NetworkAmbiguityVehicle).  Default @c Level is today's zero-q
+        /// phase-leveling scalar carry, byte-identical.  ⚠ RF-1 STEP 1: @c FloatKf is
+        /// REGISTERED and carries no mechanism, so BOTH values are byte-identical in
+        /// this build; the mechanism arrives in steps 3–5 as separately armed A/Bs.
+        NetworkAmbiguityVehicle ambiguity_vehicle{ NetworkAmbiguityVehicle::Level };
+        /// RF-1 §3.3(b): FLOOR (m²) on the birth prior a dropped or newborn arc carries,
+        /// applied as @c var_birth = max(var_first, amb_float_birth_var_m2).  0.0 = use
+        /// the arc's own first-stash conditional variance unfloored (today's quantity).
+        /// The manager's decision of 2026-09-14 takes the EMPIRICAL route: it starts at
+        /// the posture's code-noise scale — an a-priori (0.5 m)² at the reference
+        /// elevation, elevation-mapped like the row weights — and is then SET, once per
+        /// bed, from the σ̂₀(pl) that RF-1 step 2's D4 read measures in the YOUNG arc-age
+        /// bucket on the RF-0 posture.  It is NOT a tuning constant to be swept.
+        /// ⚠ INERT in RF-1 step 1: the value is parsed, validated and recorded in the run
+        /// manifest, and nothing reads it (the floor lands with the drop, step 4).
+        double amb_float_birth_var_m2{ 0.0 };
+        /// RF-1 §3.5: process noise (m²/s) on the ambiguity block under @c FloatKf.
+        /// **The card's posture is 0.0 and any nonzero value is a separate,
+        /// evidence-bearing arm.**  An ambiguity is a random constant punctuated by
+        /// discrete slips, and q = 0 is exact recursive least squares for it; a q-ladder
+        /// was already falsified as a fix for the sibling lock-in
+        /// (@c runs/zwdabl_{q7,q6,q5,floor}: settled bias unchanged-to-worse, the
+        /// first-injection jump identical on all four, integers strictly worse), and the
+        /// level-channel corollary of CLAUDE.md Amendment 6 says the same: do not fix the
+        /// level by tuning a carry's memory model in either direction.  The knob exists
+        /// only so the default is EXPLICIT and the run manifest records it.
+        /// ⚠ INERT in RF-1 step 1.
+        double amb_float_q_m2s{ 0.0 };
+        /// RF-1 §3.6 (step 5, its own arm): express a (satellite, signal) phase-ANCHOR
+        /// handover as the exact, declared carry S-transformation — shift every station's
+        /// carried @c value_abs of that family by the incoming anchor's own level, leave
+        /// every variance untouched, self-check that the incoming anchor's column then
+        /// reads 0 — instead of @c networkApplyPhaseAnchorCarryReref's network-wide
+        /// ERASE.  A state that is erased at every anchor handover is not a state.
+        /// SOLVE-AFFECTING when armed; default @c false is byte-identical.
+        /// ⚠ INERT in RF-1 step 1.
+        bool amb_float_declared_handover{ false };
+        /// RF-1 §7.4: the per-arc CARRY-STATE trace
+        /// (@c network.trace_amb_state) -> @c network_amb_state.csv.  ONE row per carried
+        /// (station, satellite, signal) per traced epoch with what was carried
+        /// (@c value_abs, @c var, @c var_first, @c var_birth), what was FOLDED
+        /// (@c fold_var, @c folded, @c route), the trajectory's abscissa (@c n_folds,
+        /// @c age_ep, @c age_since_relevel_ep) and the arc's EVENTS (birth / drop / erase
+        /// / stransform).  R1's "is the level set at birth?" statistic was the right
+        /// question asked of the wrong quantity — it read the CODE RESIDUAL per LOS arc
+        /// because no trace of the carry itself existed, and @c network_prior_residual.csv
+        /// is aggregated per (family, label) per epoch so it cannot give a per-arc
+        /// trajectory.  This is the diagnostic that must move, and it lands and is READ
+        /// before any mechanism (design §7.3 step 2).
+        /// MEASURE-ONLY: every value written is read off state the harvest / inject
+        /// already computed.  Default OFF ⇒ no file, no rows, byte-identical.
+        bool trace_amb_state{ false };
+        /// RF-1 §7.4: EPOCH STRIDE of @ref trace_amb_state — rows are written every
+        /// N-th processed epoch.  1 (default) = every epoch, which is what the
+        /// pre-registered D1/D2 fold-trajectory reads want; raise it only to bound the
+        /// file on a multi-hour, many-station run (a stride > 1 makes @c n_folds and the
+        /// consecutive-row prior residual read on a SUBSAMPLE, so D1's fit abscissa is
+        /// still @c n_folds — never the row index).  EVENT rows (birth / drop / erase)
+        /// are written on EVERY epoch regardless of the stride: an inventory that skips
+        /// events is not an inventory.
+        int trace_amb_state_every{ 1 };
         /// §Z: BAND SCOPE of the whole-satellite detector refloats
         /// (@ref NetworkRefloatBandScope).  Default @c All is byte-identical.
         NetworkRefloatBandScope cycle_slip_refloat_band_scope{ NetworkRefloatBandScope::All };
