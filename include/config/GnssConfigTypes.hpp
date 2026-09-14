@@ -819,6 +819,50 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief IONOSPHERE CONSTRAINT of the W6 satellite code-bias slice
+     *        (@c network.w6_iono_constraint, card RF-0b —
+     *        docs/refound/RF-0_baseline_2026-09-14.md).
+     *
+     * The satellite DCB (the geometry-free part of the satellite code bias) is co-linear
+     * with each station's free per-(receiver, satellite) slant ionosphere: shifting
+     * @f$I_r^s \to I_r^s + \beta^s@f$ at EVERY station is exactly compensated by
+     * @f$d^s_j \to d^s_j - \mu_j \beta^s@f$ (Odijk et al. 2016, J Geod 90:15-44, rank
+     * deficiency 3b).  Something has to close that per-satellite direction, and the
+     * producer has historically had exactly two answers — a single-layer constraint
+     * (the co-estimated SH-VTEC field, or the external IONEX GIM) or the hard
+     * geometry-free pin (@c network.code_bias_gf_datum), which needs a THIRD frequency
+     * to leave anything estimable behind and is refused under
+     * @c processing.frequency_mode = dual.
+     *
+     * Under GPS-only DUAL that left no reachable posture without EXTERNAL ionosphere
+     * data: the loader force-armed @c estimation.ionosphere_weighting and the run
+     * hard-errored without a `.INX` (RF-0 Finding 2).  This option adds the third
+     * answer — NO ionosphere constraint at all, with the satellite code-bias datum
+     * carried by the rows the tree already folds every epoch
+     * (@ref NetworkSbasis::buildCodeBiasDatumRows: the per-satellite ionosphere-free
+     * pin plus the per-(constellation, signal) sum-to-zero rows, i.e. the IGS
+     * @f$\sum_s DCB^s = 0@f$ convention).  The geometry-free lump is then absorbed by
+     * the slant ionosphere, so a consumer must apply the emitted ionosphere and the
+     * emitted code biases AS A PAIR.
+     *
+     * @warning READ RF-0b's §5 BEFORE GRADING A PRODUCT FROM THIS POSTURE.  The
+     *          sum-to-zero rows close exactly ONE direction per (constellation, signal)
+     *          — the constellation-wide level — and are blind to the n_sat-1
+     *          BETWEEN-satellite directions the GIM's common-mode-free R used to close.
+     *          Whatever loose prior sits on the OSB columns (@c network.cb_kaula_prior)
+     *          therefore becomes the operative datum for that split.  The run-end
+     *          @c W6-IONO-NONE line reports the epochs folded; the null-space gate
+     *          reports whether anything is left OPEN.
+     *
+     * Default @ref Auto reproduces today's selection exactly (byte-identical,
+     * standing invariant #6).  SOLVE-AFFECTING when set to @ref None.
+     */
+    enum class NetworkW6IonoConstraint {
+        Auto, ///< (default) today's three-way selection: the co-estimated SH-VTEC field if `network.estimate_iono_sh`, else the free-slant Odijk posture if `network.code_bias_gf_datum`, else the external IONEX GIM (hard error without a `.INX`).  Byte-identical to the pre-knob producer.
+        None  ///< NO ionosphere constraint: free per-LOS slant ionosphere, no GIM loaded, `estimation.ionosphere_weighting` forced OFF, and the satellite code-bias datum left to the IF pin + per-(constellation, signal) sum-to-zero rows.  Refuses `network.estimate_iono_sh` and `network.code_bias_gf_datum` (each is a DIFFERENT answer to the same rank deficiency); INERT without `network.estimate_sat_code_bias`.
+    };
+
+    /**
      * @brief BAND SCOPE of the T4 attribution erase (docs/SPEC_event_harness.md §Z).
      *
      * Study 1 measured, on three healthy arcs of the quiet sim bed, that the
@@ -1414,6 +1458,14 @@ namespace GnssProcessor {
         /// off and is self-consistent with what the file actually contains.  Inert unless
         /// @ref trace_dd_fractional.  TRACE-ONLY: never folded into the warm-resume fingerprint.
         NetworkDdFracRef trace_dd_fractional_ref{ NetworkDdFracRef::Lowest };
+        /// RF-0b: IONOSPHERE CONSTRAINT of the W6 satellite code-bias slice
+        /// (@ref NetworkW6IonoConstraint).  Default @c Auto reproduces the pre-knob
+        /// three-way selection byte for byte; @c None runs the slice with NO ionosphere
+        /// constraint (no GIM, no SH field, @c estimation.ionosphere_weighting forced
+        /// off), leaving the satellite code-bias datum to the IF pin + per-(constellation,
+        /// signal) sum-to-zero rows @ref NetworkSbasis::buildCodeBiasDatumRows already
+        /// folds.  SOLVE-AFFECTING when set to @c None.
+        NetworkW6IonoConstraint w6_iono_constraint{ NetworkW6IonoConstraint::Auto };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

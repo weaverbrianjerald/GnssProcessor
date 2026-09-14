@@ -4156,6 +4156,45 @@ int networkTeardown(
                       config_.networkIonoSeedFieldFrameMinSats(), fb_field,
                       ctx.carry.lv1_field_snapshots);
     }
+    // RF-0b (network.w6_iono_constraint = none): armed-only run-end line, placed beside
+    // RXCB-DATUM's because it answers the same question for the SATELLITE half — in this
+    // posture the sum-to-zero rows are not a gauge beside an ionosphere constraint, they
+    // ARE the satellite code-bias datum, so the fold count is the only thing separating a
+    // live datum from an armed-but-inert one (standing invariant #4).
+    if (config_.getNetworkConfig().w6_iono_constraint == NetworkW6IonoConstraint::None) {
+        if (ctx.counters.n_w6_iono_none_epochs == 0)
+            log->warn("Network (W6-IONO-NONE): the no-ionosphere-constraint posture is ARMED but "
+                      "the satellite code-bias datum folded on ZERO epoch(s) — no epoch ever "
+                      "presented a registered code-bias column, so the satellite code biases ran "
+                      "with NO datum and NO ionosphere constraint at once.  This run is NOT the "
+                      "posture it claims (standing invariant #4): check "
+                      "network.estimate_sat_code_bias and the signal coverage gate.");
+        else if (ctx.counters.n_w6_iono_none_s2z_rows == 0)
+            log->warn("Network (W6-IONO-NONE): the datum folded on {} epoch(s) but pinned ZERO "
+                      "(constellation, signal) sum-to-zero level(s) — the ionosphere-free pin was "
+                      "folded against nothing, so every channel's constellation-wide code-bias "
+                      "LEVEL is unpinned on top of the between-satellite split the missing "
+                      "ionosphere constraint already left open.  Do not grade the emitted code "
+                      "biases from this run.",
+                      ctx.counters.n_w6_iono_none_epochs);
+        else
+            log->info("Network (W6-IONO-NONE): NO ionosphere constraint over the run — the "
+                      "satellite code-bias datum folded on {} epoch(s), pinning {} "
+                      "(constellation, signal) sum-to-zero level(s) in total (mean {:.2f} per "
+                      "epoch) alongside the per-satellite ionosphere-free pin.  Those rows pin "
+                      "each channel's constellation-wide LEVEL; the BETWEEN-satellite "
+                      "geometry-free directions are left to the OSB prior "
+                      "(network.cb_kaula_prior {}), so read the null-space gate's "
+                      "observed-vs-declared before grading the emitted code biases, and apply the "
+                      "emitted ionosphere and code biases AS A PAIR.",
+                      ctx.counters.n_w6_iono_none_epochs,
+                      ctx.counters.n_w6_iono_none_s2z_rows,
+                      static_cast<double>(ctx.counters.n_w6_iono_none_s2z_rows)
+                          / static_cast<double>(ctx.counters.n_w6_iono_none_epochs),
+                      config_.networkCbKaulaPrior()
+                          ? fmt::format("ON, sigma {:.1f} m", config_.networkCbKaulaSigmaM())
+                          : std::string{"OFF"});
+    }
     // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
     // tell a live gauge from an armed-but-inert one is the fold count, so print it
     // even (especially) when it is zero.

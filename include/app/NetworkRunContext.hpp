@@ -2892,6 +2892,15 @@ namespace GnssProcessor {
         // never ran), which no amount of clean-looking log output would reveal.
         size_t n_kp_epochs = 0, n_kp_cols = 0;
         bool   kp_margin_logged = false;   ///< one-shot latch for the K2 margin check
+        // RF-0b (network.w6_iono_constraint = none): epochs on which the satellite
+        // code-bias datum was folded with NO ionosphere constraint behind it, and the
+        // cumulative count of sum-to-zero (constellation, signal) rows in those epochs —
+        // the rows that ARE the datum in that posture.  Standing invariant #4: an armed
+        // "none" run with n_w6_iono_none_epochs == 0 never reached the W6 block at all
+        // (no registered code columns), and one with n_w6_iono_none_s2z_rows == 0 folded
+        // the IF pin against NOTHING — in both cases the satellite code biases have no
+        // datum whatever, which a clean-looking log would never reveal.
+        size_t n_w6_iono_none_epochs = 0, n_w6_iono_none_s2z_rows = 0;
         // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.

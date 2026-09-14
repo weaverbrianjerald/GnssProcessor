@@ -336,6 +336,7 @@ add_executable(gnss_tests
     tests/test_pd_safe_fold.cpp
     tests/test_carry_aware_covariance.cpp
     tests/test_family_gf_datum.cpp
+    tests/test_w6_iono_constraint.cpp
     tests/test_network_estimator.cpp
     tests/test_network_carry_vce.cpp
     tests/test_carry_vce_apply.cpp
