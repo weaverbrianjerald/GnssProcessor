@@ -10132,8 +10132,39 @@ namespace GnssProcessor {
                            "optional — CouplingRowBuilder::buildLocalBlock is re-pointed by the "
                            "vehicle with the birth / drop / handover semantics fixed, so the F3 "
                            "knob beside it would be a second, independently-armed switch on the "
-                           "same fold.");
+                           "same fold.  ⚠ Forcing the knob off does NOT disarm the block: the "
+                           "vehicle supplies it structurally (NetworkKnobs::pl_local_block is the "
+                           "resolved live predicate).");
                 network_phase_leveling_local_block_ = false;
+            }
+            // ---- RF-1 step 3: the block's own PREREQUISITES.  The vehicle promises the
+            //      joint fold, so a posture where that fold cannot be built is not a
+            //      degraded arm, it is a SILENT one — the inject would take the
+            //      per-column route on every station-epoch and the run would read as a
+            //      clean float_kf arm while carrying today's over-count (invariant #4).
+            //      The two conditions are exactly the live predicate the inject applies:
+            //      `pl_local_block && carry_cpl_cond && !carry_cpl_joint`.
+            if (!network_carry_conditional_coupling_) {
+                log->error("Network (RF-1 step 3): network.ambiguity_vehicle = \"float_kf\" "
+                           "requires network.carry_conditional_coupling = true.  The vehicle's "
+                           "fold IS CouplingRowBuilder::buildLocalBlock, whose rows live in "
+                           "A_s/A_r as Card-1 coupling rows and whose off-diagonals are the "
+                           "harvested conditional cross covariances; without the conditional "
+                           "coupling there is no block to build and every station-epoch would "
+                           "silently take the per-column route — an arm that reads clean and "
+                           "carries today's over-count.  (carry_conditional_coupling itself "
+                           "requires network.shared_carry_full_cov.)");
+                return false;
+            }
+            if (network_carry_coupling_joint_whiten_) {
+                log->error("Network (RF-1 step 3): network.ambiguity_vehicle = \"float_kf\" is "
+                           "MUTUALLY EXCLUSIVE with network.carry_coupling_joint_whiten "
+                           "(Card 1b).  Both own the station's coupling row block — 1b whitens "
+                           "the DEPARTED-column marginalization, the vehicle whitens the joint "
+                           "LOCAL prior — and the inject's own predicate already excludes the "
+                           "block path under 1b, so arming both would disarm the vehicle "
+                           "silently.  Turn one off.");
+                return false;
             }
             // The young-arc inflate is a TIME-DECAYING PATCH ON THE INJECT for exactly
             // the defect float_kf's floored birth prior + bounded drop fix at the source
@@ -10150,16 +10181,25 @@ namespace GnssProcessor {
                           "floor's calibration un-attributable — arm it only as a deliberate "
                           "contrast.", network_phase_leveling_young_inflate_var_m2_);
         }
-        // ⚠ RF-1 STEP 1: the vehicle is REGISTERED and carries NO mechanism, so both
-        // values are byte-identical in this build.  Say so at load time — a reader who
-        // sees "float_kf" in a run manifest must not conclude the mechanism ran.
+        // ⚠ The vehicle is SOLVE-AFFECTING from step 3 on.  The line enumerates what is
+        // actually live on THIS posture rather than naming a build number, so a reader of
+        // a run manifest can never infer a mechanism the arm did not carry (the step-1
+        // lesson: "float_kf" alone said nothing about what ran).
         if (network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf)
-            log->warn("Network (RF-1 step 1): network.ambiguity_vehicle = \"float_kf\" — VEHICLE "
-                      "REGISTERED, NO MECHANISM.  This build lands the knob, the types, the "
-                      "interlocks and the network_amb_state.csv trace only; the joint block "
-                      "(step 3), var_birth + the drop semantics (step 4) and the declared anchor "
-                      "S-transform (step 5) are separately armed A/Bs that have not landed, so "
-                      "this run's solve is byte-identical to \"level\".");
+            log->warn("Network (RF-1): network.ambiguity_vehicle = \"float_kf\" — SOLVE-AFFECTING. "
+                      "Live on this posture: the JOINT BLOCK is structural (step 3 — "
+                      "buildLocalBlock re-pointed as the vehicle's fold, so the carried "
+                      "covariance is folded as a proper prior instead of N independent "
+                      "marginals); the floored birth prior + bounded DROP (step 4) {}; the "
+                      "declared anchor S-transform (step 5) {}.  Grade against a \"level\" arm "
+                      "on the two instruments, never against a previous float_kf build.",
+                      network_config_.amb_float_birth_var_m2 > 0.0
+                          ? fmt::format("ARE ARMED (birth floor {} m^2)",
+                                        network_config_.amb_float_birth_var_m2)
+                          : std::string("are ARMED at an UNFLOORED birth prior "
+                                        "(amb_float_birth_var_m2 = 0 ⇒ var_birth = var_first)"),
+                      network_config_.amb_float_declared_handover
+                          ? "is ARMED" : "is OFF (the anchor re-reference still ERASES)");
         if (network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::Level
             && (network_config_.amb_float_birth_var_m2 > 0.0
                 || network_config_.amb_float_q_m2s > 0.0
@@ -11096,12 +11136,14 @@ namespace GnssProcessor {
         // provenance, so it is stated whether or not it is the default.  The
         // "no mechanism" clause is part of the line for as long as steps 3–5 are
         // unlanded: a reader must never infer the mechanism from the knob.
-        log->info("Network (RF-1): ambiguity vehicle = \"{}\" — RF-1 step 1: vehicle "
-                  "registered, no mechanism (both values solve byte-identically in this "
-                  "build).  amb_float_birth_var_m2={} m^2, amb_float_q_m2s={} m^2/s, "
-                  "amb_float_declared_handover={}, trace_amb_state={}{}.",
+        log->info("Network (RF-1): ambiguity vehicle = \"{}\"{}.  amb_float_birth_var_m2={} "
+                  "m^2, amb_float_q_m2s={} m^2/s, amb_float_declared_handover={}, "
+                  "trace_amb_state={}{}.",
                   network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                       ? "float_kf" : "level",
+                  network_config_.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                      ? " — the joint block is STRUCTURAL (RF-1 step 3); solve-affecting"
+                      : " — the zero-q scalar carry (today's vehicle)",
                   network_config_.amb_float_birth_var_m2,
                   network_config_.amb_float_q_m2s,
                   network_config_.amb_float_declared_handover,

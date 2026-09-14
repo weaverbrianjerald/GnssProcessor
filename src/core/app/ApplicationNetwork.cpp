@@ -97,6 +97,7 @@
 #include "filter/NetworkRobustStats.hpp"   // INC-2: median/MAD robust attribution helpers
 #include "filter/NetworkPhaseDatum.hpp"    // INC-8b: census + ensemble datum + anchor election + drop-and-heal
 #include "filter/NetworkAmbStateTrace.hpp" // RF-1 §7.4: per-arc carry-state trace (drain + erase capture)
+#include "filter/NetworkAmbFloat.hpp"      // RF-1 step 4: the floored birth prior + the bounded drop
 #include "filter/NetworkChainDatum.hpp"    // INC-8b: Card-3 eq34 single-receiver-chain datum
 #include "filter/NetworkAnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "filter/NetworkSignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
@@ -1957,6 +1958,19 @@ int Application::runNetwork() {
                 if (!pa_reref.empty()) {
                     ctx.carry.pa_reref_total +=
                             static_cast<long long>(pa_reref.size() - pa_before);
+                    // RF-1 step 5 (§3.6): the DECLARED ANCHOR S-TRANSFORM.  A frame step
+                    // is a KNOWN, exact basis change, so express the carry in the new
+                    // basis instead of throwing it away.  Families the transform takes
+                    // ownership of are REMOVED from the erase set below — transformed or
+                    // erased, never both — and a COLD handover (no Δ) keeps its erase,
+                    // which is the honest limit of this step and RF-2's subject.
+                    std::set<std::pair<std::string, std::string>> pa_sts_handled;
+                    networkAmbFloatDeclaredHandover(ctx, log, traces, stations, handovers,
+                                                    se.time.week, se.time.tow,
+                                                    pa_sts_handled);
+                    for (const auto& fam : pa_sts_handled) pa_reref.erase(fam);
+                }
+                if (!pa_reref.empty()) {
                     // RF-1 §7.4 D3: on an armed trace, take the entries before they
                     // are destroyed — this scope owns the station names and the epoch
                     // stamp, which the map operation itself has no business knowing.
@@ -2092,6 +2106,24 @@ int Application::runNetwork() {
         if (ctx.carry.oracle_pin)
             networkOraclePinEpoch(ctx, config_, stations, se.time, log, traces);
 
+        // RF-1 step 4 (docs/refound/RF-1_float_ambiguities_design.md §3.4): the BOUNDED
+        // DROP, applied SERIALLY here — after PASS A's slip scans have latched
+        // relevel.free_ambs and before the parallel PASS-B inject reads the carry, so by
+        // the time a station's produce sees an arc the drop has already happened and the
+        // inject folds it at birth strength instead of skipping it.  A no-op unless the
+        // vehicle is float_kf.  `modeled` carries this epoch's LOS elevations, which the
+        // birth floor is mapped with; the map is built only when the floor is armed.
+        {
+            std::vector<std::map<std::string, double>> amb_elev_of;
+            if (ctx.knobs.amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0) {
+                amb_elev_of.resize(modeled.size());
+                for (std::size_t mi = 0; mi < modeled.size(); ++mi)
+                    for (const auto& mo : modeled[mi])
+                        amb_elev_of[mi][mo.satellite] = mo.elevation;
+            }
+            networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
+                                      se.time.week, se.time.tow, pl_now_s);
+        }
         subEnd(SB_PREASM);   // D0b: close pre-assembly (the assembly wall below is timed separately)
 
         // --- PASS B relocated to ApplicationNetworkAssembly.cpp:

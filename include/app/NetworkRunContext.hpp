@@ -108,7 +108,19 @@ namespace GnssProcessor {
         /// (F1 applies only on a factorization fallback).  Live only with carry_cpl_cond
         /// and NOT carry_cpl_joint (loader warns INERT otherwise).  Default OFF =
         /// byte-identical.
+        /// ⚠ RF-1 step 3: this is the RESOLVED LIVE PREDICATE, not the knob —
+        /// @c network.phase_leveling_local_block OR the @c float_kf vehicle, which makes
+        /// the joint block STRUCTURAL (design §3.2: "the carried covariance folded as a
+        /// proper KF prior IS F3; what RF-1 changes is that it stops being an optional
+        /// knob and becomes the vehicle's definition").  @ref pl_blk_from_vehicle says
+        /// which of the two supplied it, so run-end telemetry can name the source.
         bool pl_local_block{};
+        /// RF-1 step 3: the joint block is live because the VEHICLE is @c float_kf
+        /// (rather than because the F3 knob is armed — which the loader refuses under the
+        /// vehicle).  Read only by telemetry and by the PD-fallback failure bar, never by
+        /// the fold itself: the fold reads @ref pl_local_block and cannot tell the two
+        /// sources apart, which is the point.
+        bool pl_blk_from_vehicle{};
         /// network.phase_leveling_local_block_min_age_ep — F3 block ADMISSION age gate: a
         /// carried leg younger than this many loop epochs (since its first stash) is kept
         /// OUT of the station block and emitted as a per-column row (F1-scaled if armed).
@@ -2577,10 +2589,20 @@ namespace GnssProcessor {
         //     and S-transform counters are PLACEHOLDERS for steps 4–5 and are reported
         //     at run end so an arm that arms a mechanism and moves none of them is
         //     visible immediately rather than after a grade.
-        long long n_amb_drop              = 0;  ///< RF-1 step 4: carried priors DROPPED back to their birth prior (value_abs kept).  0 in this build.
-        long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.  0 in this build.
-        long long n_amb_stransform        = 0;  ///< RF-1 step 5: declared anchor S-transformations applied to the carry.  0 in this build.
-        long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.  0 in this build.
+        long long n_amb_drop              = 0;  ///< RF-1 step 4: carried priors DROPPED back to their birth prior (value_abs kept).
+        long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.
+        long long n_amb_drop_relevel_free = 0;  ///< …of which from the detectors' latched free-epoch set (was: skip one inject).
+        long long n_amb_drop_stale_gap    = 0;  ///< …of which from the inject-site gap cliff (was: skip one inject).
+        long long n_amb_drop_t4           = 0;  ///< …of which from the RAIM prominence-attribution refloat (was: ERASE the entry).
+        long long n_amb_drop_t3           = 0;  ///< …of which from the RAIM per-satellite consensus refloat (was: ERASE the entry).
+        long long n_amb_drop_idempotent   = 0;  ///< drop calls that found the arc ALREADY at or below birth strength — two detectors on one arc in one epoch, or an arc that never converged.  The age clock still restarts; the variance does not move.
+        long long n_amb_birth_floored     = 0;  ///< birth stashes whose var_birth was RAISED by network.amb_float_birth_var_m2 above the arc's own first-stash variance — the ON-path telemetry of the floor (invariant #4: 0 under an armed floor means every arc was already born looser than it).
+        long long n_amb_stransform        = 0;  ///< RF-1 step 5: declared anchor S-transformations applied to the carry (one per (sat,signal) family per handover).
+        long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.
+        long long n_amb_sts_identity      = 0;  ///< …families whose Δ was exactly 0 (already in the new basis — a station re-pinning itself): the transform is the identity, and the family is still OWNED (no erase).
+        long long n_amb_sts_refused_cold  = 0;  ///< handovers REFUSED by the transform because the election was COLD (no carried level for the successor ⇒ no new basis to express the family in): the ERASE stands, which is the honest limit of step 5 and RF-2's subject.
+        long long n_amb_sts_refused_no_level = 0; ///< …refused because the ledger said continuous but the incoming anchor held no live carry this epoch — a ledger/carry disagreement, counted apart from a cold election.
+        long long n_amb_sts_selfcheck_fail = 0; ///< transforms whose exactness self-check FAILED: the incoming anchor's carried level did not read 0 within kStsExactTolM afterwards.  A transform defect, never noise — WARNed with identities.
         long long n_amb_block_fallback    = 0;  ///< RF-1 step 3 risk #3: station-epochs whose joint block fell back to per-column rows — a VEHICLE CHANGE on one station-epoch, which is why it is counted rather than noted.  0 in this build.
         long long n_amb_state_rows        = 0;  ///< network_amb_state.csv: TRAJECTORY rows written (one per carried (station,sat,signal) per traced epoch).
         long long n_amb_state_events      = 0;  ///< network_amb_state.csv: rows carrying a non-empty `event` (birth / drop / erase / stransform).

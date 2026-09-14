@@ -19,6 +19,7 @@
 #include "filter/NetworkMdb.hpp"              // Baarda MDB rider on B2's r_i (SPEC_redundancy_census)
 #include "filter/NetworkRobustStats.hpp"      // medianPolish2Way / robustProminence / medianCopy / MedianPolish
 #include "filter/NetworkAmbStateTrace.hpp"    // ambStateNoteErase (RF-1 §7.4 D3 erase inventory)
+#include "filter/NetworkAmbFloat.hpp"          // ambFloatDrop (RF-1 step 4: the bounded drop)
 #include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "logging/NetworkRunTraces.hpp"       // trace streams + emitEvent
 #include "products/NetworkStateSnapshot.hpp"  // networkWarmupRampLifted
@@ -1029,10 +1030,35 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                 // RF-1 §7.4 D3: capture the entry BEFORE the erase —
                                 // this is the class design §3.4 replaces with a bounded
                                 // drop, and its "variance before" only exists here.
+                                // RF-1 step 4 (§3.4): under the float_kf vehicle this
+                                // is a bounded DROP, not an erase.  R10 measured 88 % of
+                                // the run's unsignalled satellite-clock steps at dt = 0
+                                // on exactly this event: the erase removes ALL
+                                // information about the column, the anchor's w = 1e10 pin
+                                // holds the phase bias, and the only shared parameter
+                                // left to absorb the opened direction is the CLOCK.  A
+                                // drop bounds what can move, keeps value_abs, and keeps
+                                // the arc's identity (birth stamps, var_first, n_folds),
+                                // so the next epoch re-couples against a stated prior
+                                // instead of a first sighting.
+                                if (ctx.knobs.amb_float_kf) {
+                                    ambFloatDrop(lane_lit->second,
+                                                 ctx.knobs.amb_birth_var_floor,
+                                                 se.time.week * 604800.0 + se.time.tow,
+                                                 static_cast<long long>(
+                                                     ctx.counters.n_loop_epochs));
+                                    ambStateNoteDrop(ctx, se.time.week, se.time.tow,
+                                                     stations[i].name, pa.sat, pa.signal,
+                                                     lane_lit->second,
+                                                     AmbDropCause::kT4Attrib);
+                                    ++ctx.counters.n_amb_drop;
+                                    ++ctx.counters.n_amb_drop_t4;
+                                } else {
                                 ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                                   stations[i].name, pa.sat, pa.signal,
                                                   lane_lit->second, "t4_attrib");
                                 local_carry.erase(lane_lit);
+                                }
                                 ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 ATTRIBUTION refloat
                             }
                         }
@@ -1212,10 +1238,25 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                 ++ctx.counters.n_lane_t4_captured;
                             }
                             // RF-1 §7.4 D3 — see the attribution site.
+                            // RF-1 step 4 — see the attribution site.
+                            if (ctx.knobs.amb_float_kf) {
+                                ambFloatDrop(lane_lit->second,
+                                             ctx.knobs.amb_birth_var_floor,
+                                             se.time.week * 604800.0 + se.time.tow,
+                                             static_cast<long long>(
+                                                 ctx.counters.n_loop_epochs));
+                                ambStateNoteDrop(ctx, se.time.week, se.time.tow,
+                                                 stations[i].name, pa.sat, pa.signal,
+                                                 lane_lit->second,
+                                                 AmbDropCause::kT3Consensus);
+                                ++ctx.counters.n_amb_drop;
+                                ++ctx.counters.n_amb_drop_t3;
+                            } else {
                             ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                               stations[i].name, pa.sat, pa.signal,
                                               lane_lit->second, "t3_consensus");
                             local_carry.erase(lane_lit);
+                            }
                             ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 CONSENSUS refloat
                         }
                     }

@@ -70,6 +70,33 @@ void ambStateNoteErase(NetworkRunContext& ctx, long long week, double tow,
     ctx.carry.amb_state_rows.push_back(std::move(row));
 }
 
+void ambStateNoteDrop(NetworkRunContext& ctx, long long week, double tow,
+                      const std::string& station, const std::string& sat,
+                      const std::string& signal, const LocalCarry& lc,
+                      const char* cause) {
+    if (!ctx.knobs.trace_amb_state) return;
+    AmbStateRow row;
+    row.week = week;
+    row.tow  = tow;
+    row.station = station;
+    row.sat     = sat;
+    row.signal  = signal;
+    // POST-drop state: the restored variance is the number D3 reads as "after", and the
+    // whole claim of §3.4 is that it is a STATED, bounded level rather than the absence
+    // of information a free epoch or an erase leaves behind.
+    row.value_abs_m  = lc.value_abs;     // kept — a drop is about confidence, not identity
+    row.var_m2       = lc.var;
+    row.var_first_m2 = lc.var_first;
+    row.var_birth_m2 = lc.var_birth;
+    row.n_folds      = lc.n_folds;
+    row.age_ep = (lc.birth_ep > 0)
+        ? (static_cast<long long>(ctx.counters.n_loop_epochs) - lc.birth_ep)
+        : lc.birth_ep;
+    row.age_since_relevel_ep = 0;        // the drop IS the re-level event
+    row.event = std::string("drop:") + cause;
+    ctx.carry.amb_state_rows.push_back(std::move(row));
+}
+
 void networkAmbStateTrace(NetworkRunContext& ctx,
                           const std::shared_ptr<spdlog::logger>& log,
                           NetworkRunTraces& traces) {

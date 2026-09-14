@@ -16,6 +16,7 @@
 #include "config/GnssConfig.hpp"
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
+#include "filter/NetworkAmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
 #include "filter/NetworkCarryVce.hpp"
 #include "filter/NetworkClockAnchor.hpp"      // Card Q3 guarded temporal clock anchor
 #include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
@@ -56,7 +57,18 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pl_max_gap_s = config_.networkPhaseLevelingMaxGapS();
     k.pl_var_floor = config_.networkPhaseLevelingVarFloorM2();
     k.pl_los_scale = config_.networkPhaseLevelingLosScale();
-    k.pl_local_block = config_.networkPhaseLevelingLocalBlock();
+    // RF-1 step 3 (docs/refound/RF-1_float_ambiguities_design.md §3.2 / §7.2): under the
+    // float_kf vehicle the station-wide jointly-whitened local block is STRUCTURAL, not a
+    // knob — `buildLocalBlock` re-pointed as the vehicle's definition of the fold.  So
+    // this member is the RESOLVED LIVE PREDICATE, and every downstream consumer (the
+    // PASS-B inject, the harvest's cross-covariance stash, the run-end readout, the
+    // trace's `route`) picks the vehicle up with no further branch.  The F3 KNOB itself
+    // stays refused under float_kf at load: one switch on one fold, never two.
+    // ⚠ read the vehicle off the CONFIG here, not off `k`: the amb_float_* members are
+    // filled a few lines below, and an ordering flip would silently disarm the block.
+    k.pl_blk_from_vehicle = config_.getNetworkConfig().ambiguity_vehicle
+                            == NetworkAmbiguityVehicle::FloatKf;
+    k.pl_local_block = config_.networkPhaseLevelingLocalBlock() || k.pl_blk_from_vehicle;
     k.pl_blk_min_age_ep = config_.networkPhaseLevelingLocalBlockMinAgeEp();   // F3 block admission age gate
     k.pl_blk_young_free = config_.networkPhaseLevelingLocalBlockYoungMode() == "free";
     // RF-1 §7.1 (docs/refound/RF-1_float_ambiguities_design.md): the AMBIGUITY VEHICLE
@@ -3936,6 +3948,10 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
     // RF-1 §3.3(b): the birth-prior FLOOR the stash records in LocalCarry::var_birth.
     // 0.0 (default) ⇒ var_birth == var_first to the ULP, and nothing reads either.
     const double amb_birth_var_floor = ctx.knobs.amb_birth_var_floor;
+    // RF-1 step 4: the σ-power the birth floor's elevation mapping uses — the CODE
+    // weights', because the floor is a statement about what a CODE-determined level is
+    // worth (design §3.3(b)).
+    const double amb_elev_power = config_.getCodeElevationPower();
     // RF-1 §7.4 (network.trace_amb_state): the per-arc carry-state trace.  The stride
     // gates TRAJECTORY rows only — an EVENT (birth / drop / erase) is written on every
     // epoch, because an inventory that skips events is not an inventory.  OFF the whole
@@ -4626,10 +4642,21 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     // 4.  Maintained here rather than at the drop site because "what the
                     // arc was worth when it was born" is a property of the BIRTH, and the
                     // harvest is the only place that sees an arc's first stash.
+                    // RF-1 step 4: the floor is ELEVATION-MAPPED exactly as the code row
+                    // weights are (σ²(e) = σ²_zen / sin^{2p}(e)) — a flat zenith floor
+                    // would be optimistic at precisely the low elevations that own the
+                    // metre-plus tail (§24.13 finding 2).  pa.elev_deg is −1 when the
+                    // floor is unarmed or the station's modeled set had no elevation for
+                    // this satellite, and ambFloatBirthFloor reads that as ZENITH.
+                    const double amb_floor_los =
+                        ambFloatBirthFloor(amb_birth_var_floor, pa.elev_deg,
+                                           amb_elev_power);
                     nlc.var_birth =
                         (oldc != local_carry.end() && oldc->second.var_birth > 0.0)
                             ? oldc->second.var_birth
-                            : std::max(var_first, amb_birth_var_floor);
+                            : std::max(var_first, amb_floor_los);
+                    if (oldc == local_carry.end() && amb_floor_los > var_first)
+                        ++ctx.counters.n_amb_birth_floored;
                     // RF-1 §7.2: the drop stamp is carried forward untouched — nothing in
                     // this build writes it (the drop is step 4), so it stays 0 for the
                     // life of the arc and the trace's `event` column reads "" for it.

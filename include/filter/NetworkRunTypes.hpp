@@ -821,6 +821,13 @@ struct PlAmb {
     std::string  signal;  ///< RINEX signal / IF combo.
     double       x_lin;   ///< This epoch's ambiguity linearization point (state value).
     std::string  amb_key; ///< Full ambiguity key (clears a one-shot IF-phase refloat mark post-stash).
+    /// RF-1 step 4: this LOS's elevation (degrees) this epoch, or −1 when the station's
+    /// modeled observation set did not carry it.  Recorded at the inject ONLY when
+    /// @c network.amb_float_birth_var_m2 is armed (the map walk is otherwise skipped
+    /// entirely), and read by the harvest to map the BIRTH-PRIOR FLOOR exactly as the
+    /// code row weights are mapped — σ²(e) = σ²_zen / sin^{2p}(e).  A flat zenith floor
+    /// would be optimistic at precisely the low elevations that own the metre-plus tail.
+    double       elev_deg{-1.0};
 };
 
 /// ---------------------------------------------------------------------------
@@ -1108,6 +1115,13 @@ struct StationAssembly {
     long long                 pl_blk_pair_missing{0};  ///< F3: (i,j) pairs zeroed because the two columns were harvested at different epochs (or one carries no harvest block).
     long long                 pl_blk_col_refused{0};   ///< F3: block columns dropped by the scalar-row "never poison" screen (non-finite RHS / σ² ≤ 0).
     long long                 pl_blk_fallback{0};      ///< F3: block factorization failed after the ridge retry → this station-epoch emitted F1/diagonal rows instead.
+    /// RF-1 step 3 (design risk #3): the DIMENSION of the block that failed to factorize
+    /// this station-epoch, 0 when none did.  Under the @c float_kf vehicle a fallback is
+    /// not a degradation of an optional knob — it is a VEHICLE CHANGE on one
+    /// station-epoch — so the serial scatter logs it at WARN with the station's identity
+    /// and this dimension, and the run-end bar fails the run above 1 % of attempted
+    /// station-epochs.  Produce-phase local, like every other @c pl_blk_* count.
+    long long                 pl_blk_fallback_dim{0};
     long long                 pl_blk_young_cols{0};    ///< F3 age gate (network.phase_leveling_local_block_min_age_ep): injectable columns YOUNGER than the gate this station-epoch — kept OUT of the block and emitted as per-column rows (F1-scaled if armed).
     long long                 pl_blk_yng_scaled{0};    ///< AGE-AWARE young-arc inflate (network.phase_leveling_young_inflate_var_m2): block columns whose row/column of Σ was CONGRUENCE-scaled this station-epoch.  Read against @c yng_cols below: a gap means columns were computed young but their block never reached the scaling (refused by the scalar screen, or the station took the per-column route).
     // RX-CLK-in-block (network.carry_rx_clock_in_block): the station's receiver-clock

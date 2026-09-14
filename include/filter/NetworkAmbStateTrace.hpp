@@ -125,6 +125,30 @@ namespace GnssProcessor {
                            const char* cause);
 
     /**
+     * @brief Capture a @c drop:<cause> row for an entry whose prior was just DROPPED
+     *        back to its birth variance (RF-1 step 4).
+     *
+     * Taken AFTER the drop, so the row carries the RESTORED variance — which is what
+     * D3's "variance after" wants, and what distinguishes a bounded drop from the erase
+     * it replaces (the erase row's "after" has to come from the successor arc).
+     *
+     * A no-op unless @c network.trace_amb_state is armed.
+     *
+     * @param ctx     The run context (the row buffer, the loop-epoch clock, the knob).
+     * @param week    GPS week of the epoch.
+     * @param tow     GPS time of week (s) of the epoch.
+     * @param station Station name.
+     * @param sat     Satellite.
+     * @param signal  RINEX signal.
+     * @param lc      The entry as it stands immediately AFTER the drop.
+     * @param cause   One of @ref AmbDropCause.  Written as @c "drop:<cause>".
+     */
+    void ambStateNoteDrop(NetworkRunContext& ctx, long long week, double tow,
+                          const std::string& station, const std::string& sat,
+                          const std::string& signal, const LocalCarry& lc,
+                          const char* cause);
+
+    /**
      * @brief Drain this epoch's buffered carry-state rows to @c network_amb_state.csv.
      *
      * The serial drain seam (CLAUDE.md's network decision tree: a new diagnostic sweep

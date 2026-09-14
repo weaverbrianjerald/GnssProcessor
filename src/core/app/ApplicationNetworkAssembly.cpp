@@ -2279,6 +2279,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // StationAssembly — the pl_los_beff discipline.  MEASURE-ONLY, and OFF the map is
     // never touched, so the produce loop pays one bool test per folded column.
     const bool   amb_state_tr  = ctx.knobs.trace_amb_state;
+    // RF-1 step 4: the vehicle owns the slip RESPONSE.  Under float_kf the free-epoch
+    // latch and the gap cliff no longer SKIP the inject — the serial pre-assembly pass
+    // (networkAmbFloatApplyDrops) has already dropped those arcs to their birth variance,
+    // so they fold at birth strength.  OFF, both sites keep their `continue` verbatim.
+    const bool   amb_float_kf  = ctx.knobs.amb_float_kf;
+    const bool   amb_floor_on  = amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0;
     // SPEC_slip_relevel_walk: read-only parallel consult of the latched
     // free-epoch set (filled serially in PASS-A; const for the whole produce).
     const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
@@ -3249,6 +3255,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     double var_add{0.0};
                 };
                 std::vector<PlPend> pl_pend;   // stays empty OFF
+                // RF-1 step 4: this station's LOS elevations by satellite, for the
+                // BIRTH-PRIOR FLOOR's elevation mapping.  Built ONLY when the floor is
+                // armed — the pl_los_beff / el_of precedent — so an unarmed run never
+                // walks the modeled set for this.
+                std::map<std::string, double> amb_elev_of;
+                if (amb_floor_on)
+                    for (const auto& mo : modeled[i]) amb_elev_of[mo.satellite] = mo.elevation;
                 if (do_amb_carry) {
                 for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
                     const auto parts = StateKeys::parseAmbiguityKey(key);
@@ -3263,6 +3276,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     const Eigen::Index col = static_cast<Eigen::Index>(hit->second);
                     R.pl_amb.push_back(PlAmb{col, parts->satellite, parts->signal,
                                              x_lin(amb_idx), key});
+                    // RF-1 step 4: the LOS elevation the harvest maps the BIRTH-PRIOR
+                    // FLOOR with.  Built only when the floor is armed — off it, the map
+                    // is never walked and PlAmb keeps its -1 sentinel (⇒ zenith).
+                    if (amb_floor_on) {
+                        const auto ev = amb_elev_of.find(parts->satellite);
+                        if (ev != amb_elev_of.end())
+                            R.pl_amb.back().elev_deg = ev->second;
+                    }
                     if (iono_on) iono_sats_seen.insert(parts->satellite);
 
                     // A pending re-seed marks the prior arc value as no longer
@@ -3286,7 +3307,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                {static_cast<int>(i), key})) {
                         ++R.relevel_free_skips;
                         if (iono_on) iono_freed_sats.insert(parts->satellite);
-                        continue;
+                        // RF-1 step 4 (§3.4): under the float_kf vehicle this arc's prior
+                        // was already DROPPED to its birth variance by the serial
+                        // pre-assembly pass, so it is NOT skipped — it folds, at birth
+                        // strength.  That is the whole change: today's free epoch removes
+                        // ALL information about the column and opens an unbounded
+                        // direction the shared parameters re-balance into (R10's 88 % of
+                        // unsignalled clock steps); a bounded drop removes it down to a
+                        // STATED level.  The counter above still names the population, so
+                        // the two vehicles' response loads stay comparable.
+                        if (!amb_float_kf) continue;
                     }
                     if (!std::isfinite(x_lin(amb_idx))) continue;  // non-finite state → don't inject
 
@@ -3304,7 +3334,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // last_seen_s first.  Per-station (parallel produce);
                         // folded serially below.
                         ++R.inject_stale_skips;
-                        continue;
+                        // RF-1 step 4 (§7.2): the same change as the free-epoch latch —
+                        // the serial pre-assembly pass has already dropped this arc to
+                        // its birth variance, so the cliff folds at birth strength
+                        // instead of dropping the column's memory entirely for an epoch.
+                        // The post-harvest PRUNE still ERASES the arcs that are genuinely
+                        // gone, which is §3.4's one surviving erase case.
+                        if (!amb_float_kf) continue;
                     }
                     if (iono_on) iono_sats_carried.insert(parts->satellite);
                     // var_eff = var + q·gap, floored by the optional lock-in guard
@@ -3691,7 +3727,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             R.pl_rxclk_blk_cols.push_back(rc.col);
                         }
                         blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
-                        if (!blk_done) ++R.pl_blk_fallback;
+                        if (!blk_done) {
+                            ++R.pl_blk_fallback;
+                            // RF-1 step 3, design risk #3: record the failed block's
+                            // DIMENSION so the serial scatter can WARN with identities.
+                            // Kept here (produce-phase local) rather than logged here:
+                            // this loop runs in parallel and a log from it would be
+                            // thread-order noise.
+                            R.pl_blk_fallback_dim =
+                                static_cast<long long>(bc.size());
+                        }
                         // RF-1 §7.4: the BLOCK route's fold record.  Only on success —
                         // a fallback re-emits every pending column through pl_emit_row
                         // below, which records the route it actually took.  That
@@ -4238,6 +4283,27 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // F3 (network.phase_leveling_local_block): fold the per-station block telemetry
     // (same discipline).  Keyed on the KNOB, not the live predicate, so an armed-but-
     // inert posture still prints its zeros at run end (invariant #4).
+    // RF-1 step 3 (design risk #3): a non-SPD block is a VEHICLE CHANGE on one
+    // station-epoch under float_kf — the arc silently reverts to the per-column route the
+    // card exists to replace — so it is named with its identities here, in the SERIAL
+    // scatter (the produce loop is parallel and would interleave).  Rate-limited to the
+    // first 20 so a pathological posture cannot flood the log; the run-end bar carries
+    // the totals either way.
+    if (ctx.knobs.pl_blk_from_vehicle)
+        for (std::size_t si = 0; si < asm_res.size(); ++si) {
+            if (asm_res[si].pl_blk_fallback <= 0) continue;
+            if (ctx.counters.n_amb_block_fallback < 20)
+                log->warn("Network (RF-1 step 3): station '{}' TOW {:.1f} — the joint local "
+                          "block (dim {}) was NON-SPD after the ridge retry, so this "
+                          "station-epoch folded the carried prior as INDEPENDENT per-column "
+                          "rows instead.  Under ambiguity_vehicle = float_kf that is a "
+                          "VEHICLE CHANGE on one station-epoch, not a degraded option: those "
+                          "columns carry today's over-count for this epoch.  The run FAILS if "
+                          "the rate exceeds 1 % of attempted station-epochs.",
+                          si < stations.size() ? stations[si].name : std::string("?"),
+                          pl_now_s, asm_res[si].pl_blk_fallback_dim);
+            ctx.counters.n_amb_block_fallback += asm_res[si].pl_blk_fallback;
+        }
     if (pl_local_block)
         for (const StationAssembly& Rc : asm_res) {
             ctx.counters.n_pl_blk_blocks       += Rc.pl_blk_blocks;
