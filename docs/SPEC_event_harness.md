@@ -7105,3 +7105,29 @@ candidates are (a) a per-epoch ZWD prior (above), (b) an ionosphere-free code co
 posture, which converges), (c) a receiver DCB datum per station instead of a free γ-scaled column, (d) an absolute phase time-link alongside
 the DD carry (the leveling inject that `carry_invariant` retired).  Each is a posture change of the field vehicle; the goldens, the harness
 seeds and every level-channel number change with it.
+
+
+### 24.11 Card PV — the VEHICLE test (pre-registered 2026-09-14 before any arm is read; the author's go)
+
+The F3 field ladder (SPEC_amb_iono §6.15.4, 2026-09-09) already found the converging leveling posture on the field —
+`carry_invariant: false` + `relevel_free_epoch` + `carry_coupling_gauge_project` + the sim golden's phase-datum family
+(`config/test_suite/_fldf3_pl2.json`: 1440/1440 solved, 0 withholds, ZWD span 0.8 m at σ 8 mm, DD-tropo arc MAD 1.22 → 0.07 m,
+DD wander 10 → 0.12 cyc, float cold consumer 6.6 → 3.8 m) — and named the shipped vehicle's (I, N, ZWD) weakly-determined
+direction from the DD side; §24.9 names the same direction from the code / wire side.  pl2 was never read with §24's
+instruments.  **Two arms, 2 h cold from the CM control's start, the §24.8 traces on:** **PV-A** = `_fldf3_pl2` as-is on its own
+chain (the known-converging reference; `runs/_cm_pva`); **PV-B** = the field golden exactly as `_cm_a0` ran it + the vehicle
+delta ONLY (the pl2 `network` block: `carry_invariant` and its sub-family off, the EWL/UWL lanes off, `relevel_free_epoch`,
+`carry_coupling_gauge_project`, `phase_datum_eq34: false` + `phase_datum_prioritized` + `phase_datum_handover_continuous` +
+`phase_anchor_carry_reref` + `phase_datum_min_stations: 2`; `runs/_cm_pvb`) — the single-variable A/B against A0.  Every other
+knob that differs between the flattened pl2 chain and the golden is classified (VEHICLE / GOLDEN-NEWER / CHAIN-ERA) and
+recorded before B runs; a knob the loader refuses with the vehicle off is recorded with its line and set off (it is then part
+of the vehicle delta by the loader's own definition).  **Reads:** §24.8's (i)–(v) by `scripts/cm_grade.py` on the last hour,
+plus the cold closed-loop consumer's 3D at 1 h and 2 h and its p50 over the last 30 min (reported, no bar — §24.1).
+**Bars (frozen = §24.8's):** (i) per-station code residual rms p50 < 1.0 m AND (ii) zero stations with |ZWD| > 0.5 m AND
+(iii) D_phase declared within-arc rms < 0.5 m; availability within 5 % of A0.  **Frozen reading:** PV-B crosses all three ⇒ the
+vehicle IS the wire defect — the field golden moves to the leveling vehicle (a posture card: goldens, harness seeds and the
+vehicle-specific machinery re-based) and the consumer's remaining error is read on a determined block; PV-B leaves (ii)
+physical but (i) / (iii) at metres ⇒ a second, code-side defect independent of the vehicle — the §24.8 knob arms are re-run
+on the leveling vehicle, where a knob can show; PV-B diverges or withholds where PV-A converges ⇒ the golden carries a knob
+incompatible with the vehicle — the classified diff names the candidates and the bisect is one arm per class.  Card ZP's
+audit trace (§24.10) is read on both vehicles beside this card.
