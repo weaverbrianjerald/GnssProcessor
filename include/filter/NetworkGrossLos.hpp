@@ -164,6 +164,33 @@ struct NetworkGrossLosTallies {
 };
 
 /**
+ * @brief PURE: restore a folded code row's NOMINAL standardized residual.
+ *
+ * ⚠ The one-liner that stops the response from laundering its own release test.
+ *
+ * A declared line of sight's code rows are folded at @f$\sigma \times f@f$, i.e.
+ * @f$w \to w/f^2@f$, so the measured @f$|v|\sqrt{w}@f$ reads @f$f@f$ times
+ * SMALLER than the same residual at nominal weight.  With the default @f$f=100@f$
+ * a 144 m residual reads 1.3 σ — comfortably under the 3 σ release bar, one epoch
+ * after the very same line of sight was declared at 125 σ.
+ *
+ * MEASURED, not hypothesised (the first `runs/_gl_on6`, DJIG00DJI/G06):
+ * declare TOW 265500 at 125.6 σ with |v| 143.8 m → **clear** 265560 at 1.28 σ
+ * with |v| still **144.7 m** → declare 265620 → clear 265680.  A two-epoch limit
+ * cycle in which the deweight is on half the time and the line of sight's carried
+ * level is erased for ever.
+ *
+ * The undo is exact because the fold is exact and happens in exactly one place
+ * (`Application::networkSplitStation_`), with the factor taken from the same
+ * @c NetStation::gl_code_sigma_scale map this seam reads before republishing it.
+ *
+ * @param r_folded @f$|v|\sqrt{w}@f$ as measured, with the fold already in @c w.
+ * @param scale    The σ multiplier the assembly applied to this row (1 = none).
+ * @return the statistic the row would have had at its nominal σ.
+ */
+double networkGrossLosUndoDeweight(double r_folded, double scale);
+
+/**
  * @brief One CODE row of a line of sight, as the pure decision rule sees it.
  */
 struct GrossLosSample {

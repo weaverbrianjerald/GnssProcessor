@@ -35,6 +35,10 @@ namespace GnssProcessor {
 // The PURE rules (unit-tested in tests/test_network_gross_los.cpp)
 // ---------------------------------------------------------------------------
 
+double networkGrossLosUndoDeweight(double r_folded, double scale) {
+    return (std::isfinite(scale) && scale > 1.0) ? r_folded * scale : r_folded;
+}
+
 GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
                                       double k, int min_rows, double clear_sigma) {
     GrossLosVerdict d;
@@ -239,6 +243,11 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             if (pa.col >= 0 && pa.col < R.A_r.cols())
                 is_amb_col[static_cast<std::size_t>(pa.col)] = 1;
 
+        // The scale map the ASSEMBLY read for this epoch — this seam republishes
+        // it only at its own end, so what is here now is exactly what was folded.
+        // Used to undo the fold in the statistic; see the row build below.
+        const std::map<std::string, double>& gl_scale = stations[i].gl_code_sigma_scale;
+
         std::map<std::string, std::vector<GrossLosSample>> by_sat;
         for (Eigen::Index row = 0; row < v.size(); ++row) {
             // Card-1 coupling rows are statements about the CARRY, not data.
@@ -264,8 +273,28 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             if (phase_row) continue;                        // the phase side has its own tiers
             if (!(cb_row || clk_row) || !row_sat) continue;  // no satellite partial ⇒ not a LOS row
 
+            double gl_scale_here = 1.0;
+            if (!gl_scale.empty()) {
+                const auto sc = gl_scale.find(*row_sat);
+                if (sc != gl_scale.end()) gl_scale_here = sc->second;
+            }
             const double w = (row < R.w.size()) ? R.w(row) : 1.0;
-            const double r = std::abs(v(row)) * std::sqrt(std::max(0.0, w));
+            // ⚠ THE RESPONSE MUST NOT LAUNDER ITS OWN RELEASE TEST.
+            // A declared line of sight's code rows were folded THIS epoch at
+            // σ × f, so |v|·√w reads f times SMALLER than the same residual at
+            // nominal weight.  At f = 100 a 144 m residual reads 1.3 σ — under
+            // the 3 σ release bar, one epoch after the same line of sight was
+            // declared at 125 σ.  MEASURED on the first `runs/_gl_on6`:
+            // declare TOW 265500 (125.6 σ, |v| 143.8 m) → clear 265560
+            // (1.28 σ, |v| STILL 144.7 m) → declare 265620 → clear 265680: a
+            // two-epoch limit cycle that erases the LOS's carry forever and
+            // leaves the deweight on only half the time.
+            // Undo the fold EXACTLY.  `gl_code_sigma_scale` is the very map the
+            // assembly read for this epoch (this seam republishes it only at
+            // its end), so multiplying by it restores the row's nominal σ and
+            // both bars then measure the DATA rather than the response.
+            const double r = networkGrossLosUndoDeweight(
+                std::abs(v(row)) * std::sqrt(std::max(0.0, w)), gl_scale_here);
             if (!std::isfinite(r)) continue;
             by_sat[*row_sat].push_back(
                 GrossLosSample{ row_sig ? *row_sig : std::string(), r, v(row) });

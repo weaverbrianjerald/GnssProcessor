@@ -270,6 +270,51 @@ TEST(NetworkGrossLosState, DegenerateEpochCountsAreClampedToOne) {
 }
 
 // ---------------------------------------------------------------------------
+// The DEWEIGHT UNDO - the response must not launder its own release test
+// ---------------------------------------------------------------------------
+
+TEST(NetworkGrossLosRule, DeweightedRowsAreRestoredToTheirNominalSigma) {
+    // MEASURED on the first runs/_gl_on6 (DJIG00DJI/G06): declared at TOW 265500
+    // with |v| 143.8 m reading 125.6 sigma at nominal weight; one epoch later the
+    // same line of sight read 1.28 sigma with |v| STILL 144.7 m, because its code
+    // rows were now folded at sigma x 100 - under the 3 sigma release bar.  The
+    // screen cleared it, the deweight lifted, and it re-declared two epochs later:
+    // a limit cycle in which the response was true by construction and the line of
+    // sight's carried level was erased for ever.
+    //
+    // 1.2789 x 100 = 127.89, which is the 125-130 sigma band the arc actually sat
+    // in - so the undo recovers the number the DATA supports, not the one the
+    // response produced.
+    EXPECT_NEAR(networkGrossLosUndoDeweight(1.27894, 100.0), 127.894, 1e-9);
+    // No fold (absent key, or a scale of exactly 1) must be an exact no-op - the
+    // undo may never touch an undeclared line of sight's statistic.
+    EXPECT_DOUBLE_EQ(networkGrossLosUndoDeweight(4.25, 1.0), 4.25);
+    EXPECT_DOUBLE_EQ(networkGrossLosUndoDeweight(4.25, 0.5), 4.25);   // never INFLATES a row
+    EXPECT_DOUBLE_EQ(networkGrossLosUndoDeweight(4.25, std::numeric_limits<double>::quiet_NaN()),
+                     4.25);
+}
+
+TEST(NetworkGrossLosRule, TheUndoIsWhatKeepsADeclaredLineOfSightDeclared) {
+    // The same three rows, folded and unfolded, through the actual rule.  Folded,
+    // every row sits under the release bar and the verdict says RELEASE; unfolded,
+    // the verdict is unchanged from the declaration epoch.  This is the assertion
+    // that the bug cannot come back.
+    const std::vector<GrossLosSample> folded = {
+        row("C1W", 1.279, -144.7), row("C2W", 0.913, -103.3), row("C5Q", 0.845, -95.6)};
+    const auto bad = networkGrossLosAssess(folded, 8.0, 2, 3.0);
+    EXPECT_TRUE(bad.under_clear);      // the response has made its own release true
+    EXPECT_FALSE(bad.over);
+
+    std::vector<GrossLosSample> restored = folded;
+    for (auto& s2 : restored) s2.r = networkGrossLosUndoDeweight(s2.r, 100.0);
+    const auto good = networkGrossLosAssess(restored, 8.0, 2, 3.0);
+    EXPECT_TRUE(good.over);
+    EXPECT_FALSE(good.under_clear);
+    EXPECT_EQ(good.n_over, 3);
+    EXPECT_NEAR(good.r_max, 127.9, 0.05);
+}
+
+// ---------------------------------------------------------------------------
 // The two GUARDS - both measured, both on the same state machine
 // ---------------------------------------------------------------------------
 
