@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Gate for the docs/ topic tree.  Run it before any docs commit.
+
+Checks, all of them exit-code-bearing:
+
+  1. REACHABILITY  — every ``.md`` under ``docs/`` is reachable from
+     ``docs/INDEX.md`` by following relative links through the files the tree
+     OWNS (the index, the topic pages, the status pages, the decision and card
+     STATUS headers, the split stubs, and ``docs/refound/``).
+  2. LINKS         — no relative link in an owned file dangles.
+  3. STATUS        — every file under ``docs/cards/`` and ``docs/decisions/``
+     opens with a STATUS block carrying the required keys, and exactly one
+     verbatim marker if it carries verbatim text.
+  4. SIZE          — no file outside ``docs/archive/`` exceeds 60 KB.
+  5. FROZEN        — every file in ``docs/archive/`` still carries its
+     READ-ONLY banner.
+
+What is deliberately NOT link-checked: ``docs/archive/`` and ``docs/attic/``
+(frozen historical text), the verbatim body of a card (same text, relocated —
+its links were written against the old location and must not be "fixed"), and
+the standing documents that have not been split yet (pre-existing files this
+tree only indexes).  Those are leaves in the reachability graph.
+
+Usage:  python scripts/docs_index_check.py [-v]
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:  # pragma: no cover
+    pass
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+DOCS = os.path.join(ROOT, 'docs')
+
+MAX_BYTES = 60 * 1024
+FROZEN_DIRS = ('archive/', 'attic/')
+VERBATIM = '<!-- BEGIN VERBATIM:'
+REQUIRED_STATUS = ('id', 'topic', 'status', 'summary', 'source')
+VALID_STATUS = {'open', 'closed', 'parked', 'superseded', 'reference'}
+
+RE_LINK = re.compile(r'\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+
+
+def rel(p):
+    return os.path.relpath(p, DOCS).replace('\\', '/')
+
+
+def read_lf(p):
+    return open(p, 'rb').read().replace(b'\r\n', b'\n').decode('utf-8', 'replace')
+
+
+def all_docs():
+    out = []
+    for dp, dn, fn in os.walk(DOCS):
+        dn[:] = [d for d in dn if d not in ('.git', '__pycache__')]
+        for f in fn:
+            if f.lower().endswith('.md'):
+                out.append(os.path.join(dp, f))
+    return sorted(out)
+
+
+def owned(r):
+    """Files whose links this tree is responsible for."""
+    if r.startswith(FROZEN_DIRS):
+        return False
+    return (r == 'INDEX.md'
+            or r.startswith(('topics/', 'status/', 'cards/', 'decisions/',
+                             'refound/'))
+            or r in ('REORG_PLAN.md', 'REORG_MAPPING.md')
+            or is_stub(r))
+
+
+_stub_cache = {}
+
+
+def is_stub(r):
+    if r in _stub_cache:
+        return _stub_cache[r]
+    p = os.path.join(DOCS, r)
+    ok = False
+    if os.path.isfile(p) and '/' not in r:
+        first = read_lf(p).split('\n', 1)[0]
+        ok = first.endswith('— SPLIT')
+    _stub_cache[r] = ok
+    return ok
+
+
+def link_targets(path, text):
+    """Relative .md / directory links in `text`, resolved to docs-relative."""
+    base = os.path.dirname(path)
+    out = []
+    for m in RE_LINK.finditer(text):
+        t = m.group(1).split('#')[0].strip()
+        if not t or '://' in t or t.startswith(('#', 'mailto:')):
+            continue
+        if t.startswith('/'):
+            out.append((m.group(1), None))  # root-relative: never valid here
+            continue
+        out.append((m.group(1), os.path.normpath(os.path.join(base, t))))
+    return out
+
+
+def main():
+    verbose = '-v' in sys.argv
+    files = all_docs()
+    rels = {rel(p) for p in files}
+    errors, warnings = [], []
+
+    # ---------------------------------------------------------------- size
+    for p in files:
+        r = rel(p)
+        n = os.path.getsize(p)
+        if not r.startswith('archive/') and n > MAX_BYTES:
+            errors.append(f'SIZE      {r} is {n} bytes (> {MAX_BYTES})')
+
+    # -------------------------------------------------------------- frozen
+    adir = os.path.join(DOCS, 'archive')
+    if os.path.isdir(adir):
+        for f in sorted(os.listdir(adir)):
+            if not f.endswith('.md'):
+                continue
+            first = read_lf(os.path.join(adir, f)).split('\n', 1)[0]
+            if 'FROZEN' not in first or 'READ-ONLY' not in first:
+                errors.append(f'FROZEN    archive/{f} lost its READ-ONLY banner')
+
+    # -------------------------------------------------------------- status
+    for p in files:
+        r = rel(p)
+        if not r.startswith(('cards/', 'decisions/')):
+            continue
+        t = read_lf(p)
+        head = t.split(VERBATIM)[0]
+        if '**STATUS**' not in head:
+            errors.append(f'STATUS    {r} has no STATUS block')
+            continue
+        for k in REQUIRED_STATUS:
+            if not re.search(r'^- \*\*' + k + r'[^:]*:\*\*', head, re.M):
+                errors.append(f'STATUS    {r} STATUS block is missing "{k}"')
+        m = re.search(r'^- \*\*status:\*\* (\S+)', head, re.M)
+        if m and m.group(1) not in VALID_STATUS:
+            errors.append(f'STATUS    {r} status "{m.group(1)}" is not one of '
+                          f'{sorted(VALID_STATUS)}')
+        n = t.count(VERBATIM)
+        if n > 1:
+            errors.append(f'STATUS    {r} has {n} verbatim markers (expect 0 or 1)')
+
+    # --------------------------------------------------- links + reachability
+    graph = {}
+    for p in files:
+        r = rel(p)
+        if not owned(r):
+            graph[r] = []
+            continue
+        t = read_lf(p)
+        if r.startswith(('cards/', 'decisions/')):
+            t = t.split(VERBATIM)[0]   # never police the verbatim body
+        out = []
+        for raw, tgt in link_targets(p, t):
+            if tgt is None:
+                errors.append(f'LINK      {r} -> "{raw}" is root-relative; '
+                              f'use a path relative to the file')
+                continue
+            if not os.path.exists(tgt):
+                errors.append(f'LINK      {r} -> "{raw}" does not exist')
+                continue
+            inside = os.path.commonpath([os.path.abspath(tgt), DOCS]) == DOCS
+            if inside and tgt.lower().endswith('.md'):
+                out.append(rel(tgt))
+        graph[r] = out
+
+    start = 'INDEX.md'
+    if start not in rels:
+        errors.append('REACH     docs/INDEX.md is missing')
+        seen = set()
+    else:
+        seen, stack = {start}, [start]
+        while stack:
+            cur = stack.pop()
+            for nxt in graph.get(cur, []):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+    for r in sorted(rels - seen):
+        errors.append(f'REACH     {r} is not reachable from INDEX.md')
+
+    # ------------------------------------------------------------- report
+    print(f'docs/: {len(files)} markdown files, '
+          f'{sum(1 for r in rels if r.startswith("cards/"))} cards, '
+          f'{sum(1 for r in rels if r.startswith("decisions/"))} decisions, '
+          f'{sum(1 for r in rels if r.startswith("archive/"))} frozen, '
+          f'{len(seen)} reachable from INDEX.md')
+    if verbose:
+        big = sorted(((os.path.getsize(p), rel(p)) for p in files),
+                     reverse=True)[:5]
+        print('largest:', ', '.join(f'{r} {n // 1024} KB' for n, r in big))
+    for w in warnings:
+        print('WARN  ' + w)
+    if errors:
+        print(f'\n{len(errors)} problem(s):')
+        for e in errors:
+            print('  ' + e)
+        return 1
+    print('OK — reachability, links, STATUS blocks, sizes and the frozen '
+          'banners all pass.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

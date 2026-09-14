@@ -161,6 +161,53 @@ Anything that genuinely belongs to *every* TU lives in `common/`; everything els
 got pulled into a category dir.  When adding a new file, prefer the most
 specific subdir that fits — resist the urge to drop new headers into `common/`.
 
+## Documentation — the topic tree (standing user directive, 2026-09-14)
+
+**`docs/INDEX.md` is the single entry point, and `docs/refound/` is the current
+program.** The author's directive: *"We need a method to organize our whole project,
+rather than simply appending to these massive files."* On 2026-09-14 the 19 `docs/*.md`
+over 60 KB were split into a topic tree — verbatim, hash-verified, with the originals
+frozen.
+
+```
+docs/INDEX.md                    entry point: topics, cards, the rules
+docs/refound/                    the current program (RF-0..RF-3) — not split, not moved
+docs/cards/<topic>/<CARD-ID>.md  one card per file: STATUS block + verbatim text
+docs/topics/<topic>.md           a short living page per topic (17 topics)
+docs/decisions/                  posture rulings whose text is self-contained
+docs/status/OPEN_ITEMS.md        everything owed, with its evidence pointer
+docs/archive/<monolith>.md       the pre-split originals, byte-for-byte, FROZEN
+docs/<monolith>.md               a routing stub: section -> card, so an existing
+                                 citation ("SPEC_event_harness §24.10") still resolves
+```
+
+The rules — **all seven are enforced or checked**:
+
+1. **One card = one file** under `docs/cards/<topic>/`. Pre-register it as a file.
+2. **Results are appended to the CARD's file only** — never to a topic page, never to
+   `docs/archive/`, never to a monolith.
+3. **The INDEX line is updated twice:** at pre-registration, and at close.
+4. **No non-archive file over ~60 KB.** Split by topic as one approaches it.
+5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`,
+   `source`, plus the knobs / hashes / run dirs / dates). `status` ∈ {`open`, `closed`,
+   `parked`, `superseded`, `reference`}; PROMOTED / KEEP_OFF / FALSIFIED belong in the
+   summary and the text.
+6. **The monoliths are frozen.** `docs/archive/` is read-only; the old path is a stub.
+7. **`python scripts/docs_index_check.py` must pass before a docs commit** (reachability
+   from INDEX, dangling links, STATUS blocks, the 60 KB bar, the archive banners).
+
+**Never rewrite, shorten or reflow existing section text** — the docs are the scientific
+record; a superseded result is annotated, not deleted. A card's history sits below its
+`<!-- BEGIN VERBATIM: … -->` marker; append new results under a dated heading *below* it,
+and do not "fix" the links inside it (they were written against the old location and are
+deliberately not link-checked). `python scripts/docs_split.py --verify` proves the
+existing split is byte-exact; `--build` re-renders it from `scripts/docs_map/*.json`.
+
+⚠ `docs/CONFIG_promotion_ledger.md` is now a **stub**. The `scripts/_*_ledger_oneoff.py`
+pattern opens that path directly — a future ledger update must patch the tier card under
+`docs/cards/config-ledger/` plus `docs/CONFIG_promotion_ledger.json` (unchanged, still the
+machine-read twin for `make_golden_config.py`).
+
 ## Conventions
 
 **Config toggles.** New feature flags follow:
