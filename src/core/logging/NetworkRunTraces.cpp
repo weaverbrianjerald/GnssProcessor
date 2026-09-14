@@ -63,6 +63,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
+      station_block_trace_path(log_dir_ / "network_station_block.csv"),
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
       sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
@@ -449,6 +450,43 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open per-row post-fit trace {}",
                       pf_rows_trace_path.string());
+    }
+    if (nc.trace_station_block) {
+        // SPEC_event_harness §24.10 card ZP: the per-station LOCAL-block audit.  One
+        // `#` provenance line naming the object and its conditioning, then the column
+        // header (scripts/zp_station_block_read.py skips `#`).  The provenance line is
+        // load-bearing: every number below describes N_rr with the SHARED states held
+        // at their solved values, which is a different matrix from the station's
+        // stand-alone normal equations and from the reduced shared system.
+        station_block_trace.open(station_block_trace_path);
+        if (station_block_trace)
+            station_block_trace
+                << "# network_station_block.csv - SPEC_event_harness 24.10 card ZP "
+                   "(network.trace_station_block). One row per station per TRACED epoch "
+                   "(the first 20 EMITTED epochs, then every 60th). The audited object is "
+                   "the station's LOCAL normal block N_rr = A_r^T W A_r + folded station "
+                   "priors, with the SHARED states held at their solved values x_s - the "
+                   "same conditioning as NetworkEstimator::reconstructStation "
+                   "(x_r = N_rr^-1 (u_r - N_rs x_s)); it is NOT the station's stand-alone "
+                   "normal matrix. rank = #{eig > 1e-9*eig_max}; cond = eig_max/eig_min "
+                   "over that non-null subspace. evK_span names the local states carrying "
+                   "the eigenvector's squared loading as up to 3 'kind=share' items joined "
+                   "by '|' (kinds clk, zwd, rxcb:<sig>, iono:<sat>, amb:<sat>:<sig>), "
+                   "truncated once the cumulative share reaches 0.90. zwd_info_eff = "
+                   "1/(N_rr^+)_zz, the ZWD column's information after eliminating every "
+                   "OTHER local state (identically N_zz - N_zo N_oo^-1 N_oz); zwd_info_raw "
+                   "= N_zz = sum w*m_wet^2 over the station's rows; ratio = eff/raw. "
+                   "x_r_* are from reconstructStation. zero_red_* count DATA rows with "
+                   "redundancy r_i = 1 - w_i h_i^T N_rr^+ h_i < 1e-6 (h_i the row's LOCAL "
+                   "partials, pseudo-inverse on the non-null subspace); n_rows is the "
+                   "count of DATA rows visited (coupling rows excluded).\n"
+                << "week,tow,station,n_rows_code,n_rows_phase,n_local,rank,cond,"
+                   "ev1_val,ev1_span,ev2_val,ev2_span,ev3_val,ev3_span,"
+                   "zwd_info_eff,zwd_info_raw,zwd_info_ratio,x_r_norm,x_r_zwd,"
+                   "zero_red_code,zero_red_phase,n_rows\n";
+        else
+            log->warn("Network: failed to open station-block audit trace {}",
+                      station_block_trace_path.string());
     }
     if (nc.trace_phase_anchor) {
         // S1 anchor partition (docs/SPEC_lane_spectrometer.md §3.3).  One row per
@@ -1444,6 +1482,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // precedent below).
                << (nc.trace_postfit_rows ? std::string("\"trace_postfit_rows\":true,")
                                          : std::string())
+               // SPEC_event_harness §24.10 card ZP station-block audit: same
+               // armed-only rule, so an unarmed run's manifest bytes are unchanged.
+               << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
+                                          : std::string())
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config — and, because `adm_screen` is solve-affecting, to know that
@@ -2049,6 +2091,9 @@ void NetworkRunTraces::closeAll() {
     // Same rationale: a NEW member, and the per-row residual dump is the graded
     // artifact of a §24.6 attribution leg — its tail must be flushed at teardown.
     if (pf_rows_trace.is_open()) pf_rows_trace.close();
+    // Same rationale: a NEW member, and the station-block audit is the graded
+    // artifact of a §24.10 card-ZP arm — its tail must be flushed at teardown.
+    if (station_block_trace.is_open()) station_block_trace.close();
 }
 
 } // namespace GnssProcessor

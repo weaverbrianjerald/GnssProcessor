@@ -103,6 +103,7 @@
 #include "filter/NetworkRaim.hpp"        // INC-9: post-fit network RAIM
 #include "filter/NetworkClockQc.hpp"
 #include "filter/NetworkFrameDiag.hpp"   // P1-3/P1-4 trigger instrumentation (SPEC_day129_frame_guards)    // INC-10: post-solve satellite-clock QC
+#include "filter/NetworkStationBlock.hpp"  // §24.10 card ZP: per-station LOCAL-block audit (measure-only)
 #include "filter/NetworkRhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
 #include "filter/NetworkMdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
@@ -2463,6 +2464,14 @@ int Application::runNetwork() {
                                  asm_res, est_index_of, &modeled);
         if (nc.trace_sh_spectrum)
             networkShSpectrum(ctx, config_, log, traces, se, est);
+        // SPEC_event_harness §24.10 card ZP: the per-station LOCAL-block audit.
+        // Measure-only (const accessors on the solved estimator), and placed in
+        // this group because it is the station-side companion of the shared-side
+        // spectrum above.  Its own cadence gate (EMITTED epochs 1..20, then every
+        // 60th) lives in the seam, so the driver carries no counter.
+        if (nc.trace_station_block)
+            networkStationBlock(ctx, config_, log, traces, se, stations, est, x_s,
+                                asm_res, est_index_of);
         // docs/SPEC_prefit_census_observability.md INC-1/3/4 — the PREFIT
         // innovation census, the seed-birth tripwire and the topology ledger, all
         // on one walk of this epoch's assembled row stacks.  FIRST in the
