@@ -394,6 +394,36 @@ NetworkSolPrepResult networkSolPrep(
         // emission anyway (RT0-5 already quarantined them, or they carry no solution
         // sats) — nothing pruned here, and not the diffuse edge either.
     }
+    // --- GL-2 (docs/SPEC_event_harness.md §24.19): the per-satellite WIRE WITHHOLD.
+    // A satellite the gross-LOS screen stood down (over its bar at >= N stations in
+    // ONE epoch — a SATELLITE fault, not N line-of-sight faults) is pruned from this
+    // epoch's emission by exactly the swap-prune the RT0-5 runaway quarantine and the
+    // RTA-10 per-constellation carve-out use two blocks above.  Per SATELLITE, never
+    // per epoch: every other satellite still emits and the epoch is still
+    // adapt-and-emit.  The consumer is TOLD by the retro disc bump the screen queued
+    // into `ura_retro_sats` alongside this set — and because that queue is drained
+    // BELOW with mark-==-land semantics, a withheld satellite stays PENDING and is
+    // marked at its next ACTUAL emission, which is exactly the epoch the consumer
+    // needs the reset.  Empty (never populated) unless network.gross_los_sat_standdown
+    // and network.gross_los_sat_wire_withhold, so the OFF path is byte-identical.
+    if (!ctx.carry.gl2_wire_pending.empty()) {
+        std::set<std::string> gl2_pruned;
+        std::vector<NetworkSatSolution> gl2_kept;
+        gl2_kept.reserve(sol.sats.size());
+        for (auto& gs : sol.sats) {
+            if (ctx.carry.gl2_wire_pending.count(gs.sat)) gl2_pruned.insert(gs.sat);
+            else                                          gl2_kept.push_back(std::move(gs));
+        }
+        if (!gl2_pruned.empty()) {
+            sol.sats.swap(gl2_kept);
+            ctx.counters.gross_los.sat_wire_withheld +=
+                static_cast<long long>(gl2_pruned.size());
+            for (const auto& gsat : gl2_pruned)
+                emitEvent("GROSSLOS", "gross_los_sat_wire_withhold", gsat, "",
+                          std::nullopt, std::nullopt, "drop_sat",
+                          "reason=whole_satellite_standdown;epoch_still_emits=1");
+        }
+    }
     // B1: per-sat URA = EWMA(σ̂0) × formal clock σ (shared-covariance diagonal),
     // skipping datum-pinned clock columns (their variance is the artificial pin,
     // not a physical σ) and inflating a recently-refloated sat for its warmup horizon.

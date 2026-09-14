@@ -5614,6 +5614,15 @@ namespace GnssProcessor {
             gnc.gross_los_max_station_frac =
                 jval<double>(json, "network.gross_los_max_station_frac",
                              "gross_los_max_station_frac", 0.5);
+            gnc.gross_los_sat_standdown =
+                jval<bool>(json, "network.gross_los_sat_standdown",
+                           "gross_los_sat_standdown", false);
+            gnc.gross_los_sat_min_stations =
+                jval<int>(json, "network.gross_los_sat_min_stations",
+                          "gross_los_sat_min_stations", 3);
+            gnc.gross_los_sat_wire_withhold =
+                jval<bool>(json, "network.gross_los_sat_wire_withhold",
+                           "gross_los_sat_wire_withhold", true);
             if (gnc.gross_los_screen) {
                 // Clamp the knobs that cannot mean anything outside their range,
                 // LOUDLY.  A screen configured with k ≤ 0 or a deweight ≤ 1 is not
@@ -5637,6 +5646,45 @@ namespace GnssProcessor {
                 if (gnc.gross_los_epochs < 1) gnc.gross_los_epochs = 1;
                 if (gnc.gross_los_clear_epochs < 1) gnc.gross_los_clear_epochs = 1;
                 if (gnc.gross_los_warmup_epochs < 0) gnc.gross_los_warmup_epochs = 0;
+                if (gnc.gross_los_sat_min_stations < 2) {
+                    log->warn("Network (gross-LOS, GL-2): network.gross_los_sat_min_stations "
+                              "= {} cannot express a CROSS-STATION agreement — clamped to 2.  "
+                              "The companion rule (network.raim_min_stations) runs 3.",
+                              gnc.gross_los_sat_min_stations);
+                    gnc.gross_los_sat_min_stations = 2;
+                }
+                if (gnc.gross_los_sat_standdown)
+                    log->info("Network producer (gross-LOS, GL-2 whole-SATELLITE stand-down): "
+                              "ON — the same satellite over the {:.1f}σ bar at >= {} stations "
+                              "in ONE epoch is a SATELLITE fault, not {} line-of-sight faults: "
+                              "its per-LOS declarations are refused (a standing one released) "
+                              "and it is routed to the responses this producer already owns "
+                              "for a cross-station CONSENSUS fault — the per-satellite retro "
+                              "DISC BUMP (the network.raim_min_stations path: ura_retro_sats "
+                              "-> NetworkSolPrep -> markSatDiscontinuity, mark == land){}.  "
+                              "NEVER an epoch withhold; every other satellite still emits.  "
+                              "MEASURED motivation: on runs/_gl_on6 at TOW 271200/271260 TEN "
+                              "declarations fired and every one was G17, at ten stations on "
+                              "four continents — the held-out consumer went to 56 m for an "
+                              "hour.",
+                              gnc.gross_los_k, gnc.gross_los_sat_min_stations,
+                              gnc.gross_los_sat_min_stations,
+                              gnc.gross_los_sat_wire_withhold
+                                  ? ", and the per-satellite WIRE WITHHOLD (pruned from "
+                                    "sol.sats the way the RT0-5 runaway quarantine prunes "
+                                    "its own)"
+                                  : " ONLY (network.gross_los_sat_wire_withhold is OFF, so "
+                                    "the satellite still EMITS and the consumer is merely "
+                                    "told)");
+                else
+                    log->info("Network producer (gross-LOS): GL-2 (the whole-SATELLITE "
+                              "stand-down, network.gross_los_sat_standdown) is OFF — a "
+                              "satellite faulted at many stations at once will be answered "
+                              "as N independent line-of-sight faults, which is how "
+                              "runs/_gl_on6 took its held-out consumer to 56 m at TOW "
+                              "271200.  §24.18's status line: NOT consumer-safe without "
+                              "§24.19.");
+
                 if (!(gnc.gross_los_max_station_frac > 0.0)) {
                     log->warn("Network (gross-LOS screen): network.gross_los_max_station_frac = "
                               "{:g} would stand the screen down at every station — clamped to 1.0 "

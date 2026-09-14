@@ -363,6 +363,62 @@ TEST(NetworkGrossLosState, AGuardNeverBlocksTheReleaseEdge) {
 }
 
 // ---------------------------------------------------------------------------
+// GL-2 - the whole-SATELLITE stand-down (SPEC_event_harness s24.19)
+// ---------------------------------------------------------------------------
+
+TEST(NetworkGrossLosGl2, TheSatelliteRuleIsTheSameStepWithTheGuardClosed) {
+    // GL-2 reaches the machine through the same `allow_declare` the maturity horizon
+    // and the whole-station stand-down use - deliberately, so there is ONE place a
+    // declaration can be refused and one population (Suppressed) that records it.
+    // A satellite over the bar at many stations is a SATELLITE fault; its lines of
+    // sight must not be declared, and the evidence must not be thrown away either.
+    GrossLosState s;
+    const auto hot = networkGrossLosAssess(grossLos(), 8.0, 2, 3.0);
+    ASSERT_EQ(networkGrossLosStep(s, hot, 2, 2, 100.0, /*allow_declare=*/false),
+              GrossLosEdge::None);
+    EXPECT_EQ(networkGrossLosStep(s, hot, 2, 2, 130.0, false), GrossLosEdge::Suppressed);
+    EXPECT_FALSE(s.gross);
+    // The satellite is released: the very next qualifying epoch declares, because the
+    // line of sight's own evidence was held, not discarded.
+    EXPECT_EQ(networkGrossLosStep(s, hot, 2, 2, 160.0, true), GrossLosEdge::Declare);
+}
+
+TEST(NetworkGrossLosGl2, AStandingDeclarationIsReleasedWhenItsSatelliteGoesDown) {
+    // The seam releases a STANDING per-LOS declaration when its satellite is stood
+    // down - it clears `gross` so the deweight lifts at the next assembly.  This is
+    // standing invariant #7's re-coupling edge at the satellite's scale: the fault is
+    // not this line of sight's, so holding it decoupled would keep removing code the
+    // solution needs.  The release is deliberately NOT the per-LOS clear edge, which
+    // asserts the DATA healed; here it did not.  This asserts the state transition the
+    // seam performs.
+    GrossLosState s;
+    const auto hot = networkGrossLosAssess(grossLos(), 8.0, 2, 3.0);
+    ASSERT_EQ(networkGrossLosStep(s, hot, 1, 1, 100.0, true), GrossLosEdge::Declare);
+    ASSERT_TRUE(s.gross);
+    // --- the seam's release, verbatim ---
+    s.gross = false; s.over_streak = 0; s.clear_streak = 0;
+    EXPECT_FALSE(s.gross);
+    // And with the satellite still down the line of sight cannot re-declare.
+    EXPECT_EQ(networkGrossLosStep(s, hot, 1, 1, 130.0, /*allow_declare=*/false),
+              GrossLosEdge::Suppressed);
+    EXPECT_FALSE(s.gross);
+}
+
+TEST(NetworkGrossLosGl2, TheTriggerIsTheOverBarCountNotTheDeclaredCount) {
+    // s24.19: "(or its over-bar station count reaches it)".  The satellite rule tallies
+    // the epoch's OVER-BAR verdicts, not the declarations, so a satellite is caught on
+    // its first bad epoch rather than after the per-LOS persistence gate has spent two
+    // - which is the difference between catching G17 at tow 271170 and catching it at
+    // 271200, after four lines of sight have already been declared and de-weighted.
+    const auto hot = networkGrossLosAssess(grossLos(), 8.0, 2, 3.0);
+    EXPECT_TRUE(hot.over);          // over-bar on the FIRST epoch
+    GrossLosState s;
+    // ... while the declaration still needs two.
+    EXPECT_EQ(networkGrossLosStep(s, hot, 2, 2, 100.0, true), GrossLosEdge::None);
+    EXPECT_FALSE(s.gross);
+}
+
+// ---------------------------------------------------------------------------
 // The config gate — OFF is OFF
 // ---------------------------------------------------------------------------
 
@@ -388,6 +444,11 @@ TEST(NetworkGrossLosConfig, DefaultsAreOffAndPreCard) {
     // per-station over-bar fraction on the 6 h field bed).
     EXPECT_EQ(nc.gross_los_warmup_epochs, 120);
     EXPECT_DOUBLE_EQ(nc.gross_los_max_station_frac, 0.5);
+    // GL-2 is its own master and is OFF by default: no satellite tally is built,
+    // no satellite state is allocated, nothing is pruned from an emission.
+    EXPECT_FALSE(nc.gross_los_sat_standdown);
+    EXPECT_EQ(nc.gross_los_sat_min_stations, 3);   // == network.raim_min_stations
+    EXPECT_TRUE(nc.gross_los_sat_wire_withhold);   // inert while the master is off
 }
 
 TEST(NetworkGrossLosConfig, ArmedValuesAreParsed) {
@@ -402,7 +463,10 @@ TEST(NetworkGrossLosConfig, ArmedValuesAreParsed) {
                          "    \"gross_los_max_gap_s\": 600.0,\n"
                          "    \"gross_los_event_holdoff_ep\": 7,\n"
                          "    \"gross_los_warmup_epochs\": 240,\n"
-                         "    \"gross_los_max_station_frac\": 0.75,\n",
+                         "    \"gross_los_max_station_frac\": 0.75,\n"
+                         "    \"gross_los_sat_standdown\": true,\n"
+                         "    \"gross_los_sat_min_stations\": 5,\n"
+                         "    \"gross_los_sat_wire_withhold\": false,\n",
                          cfg, log, "on"));
     const auto& nc = cfg.getNetworkConfig();
     EXPECT_TRUE(nc.gross_los_screen);
@@ -416,6 +480,9 @@ TEST(NetworkGrossLosConfig, ArmedValuesAreParsed) {
     EXPECT_EQ(nc.gross_los_event_holdoff_ep, 7);
     EXPECT_EQ(nc.gross_los_warmup_epochs, 240);
     EXPECT_DOUBLE_EQ(nc.gross_los_max_station_frac, 0.75);
+    EXPECT_TRUE(nc.gross_los_sat_standdown);
+    EXPECT_EQ(nc.gross_los_sat_min_stations, 5);
+    EXPECT_FALSE(nc.gross_los_sat_wire_withhold);
 }
 
 TEST(NetworkGrossLosConfig, NonsenseKnobsAreClampedLoudly) {
@@ -430,7 +497,9 @@ TEST(NetworkGrossLosConfig, NonsenseKnobsAreClampedLoudly) {
                          "    \"gross_los_clear_epochs\": 0,\n"
                          "    \"gross_los_deweight\": 0.5,\n"
                          "    \"gross_los_warmup_epochs\": -5,\n"
-                         "    \"gross_los_max_station_frac\": 0.0,\n",
+                         "    \"gross_los_max_station_frac\": 0.0,\n"
+                         "    \"gross_los_sat_standdown\": true,\n"
+                         "    \"gross_los_sat_min_stations\": 1,\n",
                          cfg, log, "clamp"));
     const auto& nc = cfg.getNetworkConfig();
     EXPECT_DOUBLE_EQ(nc.gross_los_k, 1.0);
@@ -443,4 +512,8 @@ TEST(NetworkGrossLosConfig, NonsenseKnobsAreClampedLoudly) {
     // while reading as armed - clamped to 1.0 (guard off) with a warning, never
     // accepted as "a very strict guard".
     EXPECT_DOUBLE_EQ(nc.gross_los_max_station_frac, 1.0);
+    // One station cannot express a CROSS-STATION agreement: at 1 the satellite
+    // rule would stand a satellite down on a single bad line of sight, which is
+    // the opposite of what it is for.  Clamped to 2, loudly.
+    EXPECT_EQ(nc.gross_los_sat_min_stations, 2);
 }

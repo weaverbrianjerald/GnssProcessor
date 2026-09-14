@@ -328,6 +328,10 @@ namespace GnssProcessor {
         /// the assembly because the publish half and the fold half must not be able to
         /// disagree mid-run.
         double gl_deweight{ 1.0 };
+        /// GL-2 (§24.19): the WHOLE-SATELLITE stand-down is armed for this run.  Already
+        /// ANDed with @ref gl_on — the satellite rule is a scope decision ON the gross-LOS
+        /// rule and cannot fire without it.  OFF ⇒ no tally, no state, byte-identical.
+        bool   gl2_on{};
         /// QUEUE item 4 R2 (SPEC_t3_null_derivation §6/§7.5): declared per-station
         /// variance factor — measure-only, feeds no denominator.
         bool   staf_on{};
@@ -1326,6 +1330,19 @@ namespace GnssProcessor {
         std::map<std::pair<int, std::string>, GrossLosState> gl_state;
         /// Card GL: per-(station, satellite) last event sequence, for
         /// @c network.gross_los_event_holdoff_ep.  Empty at the default holdoff 0.
+        /// GL-2 (§24.19): satellites currently STOOD DOWN — their per-LOS declarations are
+        /// refused and they are routed to the consensus-fault response instead.  Empty
+        /// unless @c knobs.gl2_on.  Not snapshotted and not fingerprinted, for the same
+        /// reason @ref gl_state is not: it is one epoch of evidence, re-earned instantly.
+        std::set<std::string> gl2_sat_down;
+        /// GL-2: TOW at which each stood-down satellite's edge fired (the release event's detail).
+        std::map<std::string, double> gl2_sat_since;
+        /// GL-2: satellites to prune from the NEXT emission — drained by @c networkSolPrep
+        /// exactly where the RT0-5 runaway quarantine and the RTA-10 per-constellation
+        /// carve-out prune theirs.  Rebuilt every screened epoch, so a released satellite
+        /// stops being withheld in the same pass a newly-faulted one starts.  Empty when
+        /// @c network.gross_los_sat_wire_withhold is off.
+        std::set<std::string> gl2_wire_pending;
         std::map<std::string, long long> gl_event_last;
         /// Card GL: screened-epoch sequence number, the holdoff's clock.
         long long gl_seq{ 0 };

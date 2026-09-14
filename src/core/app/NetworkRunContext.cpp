@@ -289,6 +289,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // is the point, since every other post-fit tier is phase-only.
     k.gl_on      = config_.getNetworkConfig().gross_los_screen;
     k.gl_deweight = k.gl_on ? config_.getNetworkConfig().gross_los_deweight : 1.0;
+    // GL-2 (§24.19): ANDed with gl_on here so every downstream site reads ONE bool.
+    // The satellite rule is a SCOPE decision on the gross-LOS rule — it tallies the
+    // same over-bar verdicts — so it cannot mean anything without the screen itself.
+    k.gl2_on = k.gl_on && config_.getNetworkConfig().gross_los_sat_standdown;
     k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;

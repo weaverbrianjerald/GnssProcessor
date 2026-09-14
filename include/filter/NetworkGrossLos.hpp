@@ -152,6 +152,15 @@ struct NetworkGrossLosTallies {
     long long suppressed_station = 0;///< LOS-epochs whose evidence was complete but the WHOLE-STATION stand-down held the declaration.
     long long standdowns = 0;        ///< Station-epochs the stand-down fired on.
     std::map<std::string, long long> standdown_by_station;  ///< Stand-down station-epochs per station name.
+    // --- GL-2 (§24.19), all zero unless network.gross_los_sat_standdown ------
+    long long sat_standdowns = 0;      ///< SATELLITE stand-down edges (decoupling).
+    long long sat_released = 0;        ///< Satellite release edges (re-coupling).
+    long long sat_epochs = 0;          ///< Epochs with at least one satellite stood down.
+    long long sat_epoch_max = 0;       ///< Most satellites simultaneously stood down.
+    long long sat_los_suppressed = 0;  ///< Per-LOS declarations refused because their SATELLITE was down.
+    long long sat_los_released = 0;    ///< Standing per-LOS declarations released because their satellite went down.
+    long long sat_wire_withheld = 0;   ///< Satellite-epochs actually pruned from an emission (counted at the prune, in NetworkSolPrep).
+    std::map<std::string, long long> sat_standdown_by_sat;  ///< Stand-down edges per satellite.
     long long currently_gross = 0;   ///< Declared and not yet cleared, at run end.
     long long max_concurrent = 0;    ///< Largest simultaneous declared set over the run.
     long long rows_deweighted = 0;   ///< CODE rows actually folded at the deweighted σ (counted in the assembly).
