@@ -198,6 +198,22 @@ struct NetStation {
     // @ref networkSignalIntegrity, before the parallel PASS-B produce reads it
     // (station-local ⇒ thread-safe).
     std::map<std::string, double> phase_sigma_scale;
+    /// Card GL (docs/SPEC_event_harness.md §24.18): per-SATELLITE sigma scale for this
+    /// station's CODE rows while that line of sight is declared GROSS.  The exact CODE
+    /// counterpart of @ref phase_sigma_scale above and it obeys the same contract: the
+    /// fold divides the row's information by scale^2 (sigma x scale), PHASE rows are
+    /// untouched (they have their own responses -- the erase + pending-reseed the
+    /// declaration already performed), and an ABSENT key means scale 1, i.e. the exact
+    /// legacy 1/sigma^2 weight.  Cleared + rebuilt by @ref networkGrossLosPublishScales,
+    /// SERIALLY at the end of the previous epoch's QC block, before the parallel PASS-B
+    /// produce reads it (station-local => thread-safe).  Never populated when
+    /// network.gross_los_screen is off, so an OFF run never reads this map and the
+    /// assembly is byte-identical.
+    std::map<std::string, double> gl_code_sigma_scale;
+    /// Card GL: CODE rows this station folded at the deweighted sigma over the run.
+    /// Accumulated inside the PARALLEL produce phase, so it must live per-station;
+    /// summed into the run-end report at teardown (the @c si_rows_demoted precedent).
+    long long gl_rows_deweighted{ 0 };
     /// Phase rows this station folded at a demoted weight over the run (INC-2's ROW
     /// telemetry).  Accumulated inside the PARALLEL produce phase, so it must live
     /// per-station; summed into the run-end report at teardown (the

@@ -5577,6 +5577,125 @@ namespace GnssProcessor {
                       "pool, σ̂0_adapt and the A4 ceiling are unchanged.",
                       network_raim_we_code_trigger_, network_raim_we_iono_trigger_);
 
+        // GROSS LINE-OF-SIGHT SCREEN (card GL, docs/SPEC_event_harness.md §24.18).
+        // Parsed HERE, next to the post-fit tiers it complements and whose blind
+        // spot it exists to close: every one of them pools carried-ambiguity PHASE
+        // rows, so a CODE-only gross error on one line of sight is invisible to all
+        // of them (NetworkRaim.cpp:328's `|A_r(row, amb_col)| > 0.5` admission), and
+        // the one tier that DOES see the row — MDB — publishes a reliability number
+        // and the literal action "observe" (NetworkMdb.cpp:286).  The ONLY
+        // solve-affecting knob in this neighbourhood; default OFF, OFF
+        // byte-identical, NOT fingerprinted (it changes no carried state's MEANING —
+        // it changes which rows are trusted THIS epoch — so a snapshot written
+        // with it off remains readable with it on, the trace-knob precedent).
+        {
+            NetworkConfig& gnc = network_config_;
+            gnc.gross_los_screen =
+                jval<bool>(json, "network.gross_los_screen", "gross_los_screen", false);
+            gnc.gross_los_k =
+                jval<double>(json, "network.gross_los_k", "gross_los_k", 8.0);
+            gnc.gross_los_min_rows =
+                jval<int>(json, "network.gross_los_min_rows", "gross_los_min_rows", 2);
+            gnc.gross_los_epochs =
+                jval<int>(json, "network.gross_los_epochs", "gross_los_epochs", 2);
+            gnc.gross_los_clear_sigma =
+                jval<double>(json, "network.gross_los_clear_sigma", "gross_los_clear_sigma", 3.0);
+            gnc.gross_los_clear_epochs =
+                jval<int>(json, "network.gross_los_clear_epochs", "gross_los_clear_epochs", 2);
+            gnc.gross_los_deweight =
+                jval<double>(json, "network.gross_los_deweight", "gross_los_deweight", 100.0);
+            gnc.gross_los_max_gap_s =
+                jval<double>(json, "network.gross_los_max_gap_s", "gross_los_max_gap_s", 900.0);
+            gnc.gross_los_event_holdoff_ep =
+                jval<int>(json, "network.gross_los_event_holdoff_ep",
+                          "gross_los_event_holdoff_ep", 0);
+            gnc.gross_los_warmup_epochs =
+                jval<int>(json, "network.gross_los_warmup_epochs", "gross_los_warmup_epochs", 120);
+            gnc.gross_los_max_station_frac =
+                jval<double>(json, "network.gross_los_max_station_frac",
+                             "gross_los_max_station_frac", 0.5);
+            if (gnc.gross_los_screen) {
+                // Clamp the knobs that cannot mean anything outside their range,
+                // LOUDLY.  A screen configured with k ≤ 0 or a deweight ≤ 1 is not
+                // "a gentler screen", it is a mechanism that declares everything or
+                // responds with nothing, and either reads as a clean negative
+                // result in the run-end counters (standing invariant #4).
+                auto clampLow = [&](const char* name, double& v, double lo) {
+                    if (!(v >= lo)) {
+                        log->warn("Network (gross-LOS screen): network.{} = {:g} is below the "
+                                  "floor {:g} — clamped.  Below it the knob cannot express a "
+                                  "screen (it would declare everything, or respond with "
+                                  "nothing).", name, v, lo);
+                        v = lo;
+                    }
+                };
+                clampLow("gross_los_k", gnc.gross_los_k, 1.0);
+                clampLow("gross_los_clear_sigma", gnc.gross_los_clear_sigma, 0.0);
+                clampLow("gross_los_deweight", gnc.gross_los_deweight, 1.0);
+                clampLow("gross_los_max_gap_s", gnc.gross_los_max_gap_s, 0.0);
+                if (gnc.gross_los_min_rows < 1) gnc.gross_los_min_rows = 1;
+                if (gnc.gross_los_epochs < 1) gnc.gross_los_epochs = 1;
+                if (gnc.gross_los_clear_epochs < 1) gnc.gross_los_clear_epochs = 1;
+                if (gnc.gross_los_warmup_epochs < 0) gnc.gross_los_warmup_epochs = 0;
+                if (!(gnc.gross_los_max_station_frac > 0.0)) {
+                    log->warn("Network (gross-LOS screen): network.gross_los_max_station_frac = "
+                              "{:g} would stand the screen down at every station — clamped to 1.0 "
+                              "(guard disabled).  Use 0 < frac <= 1.",
+                              gnc.gross_los_max_station_frac);
+                    gnc.gross_los_max_station_frac = 1.0;
+                }
+                if (gnc.gross_los_max_station_frac > 1.0) gnc.gross_los_max_station_frac = 1.0;
+                if (gnc.gross_los_warmup_epochs == 0)
+                    log->warn("Network (gross-LOS screen): network.gross_los_warmup_epochs = 0 — "
+                              "the screen may DECLARE from the first emitted epoch.  MEASURED on "
+                              "the cert smoke: with no maturity horizon it declared 520 lines of "
+                              "sight in 20 cold epochs, the code deweight removed the information "
+                              "the cold solve needs for the receiver clocks, post-fit code "
+                              "sigma-hat-0 went 3.2 -> 2334 and the SH health gate withheld 9 of "
+                              "20 epochs.  A cold post-fit CODE residual is the un-converged "
+                              "station block, not a fault.  Arm 0 only on a deliberately warm "
+                              "lineage.");
+                if (gnc.gross_los_max_station_frac >= 1.0)
+                    log->warn("Network (gross-LOS screen): the WHOLE-STATION stand-down is "
+                              "DISABLED (max_station_frac = 1.0), so a station whose every line "
+                              "of sight is over the bar will have every one of its code rows "
+                              "deweighted — which removes exactly the information that "
+                              "determines its clock and troposphere.  That population exists on "
+                              "this lineage (BSHM00ISR, hour 5 of the 6 h field bed: a 197 m ZWD "
+                              "with all ten satellites past 20 m).");
+                if (gnc.gross_los_clear_sigma >= gnc.gross_los_k)
+                    log->warn("Network (gross-LOS screen): clear_sigma {:g} is not BELOW k {:g} "
+                              "— the declare and clear bars have no hysteresis between them, so "
+                              "a line of sight sitting near the bar will flap declare/clear "
+                              "every other epoch.  Running as configured.",
+                              gnc.gross_los_clear_sigma, gnc.gross_los_k);
+                log->info("Network producer (gross-LOS screen, card GL): ON — per (station, "
+                          "satellite) POST-FIT CODE residuals standardized by each row's OWN σ; "
+                          "≥ {} rows over {:g}σ for {} consecutive epochs DECLARES the line of "
+                          "sight gross (event, decoupling edge): its carried ambiguity levels "
+                          "and per-LOS iono carry are erased, its ambiguities are marked "
+                          "pending-reseed, and its CODE rows fold at σ × {:g} until the worst "
+                          "row returns under {:g}σ for {} epochs (event, re-coupling edge).  "
+                          "A declared LOS unseen for {:g} s EXPIRES (its own event).  The epoch "
+                          "always EMITS — adapt-and-emit; nothing here withholds.  This is the "
+                          "ONE acting post-fit tier that screens CODE: every other pools "
+                          "carried-ambiguity PHASE rows, and MDB's action is 'observe'.",
+                          gnc.gross_los_min_rows, gnc.gross_los_k, gnc.gross_los_epochs,
+                          gnc.gross_los_deweight, gnc.gross_los_clear_sigma,
+                          gnc.gross_los_clear_epochs, gnc.gross_los_max_gap_s);
+                log->info("Network producer (gross-LOS screen) GUARDS: no declaration before {} "
+                          "emitted epoch(s) (the MATURITY horizon — a cold post-fit code residual "
+                          "is the un-converged station block, and an unguarded screen destroyed "
+                          "its own solve on the 20-epoch cert smoke), and NO declaration at a "
+                          "station where more than {:.0f} % of its lines of sight are over the bar "
+                          "in one epoch (the WHOLE-STATION stand-down — that is a station fault, "
+                          "not a line-of-sight fault, and de-weighting all of its code rows "
+                          "removes what determines its clock).  Both guards SCREEN and COUNT "
+                          "normally; they only hold the declaration, and neither blocks a CLEAR.",
+                          gnc.gross_los_warmup_epochs, 100.0 * gnc.gross_los_max_station_frac);
+            }
+        }
+
         // BAARDA RELIABILITY NUMBERS / MDB (docs/SPEC_redundancy_census.md).
         // Parsed HERE, next to the B2 redundancy knob it rides, and AFTER
         // loadNetworkObservabilityAndSnapshot_ has resolved the redundancy-census

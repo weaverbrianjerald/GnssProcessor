@@ -887,6 +887,110 @@ int networkTeardown(
                       rc.refloats_queued, rc.refloats_drained);
     }
 
+    // --- GROSS LINE-OF-SIGHT SCREEN run-end telemetry --------------------------
+    // (card GL, docs/SPEC_event_harness.md §24.18.)  Standing invariant #4: these
+    // counters ARE the ON-path telemetry.  The denominators come first so four
+    // outcomes that all look like "the screen found nothing" stay distinguishable:
+    // the seam never ran / no code row reached it / nothing cleared the bar /
+    // evidence never persisted.  The per-station and per-satellite declaration
+    // tables come last because they are the IDENTITIES the grade needs (invariant
+    // #7: an edge without an identity is not an event).
+    if (ctx.knobs.gl_on) {
+        // The fold itself runs inside the PARALLEL produce phase, so its row count
+        // lives per-station (the si_rows_demoted precedent); sum it here, once,
+        // before the block reads it.
+        ctx.counters.gross_los.rows_deweighted = 0;
+        for (const auto& st : stations) ctx.counters.gross_los.rows_deweighted += st.gl_rows_deweighted;
+        const auto& g = ctx.counters.gross_los;
+        log->info("Network (gross-LOS screen): {} seam pass(es), {} station-epoch(s) with "
+                  "code rows, {} LOS-epoch(s) screened over {} code row(s).",
+                  g.epochs, g.stations_screened, g.los_screened, g.rows_screened);
+        if (g.epochs > 0 && g.rows_screened == 0)
+            log->warn("Network (gross-LOS screen): DEAD WIRING — the seam ran {} time(s) and "
+                      "NO code row ever reached it.  The classification is the same one "
+                      "networkPostfitSigma0 uses (a DATA row that is not phase and touches a "
+                      "CB: or CLK: shared column); an empty census means the posture "
+                      "registers neither, so check the shared-column labels before reading "
+                      "this run as clean.",
+                      g.epochs);
+        log->info("Network (gross-LOS screen): {} LOS-epoch(s) over the {:.1f}σ bar on ≥ {} "
+                  "row(s); worst standardized code residual {:.1f}σ, worst |v| {:.2f} m.",
+                  g.los_over, config_.getNetworkConfig().gross_los_k,
+                  config_.getNetworkConfig().gross_los_min_rows, g.r_max, g.v_abs_max_m);
+        if (g.los_screened > 0 && g.los_over == 0)
+            log->info("Network (gross-LOS screen): ZERO OPPORTUNITY — it screened real code "
+                      "residuals and nothing cleared the bar.  A clean window, not a "
+                      "demonstration: the screen's power is unproven until it is graded "
+                      "against a window that carries a known gross line of sight.");
+        else if (g.los_over > 0 && g.declared == 0)
+            log->warn("Network (gross-LOS screen): {} LOS-epoch(s) cleared the bar but NOTHING "
+                      "was declared — the evidence never persisted {} consecutive epoch(s).  "
+                      "That is the persistence gate doing its job on heavy tails, or it is "
+                      "the gate starving a real fault that flickers; the |v|/σ distribution "
+                      "in network_pf_rows.csv is what separates the two.",
+                      g.los_over, config_.getNetworkConfig().gross_los_epochs);
+        log->info("Network (gross-LOS screen) GUARDS: {} LOS-epoch(s) held by the MATURITY "
+                  "horizon ({} emitted epochs) and {} by the WHOLE-STATION stand-down, which "
+                  "fired on {} station-epoch(s).  A held LOS-epoch is a COMPLETE declaration a "
+                  "guard refused — never a silent one.",
+                  g.suppressed_warmup, config_.getNetworkConfig().gross_los_warmup_epochs,
+                  g.suppressed_station, g.standdowns);
+        log->info("Network (gross-LOS screen): {} declaration(s), {} release(s), {} "
+                  "expiry(ies) on the absent-satellite edge; {} currently gross at run end, "
+                  "{} the largest simultaneous set.",
+                  g.declared, g.cleared, g.expired, g.currently_gross, g.max_concurrent);
+        log->info("Network (gross-LOS screen): the RESPONSE moved {} carried level entry(ies) "
+                  "(erase + pending-reseed), {} per-LOS iono carry entry(ies), and folded {} "
+                  "CODE row(s) at σ × {:g}.  Nothing here withheld an epoch — the screen is "
+                  "adapt-and-emit by construction.",
+                  g.amb_refloated, g.iono_erased, g.rows_deweighted,
+                  config_.getNetworkConfig().gross_los_deweight);
+        log->info("Network (gross-LOS screen): of those, {} were leveling-carry entries erased "
+                  "(retirement census family [C], the same one-solve refloat the T4 attribution "
+                  "erase performs — the arc stays tracked and the next harvest re-stashes it).",
+                  ctx.counters.n_cr_gross_los);
+        if (g.declared > 0 && g.rows_deweighted == 0)
+            log->warn("Network (gross-LOS screen): {} declaration(s) but ZERO code rows were "
+                      "ever folded at the deweighted σ.  The actuator lives in "
+                      "networkSplitStation_ and keys on em.signal_types / em.satellite_ids; a "
+                      "zero here means the declared lines of sight never returned, or the "
+                      "publish half did not reach the assembly.",
+                      g.declared);
+        if (g.los_screened > 0) {
+            const double frac = 100.0 * static_cast<double>(g.los_over)
+                              / static_cast<double>(g.los_screened);
+            if (frac > 5.0)
+                log->warn("Network (gross-LOS screen): {:.2f} % of LOS-epochs cleared the bar "
+                          "— above the 5 % line §24.18 froze as 'the threshold is wrong'.  "
+                          "Report the |v|/σ distribution over all lines of sight before "
+                          "touching network.gross_los_k; do NOT tune it blind.", frac);
+            else
+                log->info("Network (gross-LOS screen): {:.3f} % of LOS-epochs cleared the bar "
+                          "(§24.18's threshold sanity line is 5 %).", frac);
+        }
+        // Invariant #7: an edge without an IDENTITY is not an event.  These are the
+        // identities — who was declared, and where the screen stood down instead.
+        auto topTable = [&](const char* what, const char* axis,
+                            const std::map<std::string, long long>& m) {
+            if (m.empty()) return;
+            std::vector<std::pair<std::string, long long>> v(m.begin(), m.end());
+            std::sort(v.begin(), v.end(), [](const auto& a2, const auto& b2) {
+                return a2.second != b2.second ? a2.second > b2.second : a2.first < b2.first;
+            });
+            std::string line;
+            std::size_t n = 0;
+            for (const auto& kv : v) {
+                if (n++ >= 12) { line += " …"; break; }
+                line += fmt::format("{}{}={}", line.empty() ? "" : " ", kv.first, kv.second);
+            }
+            log->info("Network (gross-LOS screen): {} by {} ({} distinct): {}",
+                      what, axis, v.size(), line);
+        };
+        topTable("declarations", "station", g.declared_by_station);
+        topTable("declarations", "satellite", g.declared_by_sat);
+        topTable("stand-down station-epochs", "station", g.standdown_by_station);
+    }
+
     // --- iono-deweight RELEASE hygiene run-end telemetry -----------------------
     // (docs/SPEC_deweight_release_hygiene.md).  Standing invariant #4, with a twist
     // this card has to state out loud: at the event it was SPEC'd against, the

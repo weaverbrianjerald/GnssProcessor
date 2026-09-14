@@ -100,6 +100,7 @@
 #include "filter/NetworkAnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "filter/NetworkSignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "filter/NetworkMeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
+#include "filter/NetworkGrossLos.hpp"    // card GL: the gross line-of-sight screen (§24.18)
 #include "filter/NetworkRaim.hpp"        // INC-9: post-fit network RAIM
 #include "filter/NetworkClockQc.hpp"
 #include "filter/NetworkFrameDiag.hpp"   // P1-3/P1-4 trigger instrumentation (SPEC_day129_frame_guards)    // INC-10: post-solve satellite-clock QC
@@ -2435,6 +2436,17 @@ int Application::runNetwork() {
                                retro_feed, n_arc_refloat_epoch, prires_est,
                                &slip_qc.epoch);
         }
+        // Card GL (docs/SPEC_event_harness.md §24.18): the GROSS LINE-OF-SIGHT
+        // screen — the one acting post-fit tier that screens CODE.  Placed inside
+        // this bracket, immediately after the RAIM pass, for the ordering reason
+        // RAIM's own header gives: erasing a `local_carry` entry IS the refloat, so
+        // it must run AFTER the carry harvest (SB_LEVELING) and BEFORE the epoch
+        // stash tail.  It has NO arming interlock on RAIM: it owns its own residual
+        // walk and its own state precisely because every other tier is phase-only,
+        // and it must be able to run on a lineage that arms none of them.  No-op
+        // (not even a state allocation) unless network.gross_los_screen.
+        networkGrossLosScreen(ctx, config_, log, traces, se, stations, est, x_s,
+                              asm_res, est_index_of, pl_now_s);
         subEnd(SB_RAIM);       // D0b: close block 2 (RAIM)
         subBegin(SB_CLOCKUPD); // D0b block 8: two-state clock update + fault QC + retro-flag feed
         networkClockQc(ctx, config_, log, traces, ws, se, est, x_s,

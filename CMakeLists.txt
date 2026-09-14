@@ -188,6 +188,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkClockAnchor.cpp
     src/core/filter/NetworkFrameDiag.cpp
+    src/core/filter/NetworkGrossLos.cpp
     src/core/filter/NetworkStationBlock.cpp
     src/core/filter/NetworkHandoverStransform.cpp
     src/core/filter/NetworkRowClassify.cpp
@@ -360,6 +361,7 @@ add_executable(gnss_tests
     tests/test_redundancy_census.cpp
     tests/test_network_mdb.cpp
     tests/test_block_baarda.cpp
+    tests/test_network_gross_los.cpp
     tests/test_station_congruence.cpp
     tests/test_prior_residual_census.cpp
     tests/test_producer_ar_trace.cpp

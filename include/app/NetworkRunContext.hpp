@@ -30,6 +30,7 @@
 #include "filter/NetworkSignalIntegrity.hpp" // SignalIntegrityArc + tallies (flicker/gap signal integrity)
 #include "filter/NetworkIonoDwRelease.hpp"   // NetworkIonoDwReleaseTallies (iono-deweight release hygiene)
 #include "filter/NetworkRaim.hpp"            // NetworkRaimCiTallies (RAIM pool re-host)
+#include "filter/NetworkGrossLos.hpp"        // NetworkGrossLosTallies / GrossLosState (card GL)
 #include "filter/NetworkPrefitCensus.hpp"    // NetworkPrefitCensusTallies (prefit census / fuse / topology / recorder)
 #include "filter/NetworkCarryVceApply.hpp"   // NetworkCarryVceApply (M2 v2 carry variance-factor state)
 #include "filter/NetworkMdb.hpp"             // NetworkMdbEpoch + NetworkMdbTallies (Baarda MDB reliability)
@@ -313,6 +314,20 @@ namespace GnssProcessor {
         /// drained into the C3c funnel at the next epoch's head.  ANDed with
         /// `raim_ci_on`; false = the screen measures and counts but queues nothing.
         bool raim_ci_refloat{};
+        /// Card GL (docs/SPEC_event_harness.md §24.18): the GROSS LINE-OF-SIGHT screen
+        /// is armed for this run.  Resolved once from @c network.gross_los_screen so the
+        /// driver, the assembly, the seam and the teardown all read ONE bool and cannot
+        /// disagree about whether the state exists.  The ONLY solve-affecting QC knob in
+        /// this neighbourhood; OFF the seam is never called, no LOS state is allocated,
+        /// @c NetStation::gl_code_sigma_scale is never populated, and the run is
+        /// byte-identical.
+        bool   gl_on{};
+        /// Card GL: the σ multiplier a declared line of sight's CODE rows fold at
+        /// (@c network.gross_los_deweight) — the assembly divides the row's information
+        /// weight by its square.  Held in the knobs rather than re-read from config at
+        /// the assembly because the publish half and the fold half must not be able to
+        /// disagree mid-run.
+        double gl_deweight{ 1.0 };
         /// QUEUE item 4 R2 (SPEC_t3_null_derivation §6/§7.5): declared per-station
         /// variance factor — measure-only, feeds no denominator.
         bool   staf_on{};
@@ -1294,6 +1309,26 @@ namespace GnssProcessor {
         /// which is one epoch of today's white-iono behaviour (the @c iono_carry
         /// precedent), and a restored entry would carry no block anyway.
         std::map<std::pair<int, std::string>, LocalCarry> iono_blk_carry;
+        /// Card GL (docs/SPEC_event_harness.md §24.18): the gross line-of-sight
+        /// dispositions, keyed (station index, satellite) — the same key the iono
+        /// carries above use, deliberately, because a gross LOS's response reaches
+        /// exactly those entries.  Holds BOTH the streaks of every screened line of
+        /// sight and the declared subset; the declared subset is what
+        /// @ref networkGrossLosPublishScales turns into the assembly's code-row σ
+        /// scales.  Entries are pruned on the absent-satellite edge
+        /// (@c network.gross_los_max_gap_s), so the map tracks the live LOS population
+        /// rather than growing monotonically.  Empty unless @c knobs.gl_on.
+        ///
+        /// NOT snapshotted and NOT fingerprinted: the state is one screen's short-horizon
+        /// evidence (two epochs of streak), not a carried estimate, so a warm resume
+        /// re-earns it within @c gross_los_epochs epochs and a snapshot written with the
+        /// screen off stays readable with it on.
+        std::map<std::pair<int, std::string>, GrossLosState> gl_state;
+        /// Card GL: per-(station, satellite) last event sequence, for
+        /// @c network.gross_los_event_holdoff_ep.  Empty at the default holdoff 0.
+        std::map<std::string, long long> gl_event_last;
+        /// Card GL: screened-epoch sequence number, the holdoff's clock.
+        long long gl_seq{ 0 };
         /// RX-CLK-in-block (@c network.carry_rx_clock_in_block): the carried
         /// receiver-clock-family local columns, keyed (station index, kind) with kind ""
         /// for the PRIMARY receiver clock and the system name for each ISB.  Value is the
@@ -2387,6 +2422,11 @@ namespace GnssProcessor {
         /// unless ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from
         /// "census empty" from "nothing flagged" (standing invariant #4).
         NetworkRaimCiTallies raim_ci;
+        /// Card GL run-end telemetry (docs/SPEC_event_harness.md §24.18).  All-zero
+        /// unless ctx.knobs.gl_on; the denominators separate "seam never ran" from
+        /// "no code row reached it" from "nothing cleared the bar" from "evidence
+        /// never persisted" (standing invariant #4).
+        NetworkGrossLosTallies gross_los;
         // Product-referenced measurement admission
         // run tallies — every field documented
         // on the struct.  Bumped only when ctx.knobs.adm_on, and reported by the
@@ -2571,6 +2611,7 @@ namespace GnssProcessor {
         long long n_cr_sh_conv_flushes    = 0;  ///< how many times that flush fired (expected 1)
         long long n_cr_raim_attrib        = 0;  ///< T4 ATTRIBUTION refloat (live only when network.raim_attribution is armed)
         long long n_cr_raim_consensus     = 0;  ///< T3 CONSENSUS refloat (live only when raim_attribution is NOT armed — the two are a run-constant either/or, never a split)
+        long long n_cr_gross_los          = 0;  ///< Card GL: level entries erased by a GROSS LINE-OF-SIGHT declaration (docs/SPEC_event_harness.md §24.18).  Family (C) like the T4 erase — the arc is still tracked and its next harvest re-stashes it.  Zero unless network.gross_los_screen.
 
         // (D) ONE-SOLVE FRAME SKIPS — the frame stepped, so the carried value is
         //     stale in the OLD gauge; the same epoch's harvest re-stashes any
