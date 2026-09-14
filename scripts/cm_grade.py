@@ -64,6 +64,15 @@ ARM_KNOBS = {
               ["clock_datum_station", "stations list", "need >=2 stations", "datum"]),
     "a8": ("network.stations cut to WROC/GOP6/FFMJ + clock_datum_station WROC00POL",
            ["clock_datum_station", "stations list", "need >=2 stations", "datum"]),
+    # card PV (s24.11) — the VEHICLE test.  Not knob arms: PV-A is the pl2 leveling vehicle on its own
+    # (EXT63) chain, PV-B is the field golden with the vehicle delta and nothing else.
+    "pva": ("PV-A: _fldf3_pl2 flattened (the F3 converging LEVELING vehicle on the EXT63 chain), 2 h cold",
+            ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
+             "phase-datum", "leveling", "inject", "do_amb_carry", "anchor", "EWL", "UWL", "lane"]),
+    "pvb": ("PV-B: the field golden + the leveling-VEHICLE delta ONLY (carry_invariant off, lanes off, "
+            "relevel_free_epoch, gauge_project, the phase-datum family)",
+            ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
+             "phase-datum", "leveling", "inject", "do_amb_carry", "anchor", "EWL", "UWL", "lane"]),
 }
 
 RUN_END = [
@@ -252,8 +261,13 @@ def epoch_status(path, t_lo, t_hi):
 
 
 def strip_paths(line, arm):
-    """Normalize the run-dir name inside logged paths so only real config differences survive the diff."""
-    return re.sub(r"_cm_a\d(?:_[A-Za-z0-9]+)?", "_cm_ARM", line)
+    """Normalize the run-dir name inside logged paths so only real config differences survive the diff.
+
+    The token was `_cm_a<digit>…` while every arm was a<digit>; card PV's arms are `_cm_pva` /
+    `_cm_pvb`, whose run paths would otherwise read as a config difference on every line that names
+    one.  The widened pattern still collapses `_cm_a0`, `_cm_a6b` and `_cm_a0_nozwd` exactly as before.
+    """
+    return re.sub(r"_cm_[A-Za-z]+\d*(?:_[A-Za-z0-9]+)?", "_cm_ARM", line)
 
 
 def config_log_diff(lines0, linesN, arm0, armN):
