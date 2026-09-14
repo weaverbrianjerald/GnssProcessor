@@ -2279,6 +2279,12 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     // StationAssembly — the pl_los_beff discipline.  MEASURE-ONLY, and OFF the map is
     // never touched, so the produce loop pays one bool test per folded column.
     const bool   amb_state_tr  = ctx.knobs.trace_amb_state;
+    // RF-1 step 4: the vehicle owns the slip RESPONSE.  Under float_kf the free-epoch
+    // latch and the gap cliff no longer SKIP the inject — the serial pre-assembly pass
+    // (networkAmbFloatApplyDrops) has already dropped those arcs to their birth variance,
+    // so they fold at birth strength.  OFF, both sites keep their `continue` verbatim.
+    const bool   amb_float_kf  = ctx.knobs.amb_float_kf;
+    const bool   amb_floor_on  = amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0;
     // SPEC_slip_relevel_walk: read-only parallel consult of the latched
     // free-epoch set (filled serially in PASS-A; const for the whole produce).
     const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
@@ -3249,6 +3255,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     double var_add{0.0};
                 };
                 std::vector<PlPend> pl_pend;   // stays empty OFF
+                // RF-1 step 4: this station's LOS elevations by satellite, for the
+                // BIRTH-PRIOR FLOOR's elevation mapping.  Built ONLY when the floor is
+                // armed — the pl_los_beff / el_of precedent — so an unarmed run never
+                // walks the modeled set for this.
+                std::map<std::string, double> amb_elev_of;
+                if (amb_floor_on)
+                    for (const auto& mo : modeled[i]) amb_elev_of[mo.satellite] = mo.elevation;
                 if (do_amb_carry) {
                 for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
                     const auto parts = StateKeys::parseAmbiguityKey(key);
@@ -3263,6 +3276,14 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                     const Eigen::Index col = static_cast<Eigen::Index>(hit->second);
                     R.pl_amb.push_back(PlAmb{col, parts->satellite, parts->signal,
                                              x_lin(amb_idx), key});
+                    // RF-1 step 4: the LOS elevation the harvest maps the BIRTH-PRIOR
+                    // FLOOR with.  Built only when the floor is armed — off it, the map
+                    // is never walked and PlAmb keeps its -1 sentinel (⇒ zenith).
+                    if (amb_floor_on) {
+                        const auto ev = amb_elev_of.find(parts->satellite);
+                        if (ev != amb_elev_of.end())
+                            R.pl_amb.back().elev_deg = ev->second;
+                    }
                     if (iono_on) iono_sats_seen.insert(parts->satellite);
 
                     // A pending re-seed marks the prior arc value as no longer
@@ -3286,7 +3307,16 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                                {static_cast<int>(i), key})) {
                         ++R.relevel_free_skips;
                         if (iono_on) iono_freed_sats.insert(parts->satellite);
-                        continue;
+                        // RF-1 step 4 (§3.4): under the float_kf vehicle this arc's prior
+                        // was already DROPPED to its birth variance by the serial
+                        // pre-assembly pass, so it is NOT skipped — it folds, at birth
+                        // strength.  That is the whole change: today's free epoch removes
+                        // ALL information about the column and opens an unbounded
+                        // direction the shared parameters re-balance into (R10's 88 % of
+                        // unsignalled clock steps); a bounded drop removes it down to a
+                        // STATED level.  The counter above still names the population, so
+                        // the two vehicles' response loads stay comparable.
+                        if (!amb_float_kf) continue;
                     }
                     if (!std::isfinite(x_lin(amb_idx))) continue;  // non-finite state → don't inject
 
@@ -3304,7 +3334,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         // last_seen_s first.  Per-station (parallel produce);
                         // folded serially below.
                         ++R.inject_stale_skips;
-                        continue;
+                        // RF-1 step 4 (§7.2): the same change as the free-epoch latch —
+                        // the serial pre-assembly pass has already dropped this arc to
+                        // its birth variance, so the cliff folds at birth strength
+                        // instead of dropping the column's memory entirely for an epoch.
+                        // The post-harvest PRUNE still ERASES the arcs that are genuinely
+                        // gone, which is §3.4's one surviving erase case.
+                        if (!amb_float_kf) continue;
                     }
                     if (iono_on) iono_sats_carried.insert(parts->satellite);
                     // var_eff = var + q·gap, floored by the optional lock-in guard

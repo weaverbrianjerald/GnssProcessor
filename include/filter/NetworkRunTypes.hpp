@@ -821,6 +821,13 @@ struct PlAmb {
     std::string  signal;  ///< RINEX signal / IF combo.
     double       x_lin;   ///< This epoch's ambiguity linearization point (state value).
     std::string  amb_key; ///< Full ambiguity key (clears a one-shot IF-phase refloat mark post-stash).
+    /// RF-1 step 4: this LOS's elevation (degrees) this epoch, or −1 when the station's
+    /// modeled observation set did not carry it.  Recorded at the inject ONLY when
+    /// @c network.amb_float_birth_var_m2 is armed (the map walk is otherwise skipped
+    /// entirely), and read by the harvest to map the BIRTH-PRIOR FLOOR exactly as the
+    /// code row weights are mapped — σ²(e) = σ²_zen / sin^{2p}(e).  A flat zenith floor
+    /// would be optimistic at precisely the low elevations that own the metre-plus tail.
+    double       elev_deg{-1.0};
 };
 
 /// ---------------------------------------------------------------------------

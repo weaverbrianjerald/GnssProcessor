@@ -4641,6 +4641,28 @@ int networkTeardown(
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
                   ctx.counters.n_amb_block_fallback);
+    // RF-1 step 4 (§3.4 / §7.4 D3): the DROP inventory by cause, and the birth floor's
+    // own ON-path evidence.  Invariant #4 in the direction design §7.4 states it: "a
+    // float_kf run with 0 drops is a MISWIRE, not a quiet run" — so 0 is a WARN, with
+    // the population that WOULD have been dropped named beside it.
+    if (ctx.knobs.amb_float_kf && ctx.knobs.amb_birth_var_floor > 0.0) {
+        const auto& C = ctx.counters;
+        log->log(C.n_amb_drop > 0 ? spdlog::level::info : spdlog::level::warn,
+                 "Network (RF-1 step 4 bounded drop): {} drop(s) over {} epoch(s) — {} "
+                 "free-epoch latch, {} stale gap, {} T4 attribution, {} T3 consensus; {} "
+                 "call(s) found the arc already at or below birth strength.  Birth floor "
+                 "{} m^2 at zenith, elevation-mapped at the code weights' power: {} birth "
+                 "stash(es) were RAISED by it.  The ERASE survives for the gap prune "
+                 "({} entr(ies)) and re-admission — 'this is a different arc'.  0 drops "
+                 "under an armed vehicle is a MISWIRE, not a quiet run: compare against "
+                 "the {} free-epoch latch(es) and {} inject-site stale skip(s) the "
+                 "detectors and the cliff actually raised.",
+                 C.n_amb_drop, C.n_amb_drop_epochs, C.n_amb_drop_relevel_free,
+                 C.n_amb_drop_stale_gap, C.n_amb_drop_t4, C.n_amb_drop_t3,
+                 C.n_amb_drop_idempotent, ctx.knobs.amb_birth_var_floor,
+                 C.n_amb_birth_floored, C.n_cr_gap_prune,
+                 C.n_relevel_free_skips, C.n_cr_inject_stale);
+    }
     // RF-1 step 3, design risk #3 made a GATE rather than a note: "count it, log it at
     // WARN with identities, and make a fallback rate above a small threshold a run-end
     // FAILURE rather than a note".  Under float_kf a non-SPD block silently returns those

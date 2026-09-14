@@ -2589,8 +2589,14 @@ namespace GnssProcessor {
         //     and S-transform counters are PLACEHOLDERS for steps 4–5 and are reported
         //     at run end so an arm that arms a mechanism and moves none of them is
         //     visible immediately rather than after a grade.
-        long long n_amb_drop              = 0;  ///< RF-1 step 4: carried priors DROPPED back to their birth prior (value_abs kept).  0 in this build.
-        long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.  0 in this build.
+        long long n_amb_drop              = 0;  ///< RF-1 step 4: carried priors DROPPED back to their birth prior (value_abs kept).
+        long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.
+        long long n_amb_drop_relevel_free = 0;  ///< …of which from the detectors' latched free-epoch set (was: skip one inject).
+        long long n_amb_drop_stale_gap    = 0;  ///< …of which from the inject-site gap cliff (was: skip one inject).
+        long long n_amb_drop_t4           = 0;  ///< …of which from the RAIM prominence-attribution refloat (was: ERASE the entry).
+        long long n_amb_drop_t3           = 0;  ///< …of which from the RAIM per-satellite consensus refloat (was: ERASE the entry).
+        long long n_amb_drop_idempotent   = 0;  ///< drop calls that found the arc ALREADY at or below birth strength — two detectors on one arc in one epoch, or an arc that never converged.  The age clock still restarts; the variance does not move.
+        long long n_amb_birth_floored     = 0;  ///< birth stashes whose var_birth was RAISED by network.amb_float_birth_var_m2 above the arc's own first-stash variance — the ON-path telemetry of the floor (invariant #4: 0 under an armed floor means every arc was already born looser than it).
         long long n_amb_stransform        = 0;  ///< RF-1 step 5: declared anchor S-transformations applied to the carry.  0 in this build.
         long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.  0 in this build.
         long long n_amb_block_fallback    = 0;  ///< RF-1 step 3 risk #3: station-epochs whose joint block fell back to per-column rows — a VEHICLE CHANGE on one station-epoch, which is why it is counted rather than noted.  0 in this build.

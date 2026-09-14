@@ -36,6 +36,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
+#include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkCoupling.hpp"
 #include "filter/NetworkEstimator.hpp"
@@ -646,6 +647,104 @@ TEST(AmbFloatVehicleTest, LegacyDiagonalFoldCollapsesFasterThanOneOverN) {
     // taking the same code path.
     const RecursionResult j = runRecursion(/*joint=*/true, 30);
     EXPECT_LT(d.var_n[29], 0.5 * j.var_n[29]);
+}
+
+// =============================================================================
+// (7) THE DROP (design §6.2 tests 3 and 4) — RF-1 step 4.
+//
+// "A slip is a DROP of the prior, and only that."  The operator's contract is what
+// separates it from the two things it replaces: a free epoch (which removes ALL
+// information for one epoch, opening an unbounded direction the shared parameters
+// re-balance into) and an erase (which destroys the arc's identity along with its
+// confidence).  These cases pin both halves.
+// =============================================================================
+
+TEST(AmbFloatVehicleTest, DropRestoresTheBirthVarianceAndClearsTheOldRegression) {
+    LocalCarry lc{-12.0, /*var=*/1.0e-6, /*last_seen_s=*/500.0};
+    lc.var_first = 0.82;
+    lc.var_birth = 0.82;
+    lc.birth_ep  = 11;
+    lc.birth_s   = 100.0;
+    lc.relevel_s = 100.0;
+    lc.n_folds   = 40;
+    lc.coupling  = {GnssProcessor::CoupledShared{GnssProcessor::SharedParamKind::Clock,
+                                                 "G01", "", 0, 0, 'C', 0, 0.8, 1.5, 0.2}};
+    auto blk = std::make_shared<GnssProcessor::PlHarvestBlock>();
+    blk->C = Eigen::MatrixXd::Identity(2, 2);
+    lc.blk = blk;
+    lc.blk_idx = 1;
+
+    EXPECT_TRUE(GnssProcessor::ambFloatDrop(lc, /*floor_m2=*/0.0, /*now_s=*/900.0,
+                                            /*now_ep=*/31));
+    EXPECT_DOUBLE_EQ(lc.var, 0.82);              // restored to the birth prior, exactly
+    EXPECT_TRUE(lc.coupling.empty());            // the regression belonged to the OLD value
+    EXPECT_EQ(lc.blk, nullptr);
+    EXPECT_EQ(lc.blk_idx, -1);
+    EXPECT_DOUBLE_EQ(lc.relevel_s, 900.0);       // the age clock restarts
+    EXPECT_EQ(lc.dropped_ep, 31);
+}
+
+// A DROP IS NOT AN ERASE (design §6.2 test 4).  The arc's identity survives, so the age
+// gates, the sim slip oracle's window floor and the restored-arc sentinel all keep their
+// meaning — and the level is still there for the lane-preserving refloat to use later.
+TEST(AmbFloatVehicleTest, DropKeepsTheValueAndTheArcsIdentity) {
+    LocalCarry lc{-12.0, 1.0e-6, 500.0};
+    lc.var_first = 0.82; lc.var_birth = 0.82;
+    lc.birth_ep = 11; lc.birth_s = 100.0; lc.n_folds = 40;
+    GnssProcessor::ambFloatDrop(lc, 0.0, 900.0, 31);
+    EXPECT_DOUBLE_EQ(lc.value_abs, -12.0);
+    EXPECT_DOUBLE_EQ(lc.var_first, 0.82);
+    EXPECT_DOUBLE_EQ(lc.var_birth, 0.82);
+    EXPECT_EQ(lc.birth_ep, 11);
+    EXPECT_DOUBLE_EQ(lc.birth_s, 100.0);
+    EXPECT_DOUBLE_EQ(lc.last_seen_s, 500.0);
+    EXPECT_EQ(lc.n_folds, 40);
+}
+
+// The floor can only LOOSEN.  An arc born tighter than the posture's floor is dropped to
+// the floor; an arc born looser keeps its own (larger) birth variance.
+TEST(AmbFloatVehicleTest, DropTakesTheLooserOfBirthVarianceAndFloor) {
+    LocalCarry tight{0.0, 1e-6, 0.0};  tight.var_first = 0.01; tight.var_birth = 0.01;
+    EXPECT_TRUE(GnssProcessor::ambFloatDrop(tight, /*floor_m2=*/0.25, 1.0, 1));
+    EXPECT_DOUBLE_EQ(tight.var, 0.25);
+    LocalCarry loose{0.0, 1e-6, 0.0};  loose.var_first = 4.0;  loose.var_birth = 4.0;
+    EXPECT_TRUE(GnssProcessor::ambFloatDrop(loose, /*floor_m2=*/0.25, 1.0, 1));
+    EXPECT_DOUBLE_EQ(loose.var, 4.0);
+}
+
+// An idempotent re-drop (two detectors on one arc in one epoch) must not tighten the
+// prior — and must still restart the age clock, because the LEVEL is doubted either way.
+TEST(AmbFloatVehicleTest, ReDroppingAnAlreadyDroppedArcDoesNotTightenIt) {
+    LocalCarry lc{0.0, 1e-6, 0.0};
+    lc.var_first = 0.5; lc.var_birth = 0.5;
+    EXPECT_TRUE(GnssProcessor::ambFloatDrop(lc, 0.0, 10.0, 1));
+    EXPECT_DOUBLE_EQ(lc.var, 0.5);
+    EXPECT_FALSE(GnssProcessor::ambFloatDrop(lc, 0.0, 20.0, 2));   // already at birth
+    EXPECT_DOUBLE_EQ(lc.var, 0.5);
+    EXPECT_DOUBLE_EQ(lc.relevel_s, 20.0);
+    EXPECT_EQ(lc.dropped_ep, 2);
+}
+
+// THE BIRTH FLOOR IS ELEVATION-MAPPED like the code row weights (design §3.3(b)).  A flat
+// zenith floor would be optimistic at exactly the low elevations that own the metre-plus
+// tail, so this pins the mapping, its zenith identity, and its two guards.
+TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
+    using GnssProcessor::ambFloatBirthFloor;
+    constexpr double p = 1.0;                       // the default code elevation power
+    EXPECT_DOUBLE_EQ(ambFloatBirthFloor(0.25, 90.0, p), 0.25);   // zenith = the knob
+    // 30 degrees: sin = 0.5, so sigma^2 scales by 1/0.5^2 = 4.
+    EXPECT_NEAR(ambFloatBirthFloor(0.25, 30.0, p), 1.0, 1e-12);
+    // 15 degrees (the usual mask) is ~14.9x zenith at p = 1.
+    EXPECT_NEAR(ambFloatBirthFloor(0.25, 15.0, p),
+                0.25 / std::pow(std::sin(15.0 * 3.14159265358979323846 / 180.0), 2.0), 1e-12);
+    // A gentler power gives a gentler ramp — the knob is the posture's, not a constant.
+    EXPECT_LT(ambFloatBirthFloor(0.25, 15.0, 0.5), ambFloatBirthFloor(0.25, 15.0, 1.0));
+    // Guards: the floor is OFF at 0, an unavailable elevation reads as zenith (the
+    // conservative direction), and a grazing elevation cannot produce an infinite floor.
+    EXPECT_DOUBLE_EQ(ambFloatBirthFloor(0.0, 15.0, p), 0.0);
+    EXPECT_DOUBLE_EQ(ambFloatBirthFloor(0.25, -1.0, p), 0.25);
+    EXPECT_TRUE(std::isfinite(ambFloatBirthFloor(0.25, 0.001, p)));
+    EXPECT_GE(ambFloatBirthFloor(0.25, 0.001, p), 0.25);
 }
 
 // The value must converge to the true ambiguity, not merely become precise: a

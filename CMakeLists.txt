@@ -222,6 +222,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkOraclePin.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
+    src/core/filter/NetworkAmbFloat.cpp
     src/core/filter/NetworkBiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
