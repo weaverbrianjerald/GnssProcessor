@@ -36,7 +36,7 @@ record the program is re-founding **on**.
 | --- | --- |
 | Build, standing invariants, the standard armed set, the anti-regrowth trees | `CLAUDE.md` (repo root) |
 | The goldens — the armed set made executable | `config/golden/` + `python scripts/make_golden_config.py --verify` |
-| Every knob's verdict and regime | [`config-ledger`](#config-ledger--topicsconfig-ledgermd) — and the machine-read twin `CONFIG_promotion_ledger.json` |
+| Every knob's verdict and regime | [CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md) — a **living register**, kept whole; `CONFIG_promotion_ledger.json` is its machine-read twin |
 | What is owed, everywhere | [status/OPEN_ITEMS.md](status/OPEN_ITEMS.md) |
 | Configuration reference | [CONFIG.md](CONFIG.md) |
 | The real-data truth-graded harness | [test_suite.md](test_suite.md) |
@@ -57,7 +57,10 @@ record the program is re-founding **on**.
 3. **The INDEX line is updated twice**: when the card is pre-registered (status `open`),
    and when it closes (`closed` / `parked` / `superseded`, with the date).
 4. **No non-archive file over ~60 KB.** When one approaches it, split it by topic —
-   the card id stays, the file gains a suffix, and both are listed here.
+   the card id stays, the file gains a suffix, and both are listed here. The one
+   exemption is a **living register** that is appended to one row at a time and read
+   by a tool at a fixed path — today that is `CONFIG_promotion_ledger.md` alone, named
+   in `SIZE_EXEMPT` in `scripts/docs_index_check.py` with its reason.
 5. **Every card file starts with the STATUS block** — `id`, `topic`, `status`,
    `summary`, `source`, plus the knobs / hashes / run dirs / date span. `status` is one
    of `open`, `closed`, `parked`, `superseded`, `reference`; the project's own verdict
@@ -378,30 +381,11 @@ Standing documents (not split this pass):
 
 ### `config-ledger` — [topics/config-ledger.md](topics/config-ledger.md)
 
-| card | one line | status | last dated |
-| --- | --- | --- | --- |
-| [A2](cards/config-ledger/LEDGER-A2-SESSION-GATES.md) | the F-series session gates — S2H, the H-heartbeat rider, the internal 12 h stability ve… | closed | 2026-08-12 |
-| [A1](cards/config-ledger/LEDGER-A1-PCARRY-GUARD-AND-R-RESULTS.md) | the load-time parallel_carry / parallel_reduce guard, and results R1–R6 | closed | 2026-08-15 |
-| [LEDGER](cards/config-ledger/LEDGER-00-HOW-TO-READ.md) | how to read the ledger — the verdict tiers, the evidence rules, and the relationship to… | reference | 2026-08-15 |
-| [cross-cutting](cards/config-ledger/LEDGER-CROSS-CUTTING-NOTES.md) | the audit's cross-cutting notes — the rules that govern more than one row | reference | 2026-08-15 |
-| [Tier 3 (a)](cards/config-ledger/LEDGER-TIER-3A-UNVALIDATED.md) | UNVALIDATED, the SH / carry / clock-datum / MDB rows | reference | 2026-09-01 |
-| [A4](cards/config-ledger/LEDGER-A4-GOLDEN-CONFIGS.md) | THE GOLDEN CONFIGS — the ledger made executable, and the smoke results | closed | 2026-09-05 |
-| [A3](cards/config-ledger/LEDGER-A3-WU93-NIGHT.md) | the wu93 night — the wind-up fix landed, the slip-response lane verdicts, and the golde… | closed | 2026-09-09 |
-| [A5](cards/config-ledger/LEDGER-A5-FIELD-SESSION.md) | the 2026-09-09 field session — the gap re-entry response, bridge v3, and the E1 probe | closed | 2026-09-10 |
-| [Tier 2 (a)](cards/config-ledger/LEDGER-TIER-2A-IONO-ZWD-CARRY.md) | RECOMMEND_SCOPED, the iono / ZWD / carry-covariance rows | reference | 2026-09-10 |
-| [Tier 3 (c)](cards/config-ledger/LEDGER-TIER-3C-LEVELING-CARRY.md) | UNVALIDATED, the leveling-carry family and the in-block iono / rx-clock carries | reference | 2026-09-10 |
-| [Tier 3 (f)](cards/config-ledger/LEDGER-TIER-3F-ORACLE-AR-F3.md) | UNVALIDATED, the oracle knobs, the producer-AR trace and the F3 station block | reference | 2026-09-10 |
-| [Tier 4](cards/config-ledger/LEDGER-TIER-4-KEEP-OFF.md) | KEEP_OFF — diagnostic, falsified, or superseded | reference | 2026-09-10 |
-| [Tier 4 (b)](cards/config-ledger/LEDGER-TIER-4B-KEEP-OFF.md) | KEEP_OFF, continued — the PB-gauge level, GLONASS, lane fold, phase-datum and service-m… | reference | 2026-09-10 |
-| [Tier 2 (c2)](cards/config-ledger/LEDGER-TIER-2C2-CANDIDACY-AND-CAPTURE.md) | RECOMMEND_SCOPED, the cold anchor-fallback candidacy row and the snapshot capture / res… | reference | 2026-09-11 |
-| [Tier 3 (b)](cards/config-ledger/LEDGER-TIER-3B-RAIM-AND-HANDOVER.md) | UNVALIDATED, the RAIM riders and the promoted handover pair | reference | 2026-09-12 |
-| [Tier 3 (d)](cards/config-ledger/LEDGER-TIER-3D-SLIP-RESPONSE.md) | UNVALIDATED, the slip-response scope knobs | reference | 2026-09-12 |
-| [Tier 1](cards/config-ledger/LEDGER-TIER-1-RECOMMEND-ON.md) | RECOMMEND_ON — measured benefit, no known counter-scope | reference | 2026-09-13 |
-| [Tier 2 (c)](cards/config-ledger/LEDGER-TIER-2C-RESUME-FAMILY.md) | RECOMMEND_SCOPED, the sticky pivot and the whole `resume_*` / re-admission family | reference | 2026-09-13 |
-| [Tier 2 (e)](cards/config-ledger/LEDGER-TIER-2E-SBASIS-SNAPSHOT-TRACE.md) | RECOMMEND_SCOPED, the S-basis, snapshot-capture and trace rows | reference | 2026-09-13 |
-| [Tier 3 (e)](cards/config-ledger/LEDGER-TIER-3E-BAND-SCOPE-AND-IFTD.md) | UNVALIDATED, the common-band scope and the IF-TD pair / reference-arc rows | reference | 2026-09-13 |
-| [Tier 2 (b)](cards/config-ledger/LEDGER-TIER-2B-SEAM-CLOCK-DATUM-SLIP.md) | RECOMMEND_SCOPED, the snapshot-seam, clock-datum, code-datum and IF-TD reference rows | reference | 2026-09-14 |
-| [Tier 2 (d)](cards/config-ledger/LEDGER-TIER-2D-EMIT-PARALLEL-RAIM.md) | RECOMMEND_SCOPED, the emission, parallel, phase-datum and RAIM rows | reference | 2026-09-14 |
+_No split cards yet — the topic page and the standing documents below are the whole of it._
+
+Standing documents (not split this pass):
+
+- [CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md)
 
 ### `queues` — [topics/queues.md](topics/queues.md)
 
@@ -438,7 +422,6 @@ _No split cards yet — the topic page and the standing documents below are the 
 Standing documents (not split this pass):
 
 - [RUNQUEUE_pdfix_reask.md](RUNQUEUE_pdfix_reask.md)
-
 ---
 
 ## Decisions
@@ -463,14 +446,21 @@ posture call stays in the verdict section of the card that reached it.
 
 ## The frozen monoliths
 
-Nineteen files over 60 KB were split on 2026-09-14. The original of each is kept
+Eighteen files over 60 KB were split on 2026-09-14. The original of each is kept
 byte-for-byte in `docs/archive/` and is never appended to; the old path now holds a
 routing stub whose table resolves any `§N.N` citation in one hop, which is what keeps
 the several hundred `// … (SPEC_x §N.N): …` comments in `src/` and `include/` working.
 
+**A nineteenth file over 60 KB was deliberately NOT split:**
+[CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md). It is a **living register** —
+one row per knob, appended to in place by the `scripts/_*_ledger_oneoff.py` family and
+by every future promotion, with `CONFIG_promotion_ledger.json` as its machine-read
+twin. It stays whole at its path and carries a named size exemption in
+`scripts/docs_index_check.py` (`SIZE_EXEMPT`). See
+[topics/config-ledger.md](topics/config-ledger.md).
+
 | the monolith (frozen) | routing stub at the old path | cards under |
 | --- | --- | --- |
-| [archive/CONFIG_promotion_ledger.md](archive/CONFIG_promotion_ledger.md) | [CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md) | `config-ledger` |
 | [archive/QUEUE_principled_replacements.md](archive/QUEUE_principled_replacements.md) | [QUEUE_principled_replacements.md](QUEUE_principled_replacements.md) | `queues` |
 | [archive/SPEC_amb_iono_split_overcount.md](archive/SPEC_amb_iono_split_overcount.md) | [SPEC_amb_iono_split_overcount.md](SPEC_amb_iono_split_overcount.md) | `ionosphere`, `network-vehicle`, `sim-bed`, `slip` |
 | [archive/SPEC_card1_coupling_carry.md](archive/SPEC_card1_coupling_carry.md) | [SPEC_card1_coupling_carry.md](SPEC_card1_coupling_carry.md) | `network-vehicle` |
@@ -489,7 +479,6 @@ the several hundred `// … (SPEC_x §N.N): …` comments in `src/` and `include
 | [archive/SPEC_synthetic_minimum_network.md](archive/SPEC_synthetic_minimum_network.md) | [SPEC_synthetic_minimum_network.md](SPEC_synthetic_minimum_network.md) | `clock`, `ionosphere`, `network-vehicle`, `resume-seam`, `sim-bed` |
 | [archive/SPEC_t3_null_derivation.md](archive/SPEC_t3_null_derivation.md) | [SPEC_t3_null_derivation.md](SPEC_t3_null_derivation.md) | `raim-qc` |
 | [archive/SPEC_withhold_era_release.md](archive/SPEC_withhold_era_release.md) | [SPEC_withhold_era_release.md](SPEC_withhold_era_release.md) | `raim-qc`, `wire-contract` |
-
 ---
 
 ## Older material

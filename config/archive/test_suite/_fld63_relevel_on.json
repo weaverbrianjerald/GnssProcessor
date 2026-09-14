@@ -1,6 +1,6 @@
 {
  "_comment": "Field arm (slip re-level response), ON leg: OFF leg + relevel_free_epoch + delta_bridge + the v3 GF rider (E4 works on the GPS dual posture; EWL needs triple and stays off). First FIELD exposure of the relevel knobs (SPEC_slip_relevel_walk s8 \"field arm owed\"). Gates: free-epoch latches > 0 and inject skips > 0 (invariant #4), bridge pends > 0, T4 attrib_arc flux not WORSE than OFF, sigma0 families comparable, 0 withholds, PB disc rate not worse. No truth: adopt only if every internal instrument is neutral-to-better.",
- "extends": "_ext63_1h_evt_pl.json",
+ "extends": "C:/GnssProcessor/config/test_suite/_ext63_1h_evt_pl.json",
  "network": {
   "carry_invariant": false,
   "product_output_path": "C:/GnssProcessor/runs/fld63_relevel_on/products.txt",

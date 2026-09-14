@@ -15,7 +15,7 @@
   "",
   "Pair with _congruence_smoke_off.json for the single-knob delta."
  ],
- "extends": "_ft63_redund_on.json",
+ "extends": "C:/GnssProcessor/config/test_suite/_ft63_redund_on.json",
  "network": {
   "congruence_screen": true,
   "congruence_report_sigma": 4.0,

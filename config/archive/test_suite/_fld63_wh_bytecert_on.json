@@ -1,6 +1,6 @@
 {
  "_comment": "BYTE-CERT clone (knob-verbatim, product path only) for the SPEC_withhold_era_release s4 OFF-path cert on the new exe. Original: Field escalation (slip re-level response), ON leg, >=4 h: _fld63_relevel_on.json with max_duration_s 14400 (OFF leg + relevel_free_epoch + delta_bridge + the v3 GF rider; EWL needs triple and stays off). Cloned rather than extended - the ext63 chain is already at the SS23.7 depth ceiling of 8. Gates identical to the 1 h smoke: free-epoch latches > 0 and inject skips > 0 (invariant #4), bridge pends > 0, T4 attrib_arc flux not WORSE than OFF, sigma0 families comparable-or-better, withholds not worse, PB disc rate not worse, availability equal. No truth: adopt only if every internal instrument is neutral-to-better over the SETTLED tail (first ~2 h is convergence budget).",
- "extends": "_ext63_1h_evt_pl.json",
+ "extends": "C:/GnssProcessor/config/test_suite/_ext63_1h_evt_pl.json",
  "processing": {
   "max_duration_s": 14400.0
  },

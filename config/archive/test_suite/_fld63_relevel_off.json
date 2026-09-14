@@ -1,6 +1,6 @@
 {
  "_comment": "Field arm (slip re-level response), OFF leg: the leveled ext63 1h event posture with carry_invariant explicitly OFF so the phase-leveling carry is the live vehicle (the relevel knobs are structurally inert under carry_invariant). Same-build A/B control for _fld63_relevel_on.json. Internal-instrument grading only (no field truth): T4 attrib_arc flux, refloat counters, sigma0 families, PB disc rate, withholds=0.",
- "extends": "_ext63_1h_evt_pl.json",
+ "extends": "C:/GnssProcessor/config/test_suite/_ext63_1h_evt_pl.json",
  "network": {
   "carry_invariant": false,
   "product_output_path": "C:/GnssProcessor/runs/fld63_relevel_off/products.txt",

@@ -7,9 +7,10 @@ byte and all git history is intact, and any of these can be moved back or run in
 > [`test_suite/`](test_suite/), under the same policy as below (cited-by-name, plus the
 > whole `extends` chain of anything cited, plus every warm-resume config, plus the
 > shipped no-underscore configs). See [`test_suite/README.md`](test_suite/README.md) and
-> [`../test_suite/README.md`](../test_suite/README.md) for the counts and the one caveat
-> that pass added — nine archived arms have a bare-basename `extends` whose base stayed
-> behind, so they must be moved back or re-pointed before they run.
+> [`../test_suite/README.md`](../test_suite/README.md) for the counts. Nine of those
+> arms had a bare-basename `extends` whose base stayed behind; each was re-pointed to its
+> base's absolute path when it moved, and all nine were verified to flatten with
+> `scripts/gnss_config_chain.py`, so every config in `test_suite/` loads in place.
 
 ## Why they moved
 

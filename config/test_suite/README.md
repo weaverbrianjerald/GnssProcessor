@@ -44,19 +44,30 @@ grep -rl '_myarm_name' CLAUDE.md docs scripts tests src include config \
 Then close the result under `extends` — a config's `extends` may be a string or a list,
 and its entries may be bare basenames, repo-relative paths, or absolute paths.
 
-## ⚠ Nine archived configs have a relative `extends` that no longer resolves
+## Nine archived configs keep a base that lives here — re-pointed, and verified
 
 `extends` entries that are bare basenames resolve relative to the config's own directory,
-so an archived arm whose base stayed here cannot be run from `../archive/test_suite/` as
-it stands. Move it back, or re-point its `extends` to `../../test_suite/<base>.json`:
+so an archived arm whose base stayed here would not have loaded from
+`../archive/test_suite/`. Those nine were **re-pointed to the absolute path of their base**
+(`C:/GnssProcessor/config/test_suite/<base>.json` — the convention several other arms
+already use), so they load from the archive unchanged:
 
 | archived arm | its base (still here) |
 | --- | --- |
 | `_congruence_smoke_off.json`, `_congruence_smoke_on.json` | `_ft63_redund_on.json` |
 | `_fld63_relevel4h_off.json`, `_fld63_relevel_off.json`, `_fld63_relevel_on.json`, `_fld63_wh_bytecert_off.json`, `_fld63_wh_bytecert_on.json`, `_lvlauth_g3_ctl.json`, `_lvlauth_g3_on.json` | `_ext63_1h_evt_pl.json` |
 
-The other 273 archived configs either carry no `extends` (247) or use an absolute path
-(26), and run in place.
+Each was verified with the loader-faithful flatten helper — 9/9 resolve and merge:
+
+```bash
+python scripts/gnss_config_chain.py config/archive/test_suite/_lvlauth_g3_on.json --chain
+```
+
+The seven `_fld63_` / `_lvlauth_` arms sit on an **8-deep** chain
+(`_ft63_24h_conv` → `_ft63_churn_base` → `_ft63_pdfix_on` → `_ft63_pdfix_v3` → `_agu63` →
+`_golden63_gps_1h_laneoff` → `_ext63_gps_dual_1h` → `_ext63_1h_evt_pl`), which is exactly
+`kMaxExtendsDepth`; every member of it stayed in this directory. The other 273 archived
+configs carry no `extends` (247) or already used an absolute path (26).
 
 ## Before you add another one
 

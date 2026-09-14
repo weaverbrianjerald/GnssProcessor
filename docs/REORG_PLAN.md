@@ -9,6 +9,9 @@ organized by topic is needed."*
 **What this plan commits to.** `docs/` holds 77 markdown files totalling **4.72 MB**,
 of which **19 are over 60 KB** and the top four alone are **1.84 MB** — 39 % of the
 corpus in four files that are appended to, in chronological order, by every session.
+**Eighteen of the nineteen are split**; the nineteenth,
+[`CONFIG_promotion_ledger.md`](CONFIG_promotion_ledger.md), is a LIVING REGISTER and
+stays whole at its path (§4).
 This plan builds a topic tree, moves the existing content into it **verbatim and
 verifiably**, writes the index and the rules, and leaves every existing citation
 resolvable in one hop.
@@ -41,7 +44,7 @@ path `config/test_suite/…`, and `SPEC_pivot_visibility_gauge_defect.md`'s
 | doc | KB | `##` | `###` | first → last commit | commits | inbound refs (file / scope) | topic | this pass |
 | --- | ---: | ---: | ---: | --- | ---: | --- | --- | --- |
 | `SPEC_event_harness.md` | 663 | 29 | 162 | 2026-09-10 → 2026-09-14 | 111 | 572 — src:137 docs:129 include:128 scripts:87 config:40 tests:26 memory:24 CLAUDE.md:1 | harness | **SPLIT** |
-| `CONFIG_promotion_ledger.md` | 585 | 31 | 210 | 2026-07-29 → 2026-09-13 | 96 | 175 — config:89 docs:35 scripts:24 memory:17 src:5 CLAUDE.md:3 include:2 | config-ledger | **SPLIT** |
+| `CONFIG_promotion_ledger.md` | 585 | 31 | 210 | 2026-07-29 → 2026-09-13 | 96 | 175 — config:89 docs:35 scripts:24 memory:17 src:5 CLAUDE.md:3 include:2 | config-ledger | **kept whole** (living register) |
 | `SPEC_amb_iono_split_overcount.md` | 401 | 20 | 67 | 2026-09-04 → 2026-09-10 | 51 | 344 — config:201 docs:57 include:35 src:33 tests:8 scripts:7 memory:3 | ionosphere | **SPLIT** |
 | `SPEC_synthetic_minimum_network.md` | 309 | 32 | 105 | 2026-08-11 → 2026-09-09 | 48 | 340 — config:201 docs:50 src:29 include:26 scripts:15 memory:11 tests:7 CLAUDE.md:1 | sim-bed | **SPLIT** |
 | `SPEC_level_information_budget.md` | 166 | 36 | 94 | 2026-08-05 → 2026-08-21 | 7 | 109 — src:33 docs:23 include:20 config:15 memory:9 scripts:5 tests:3 CLAUDE.md:1 | ionosphere | **SPLIT** |
@@ -246,7 +249,8 @@ home) while the *topic pages* stay short living pages that nobody has to scroll.
 
 ## 4. The nineteen monoliths, and how each is cut
 
-Every `docs/*.md` over 60 KB is split. The cut points are headings — `##` or `###` —
+Every `docs/*.md` over 60 KB is split, except the living register in the box below.
+The cut points are headings — `##` or `###` —
 so a slice is always a whole section, never a paragraph. Cards that the document
 records out of order (the harness interleaves §14.4–§14.9 after §15.11, and §16.7 after
 §17) are reassembled: a target file may own several non-adjacent slices, concatenated
@@ -257,8 +261,7 @@ Two mechanical constraints shaped the cuts:
 1. **No non-archive file over 60 KB.** Where a card is bigger than that, it is cut at
    its own internal boundary and both halves keep the card id — `COLD-FB` becomes
    `COLD-FB-anchor-fallbacks.md` (pre-registration, G1–G3, iteration 1) and
-   `COLD-FB-iterations-2-4.md`. The ledger's Tier 2 and Tier 3 are cut into lettered
-   runs of knob rows the same way.
+   `COLD-FB-iterations-2-4.md`.
 2. **One section with no internal heading cannot be cut at all.**
    `SPEC_amb_iono_split_overcount` §7 (the open-question register) is 56.5 KB of
    continuous text with no `###` inside it. It becomes the single largest card at
@@ -266,25 +269,35 @@ Two mechanical constraints shaped the cuts:
    would require editing the text, which this pass will not do. Its items are the
    raw material for `status/OPEN_ITEMS.md`.
 
-Result: **19 monoliths → 166 card files + 2 decision files + 19 stubs + 19
-archived originals** (168 split targets in all). Per-monolith tables are in
+Result: **18 monoliths → 144 card files + 2 decision files + 18 stubs + 18
+archived originals** (146 split targets in all). Per-monolith tables are in
 [REORG_MAPPING.md](REORG_MAPPING.md).
 
-### The ledger is NOT generated — it is split, with one hazard
+### The ledger is NOT split — it is a LIVING REGISTER
 
 `docs/CONFIG_promotion_ledger.json` is the machine-read artifact
-(`scripts/make_golden_config.py`, `scripts/config_posture_check.py`). The `.md`
-ledger is **not** generated from it: both are edited in parallel, by hand and by the
+(`scripts/make_golden_config.py`, `scripts/config_posture_check.py`). The `.md` ledger is
+**not** generated from it: both are edited in parallel, by hand and by the
 `scripts/_*_ledger_oneoff.py` pattern (`_coldfb_`, `_fieldharness_`, `_rs2_refarc_`,
 `_scopedpromo_`, `_stspromo_`, `_study7_`), each of which opens
-`docs/CONFIG_promotion_ledger.md` by path and patches a row.
+`docs/CONFIG_promotion_ledger.md` **by path** and patches or appends a row.
 
-So the `.md` is split like any other monolith — and the hazard is recorded here and
-in the stub: **after this pass, `docs/CONFIG_promotion_ledger.md` is a stub.** A
-future ledger one-off that appends to that path would write into the stub instead of
-the ledger. The stub says so in its first lines, `scripts/README.md` flags the
-one-off family, and this is filed in `status/OPEN_ITEMS.md` as the one follow-up the
-split creates rather than closes. The `.json` and its generator are untouched.
+That is what makes it a living register rather than a monolith of closed cards, and it is
+why this pass **leaves it whole**: it is not split, not archived, not stubbed. Splitting it
+would break the one-off family and every future promotion, which append at that exact path
+in step with the `.json`.
+
+Three consequences, all implemented:
+
+- `scripts/docs_index_check.py` carries a named `SIZE_EXEMPT` entry for it, with the
+  reason in the source — a living register grows one row at a time and the ~60 KB bar does
+  not apply to it. An exempt file that goes missing is an error, so the exemption cannot
+  quietly become a hole.
+- It is linked from `INDEX.md` (Start here, and the frozen-monoliths section says why it is
+  absent from that list) and from `docs/topics/config-ledger.md`, which is the topic page
+  and carries no cards.
+- Its links are not policed: like the standing documents, it is a leaf in the reachability
+  graph.
 
 ### What this pass deliberately does NOT move
 
@@ -346,8 +359,8 @@ otherwise.
 
 ## 7. Memory files that will want a path update
 
-The author's memory directory is **read-only for this work**. 123 lines across 67
-memory files cite one of the 19 split docs, usually as
+The author's memory directory is **read-only for this work**. 106 lines across 62
+memory files cite one of the 18 split docs, usually as
 `docs/SPEC_<name>.md §N.N`. None of them *break* — the stub at the old path resolves
 every one of them in one hop — but each would read better pointing straight at the
 card file. The author's own directive says so: *"Memory files stay short and point at
@@ -355,7 +368,6 @@ the card files, not at monolith sections, once the tree exists."*
 
 | split doc | memory lines | memory files that cite it |
 | --- | ---: | --- |
-| `CONFIG_promotion_ledger.md` | 17 | `feedback_no_knob_promotion_step.md`, `project_edge1_consumer_link_hrider.md`, `project_event_harness.md`, `project_internal_12h_stability.md`, `project_network_falsified_approaches.md`, `project_network_fullcov_carry.md`, `project_network_phase_leveling.md`, `project_network_ssystem_dia_assessment.md`, `project_pb_gate_v2.md`, `project_s2h_harvest_card.md`, `project_simnet_deep_onoff_campaign_seed.md` |
 | `QUEUE_principled_replacements.md` | 3 | `project_iono_carry_8b_campaign.md`, `project_principled_replacement_queue.md` |
 | `SPEC_amb_iono_split_overcount.md` | 3 | `project_amb_iono_split_overcount.md`, `project_iftd_accuracy_verdict.md`, `project_oracle_pin_card.md` |
 | `SPEC_card1_coupling_carry.md` | 6 | `project_card123_lineage_archive.md`, `project_card1e_gauge_amputation.md`, `project_card1fg_isolation_s14fix.md`, `project_network_fullcov_carry.md` |
@@ -375,7 +387,10 @@ the card files, not at monolith sections, once the tree exists."*
 | `SPEC_t3_null_derivation.md` | 2 | `project_t3_null_derivation.md` |
 | `SPEC_withhold_era_release.md` | 1 | `project_withhold_era_release.md` |
 
-Total: 123 lines across 67 memory files.
+Total: 106 lines across 62 memory files.
+
+A further **17 memory lines cite `CONFIG_promotion_ledger.md`** — those need no
+change at all, because the ledger did not move.
 
 Reproduce the line-level list with:
 

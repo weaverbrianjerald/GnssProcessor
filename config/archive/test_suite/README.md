@@ -20,10 +20,20 @@ reversible; pruning was declined. Before deleting anything here, check whether t
 matching `runs/<name>/config.json` copy also exists — those per-run copies are the
 independent provenance.
 
-## ⚠ Nine of these cannot run in place
+## All of these load in place
 
-Their `extends` is a bare basename, which resolves relative to the config's own directory,
-and their base stayed in `config/test_suite/`. Move the arm back, or re-point its
-`extends` to `../../test_suite/<base>.json`. The list is in
-[`../../test_suite/README.md`](../../test_suite/README.md). The other 273 either carry no
-`extends` (247) or use an absolute path (26).
+Nine had a bare-basename `extends` whose base stayed in `config/test_suite/`; a bare
+basename resolves relative to the config's own directory, so those nine were **re-pointed
+to the absolute path of their base** (`C:/GnssProcessor/config/test_suite/<base>.json`,
+the convention several other arms already use) when they were archived. That edit is the
+only change made to any file in this directory.
+
+Each was verified with the loader-faithful flatten helper — 9/9 resolve and merge:
+
+```bash
+python scripts/gnss_config_chain.py config/archive/test_suite/_lvlauth_g3_on.json --chain
+```
+
+The list and the 8-deep chain behind the seven `_fld63_` / `_lvlauth_` arms are in
+[`../../test_suite/README.md`](../../test_suite/README.md). The other 273 carry no
+`extends` (247) or already used an absolute path (26).

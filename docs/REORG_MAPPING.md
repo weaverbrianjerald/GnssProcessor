@@ -16,33 +16,12 @@ python scripts/docs_split.py --tables
 verdict a card reached (PROMOTED / KEEP_OFF / FALSIFIED / RECOMMEND_SCOPED) stays in
 the card's summary and in its text.
 
+**Not in this list: [`CONFIG_promotion_ledger.md`](CONFIG_promotion_ledger.md).** It is a
+LIVING REGISTER — one row per knob, appended to in place by the
+`scripts/_*_ledger_oneoff.py` family and by every future promotion, with
+`CONFIG_promotion_ledger.json` as its machine-read twin. It stays whole at its path and is
+exempt from the 60 KB bar; see [topics/config-ledger.md](topics/config-ledger.md).
 
-### `docs/CONFIG_promotion_ledger.md` → `docs/cards/config-ledger/` (584 KB, 22 slices, 22 files)
-
-| sections | card id | status | target file |
-| --- | --- | --- | --- |
-| (preamble) | LEDGER | reference | `docs/cards/config-ledger/LEDGER-00-HOW-TO-READ.md` |
-| Tier 1 — RECOMMEND_ON  (measured benefit, no k… … (22 rows) | Tier 1 | reference | `docs/cards/config-ledger/LEDGER-TIER-1-RECOMMEND-ON.md` |
-| Tier 2 — RECOMMEND_SCOPED  (helps in a stated … … (10 rows) | Tier 2 (a) | reference | `docs/cards/config-ledger/LEDGER-TIER-2A-IONO-ZWD-CARRY.md` |
-| `realtime.state_snapshot_path` (+ `_interval_s… … (17 rows) | Tier 2 (b) | reference | `docs/cards/config-ledger/LEDGER-TIER-2B-SEAM-CLOCK-DATUM-SLIP.md` |
-| `network.sticky_pivot`  (RTA-1 sticky clock-pi… … (15 rows) | Tier 2 (c) | reference | `docs/cards/config-ledger/LEDGER-TIER-2C-RESUME-FAMILY.md` |
-| `network.phase_datum_candidacy_usable`  (COLD … … (7 rows) | Tier 2 (c2) | reference | `docs/cards/config-ledger/LEDGER-TIER-2C2-CANDIDACY-AND-CAPTURE.md` |
-| `network.emit_clock_disc` … (30 rows) | Tier 2 (d) | reference | `docs/cards/config-ledger/LEDGER-TIER-2D-EMIT-PARALLEL-RAIM.md` |
-| `network.sbasis_complete` … (17 rows) | Tier 2 (e) | reference | `docs/cards/config-ledger/LEDGER-TIER-2E-SBASIS-SNAPSHOT-TRACE.md` |
-| Tier 3 — UNVALIDATED  (plausible, never measur… … (27 rows) | Tier 3 (a) | reference | `docs/cards/config-ledger/LEDGER-TIER-3A-UNVALIDATED.md` |
-| `network.raim_redundancy_normalize` … (10 rows) | Tier 3 (b) | reference | `docs/cards/config-ledger/LEDGER-TIER-3B-RAIM-AND-HANDOVER.md` |
-| `network.phase_leveling_los_scale`  (F1 — the … … (6 rows) | Tier 3 (c) | reference | `docs/cards/config-ledger/LEDGER-TIER-3C-LEVELING-CARRY.md` |
-| `network.raim_erase_band_scope`  (all \| min_ke… … (3 rows) | Tier 3 (d) | reference | `docs/cards/config-ledger/LEDGER-TIER-3D-SLIP-RESPONSE.md` |
-| `network.cycle_slip.common_band_scope` … (4 rows) | Tier 3 (e) | reference | `docs/cards/config-ledger/LEDGER-TIER-3E-BAND-SCOPE-AND-IFTD.md` |
-| `network.cycle_slip.refloat_band_scope`  (all … … (6 rows) | Tier 3 (f) | reference | `docs/cards/config-ledger/LEDGER-TIER-3F-ORACLE-AR-F3.md` |
-| Tier 4 — KEEP_OFF  (diagnostic, falsified, or … … (23 rows) | Tier 4 | reference | `docs/cards/config-ledger/LEDGER-TIER-4-KEEP-OFF.md` |
-| `network.emit_pb_gauge_level`  (+ `_alpha`, `_… … (16 rows) | Tier 4 (b) | reference | `docs/cards/config-ledger/LEDGER-TIER-4B-KEEP-OFF.md` |
-| Cross-cutting notes from the audit | cross-cutting | reference | `docs/cards/config-ledger/LEDGER-CROSS-CUTTING-NOTES.md` |
-| A1 | A1 | closed | `docs/cards/config-ledger/LEDGER-A1-PCARRY-GUARD-AND-R-RESULTS.md` |
-| A2 | A2 | closed | `docs/cards/config-ledger/LEDGER-A2-SESSION-GATES.md` |
-| A3 | A3 | closed | `docs/cards/config-ledger/LEDGER-A3-WU93-NIGHT.md` |
-| A4, A4.1 | A4 | closed | `docs/cards/config-ledger/LEDGER-A4-GOLDEN-CONFIGS.md` |
-| A5 | A5 | closed | `docs/cards/config-ledger/LEDGER-A5-FIELD-SESSION.md` |
 
 ### `docs/QUEUE_principled_replacements.md` → `docs/cards/queues/` (71 KB, 5 slices, 5 files)
 

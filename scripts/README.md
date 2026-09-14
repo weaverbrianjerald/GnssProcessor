@@ -390,7 +390,7 @@ Cross-checks for the model code; not part of any run.
 
 ## Ledger passes and campaign one-offs
 
-Each was written for one card. ⚠ The `_*_ledger_oneoff.py` family opens `docs/CONFIG_promotion_ledger.md` **by path** — that path is now a routing stub, so the next ledger update must patch the tier card under `docs/cards/config-ledger/` plus `docs/CONFIG_promotion_ledger.json`.
+Each was written for one card. The `_*_ledger_oneoff.py` family opens `docs/CONFIG_promotion_ledger.md` **by path** and patches or appends a row, in step with `docs/CONFIG_promotion_ledger.json`. That is why the ledger is a LIVING REGISTER and was deliberately left whole by the 2026-09-14 docs reorganisation — do not split it, and keep new ledger passes on this pattern.
 
 | script | purpose | refs |
 | --- | --- | --- |

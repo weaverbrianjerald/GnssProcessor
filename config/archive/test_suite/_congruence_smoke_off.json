@@ -9,7 +9,7 @@
   "and a shared-path edit needs a SAME-BUILD golden comparison.  This arm is that",
   "comparison's control; it must be run with the SAME exe as the ON arm."
  ],
- "extends": "_ft63_redund_on.json",
+ "extends": "C:/GnssProcessor/config/test_suite/_ft63_redund_on.json",
  "network": {
   "congruence_screen": false
  }

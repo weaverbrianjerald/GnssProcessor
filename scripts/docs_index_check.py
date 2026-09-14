@@ -11,7 +11,11 @@ Checks, all of them exit-code-bearing:
   3. STATUS        — every file under ``docs/cards/`` and ``docs/decisions/``
      opens with a STATUS block carrying the required keys, and exactly one
      verbatim marker if it carries verbatim text.
-  4. SIZE          — no file outside ``docs/archive/`` exceeds 60 KB.
+  4. SIZE          — no file outside ``docs/archive/`` exceeds 60 KB, except the
+     named LIVING REGISTERS in ``SIZE_EXEMPT`` (today: ``CONFIG_promotion_ledger.md``,
+     which is one row per knob and is appended to in place at that exact path by the
+     ``scripts/_*_ledger_oneoff.py`` family; splitting it would break them and its
+     machine-read ``.json`` twin).  An exempt file that has gone missing is an error.
   5. FROZEN        — every file in ``docs/archive/`` still carries its
      READ-ONLY banner.
 
@@ -41,6 +45,19 @@ DOCS = os.path.join(ROOT, 'docs')
 
 MAX_BYTES = 60 * 1024
 FROZEN_DIRS = ('archive/', 'attic/')
+
+#: LIVING REGISTERS — exempt from the 60 KB bar, by name, with a reason.
+#:
+#: `CONFIG_promotion_ledger.md` is one row per knob, not a pile of closed cards: the
+#: `scripts/_*_ledger_oneoff.py` family and every future promotion APPEND to it at this
+#: exact path, and `CONFIG_promotion_ledger.json` is its machine-read twin that
+#: `scripts/make_golden_config.py --verify` reads.  Splitting it would break both.  It
+#: stays whole; the size bar does not apply to a register that grows one row at a time.
+SIZE_EXEMPT = {
+    'CONFIG_promotion_ledger.md':
+        'living register — one row per knob, appended to in place; see '
+        'docs/topics/config-ledger.md',
+}
 VERBATIM = '<!-- BEGIN VERBATIM:'
 REQUIRED_STATUS = ('id', 'topic', 'status', 'summary', 'source')
 VALID_STATUS = {'open', 'closed', 'parked', 'superseded', 'reference'}
@@ -117,8 +134,16 @@ def main():
     for p in files:
         r = rel(p)
         n = os.path.getsize(p)
-        if not r.startswith('archive/') and n > MAX_BYTES:
+        if r.startswith('archive/') or r in SIZE_EXEMPT:
+            continue
+        if n > MAX_BYTES:
             errors.append(f'SIZE      {r} is {n} bytes (> {MAX_BYTES})')
+    for r, why in sorted(SIZE_EXEMPT.items()):
+        if r not in rels:
+            errors.append(f'SIZE      {r} is size-exempt but does not exist')
+        elif verbose:
+            print(f'size-exempt: {r} '
+                  f'({os.path.getsize(os.path.join(DOCS, r)) // 1024} KB) — {why}')
 
     # -------------------------------------------------------------- frozen
     adir = os.path.join(DOCS, 'archive')

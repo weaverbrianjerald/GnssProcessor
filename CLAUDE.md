@@ -165,9 +165,10 @@ specific subdir that fits — resist the urge to drop new headers into `common/`
 
 **`docs/INDEX.md` is the single entry point, and `docs/refound/` is the current
 program.** The author's directive: *"We need a method to organize our whole project,
-rather than simply appending to these massive files."* On 2026-09-14 the 19 `docs/*.md`
-over 60 KB were split into a topic tree — verbatim, hash-verified, with the originals
-frozen.
+rather than simply appending to these massive files."* On 2026-09-14, 18 of the 19
+`docs/*.md` over 60 KB were split into a topic tree — verbatim, hash-verified, with the
+originals frozen. The nineteenth, `CONFIG_promotion_ledger.md`, is a **living register**
+and stays whole (see the ⚠ below).
 
 ```
 docs/INDEX.md                    entry point: topics, cards, the rules
@@ -187,7 +188,10 @@ The rules — **all seven are enforced or checked**:
 2. **Results are appended to the CARD's file only** — never to a topic page, never to
    `docs/archive/`, never to a monolith.
 3. **The INDEX line is updated twice:** at pre-registration, and at close.
-4. **No non-archive file over ~60 KB.** Split by topic as one approaches it.
+4. **No non-archive file over ~60 KB.** Split by topic as one approaches it. The one
+   exemption is a **living register** appended to one row at a time and read by a tool at
+   a fixed path — today `CONFIG_promotion_ledger.md` alone, named in `SIZE_EXEMPT` in
+   `scripts/docs_index_check.py`.
 5. **Every card file starts with the STATUS block** (`id`, `topic`, `status`, `summary`,
    `source`, plus the knobs / hashes / run dirs / dates). `status` ∈ {`open`, `closed`,
    `parked`, `superseded`, `reference`}; PROMOTED / KEEP_OFF / FALSIFIED belong in the
@@ -203,10 +207,12 @@ and do not "fix" the links inside it (they were written against the old location
 deliberately not link-checked). `python scripts/docs_split.py --verify` proves the
 existing split is byte-exact; `--build` re-renders it from `scripts/docs_map/*.json`.
 
-⚠ `docs/CONFIG_promotion_ledger.md` is now a **stub**. The `scripts/_*_ledger_oneoff.py`
-pattern opens that path directly — a future ledger update must patch the tier card under
-`docs/cards/config-ledger/` plus `docs/CONFIG_promotion_ledger.json` (unchanged, still the
-machine-read twin for `make_golden_config.py`).
+⚠ **`docs/CONFIG_promotion_ledger.md` is a LIVING REGISTER — keep it whole, keep it at
+that path.** The `scripts/_*_ledger_oneoff.py` pattern and every future promotion append a
+row there directly, in step with `docs/CONFIG_promotion_ledger.json` (the machine-read twin
+for `make_golden_config.py --verify` / `config_posture_check.py`). It is deliberately not
+split, not archived and not stubbed, and `docs/topics/config-ledger.md` is its topic page.
+Do not "finish the job" on it in a later pass.
 
 ## Conventions
 
