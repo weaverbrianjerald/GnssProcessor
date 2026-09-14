@@ -45,6 +45,7 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "logging/LogManager.hpp"
+#include "products/NetworkProductIO.hpp"   // RF-0d item 2: the S-line declaration
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -164,6 +165,24 @@ struct DatumRowsHarness {
                const std::string&) {});
     }
 };
+
+/// The smallest solution epoch the writer will serialize — RF-0d item 2 only needs a
+/// record to exist so the S line has a file to sit in; the epoch's CONTENT is not what
+/// these cases are about.
+NetworkSolutionEpoch makeMinimalEpoch() {
+    NetworkSolutionEpoch sol;
+    sol.epoch_time  = GnssTime{2313, 259200.0};
+    sol.iod_ssr     = 3;
+    sol.provider_id = 42;
+    sol.solution_id = 1;
+    NetworkSatSolution g1;
+    g1.sat                 = "G01";
+    g1.has_clock           = true;
+    g1.clock_c0_m          = 12.5;
+    g1.code_bias_m["C1W"]  = 0.3;
+    sol.sats.push_back(g1);
+    return sol;
+}
 
 /// A GPS roster: @p n_sats satellites, each carrying @p sigs.
 std::vector<std::string> gpsSats(int n_sats) {
@@ -452,7 +471,11 @@ TEST(W6IonoConstraintTest, SatGfDatumZeroClosesEveryDirection) {
     const auto rows = h.build(est, keys);
 
     EXPECT_EQ(rows.n_sat_gf_rows, 32);
-    EXPECT_EQ(rows.H.rows(), 66);                     // 32 IF + 32 GF + 2 sum-to-zero
+    // 32 IF + 32 GF.  Both sum-to-zero rows are SUPPRESSED (RF-0d): the datum pins
+    // every column of both channels, so their level rows are redundant — and under
+    // broadcast_tgd they would be inconsistent, so they go in both modes.
+    EXPECT_EQ(rows.n_s2z_suppressed, 2);
+    EXPECT_EQ(rows.H.rows(), 64);
     EXPECT_EQ(rows.z.cwiseAbs().maxCoeff(), 0.0);     // every target zero in this mode
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
 }
@@ -476,6 +499,107 @@ TEST(W6IonoConstraintTest, SatGfDatumClosesDirectionsWithSameBandCompanions) {
     EXPECT_EQ(rows.n_sat_gf_rows, 16);
     EXPECT_EQ(rows.n_s2z_channels, 4);
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// ===========================================================================
+// Card RF-0d — the PER-SIGNAL extension of the geometry-free datum.
+// ===========================================================================
+
+// THE CARD'S BAR.  Four registered channels, the prior off.  RF-0c's pair pin already
+// left 0 rank-deficiency-3b directions here (the mu-shift moves every column of a
+// satellite together, so one row on the pair reaches it) — what it did NOT do was make
+// the EXTRA channels' levels a datum, which is why the sparse C2X wire stayed loud.
+// After RF-0d every cross-band column is pinned and the C2X column's own geometry-free
+// direction against the reference is closed too; the same-band C1W is deliberately NOT
+// pinned, because its difference from C1C is a pure ISC that needs no ionosphere to be
+// observable.
+TEST(W6IonoConstraintTest, SatGfDatumPerSignalPinsEveryCrossBandColumn) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(32);
+    const std::vector<std::string> sigs{"C1C", "C1W", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::Zero;
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_sat_gf_rows, 32);          // the pair pin, one per satellite
+    EXPECT_EQ(rows.n_sat_gf_extra_rows, 32);    // C2X: cross-band, pinned
+    EXPECT_EQ(rows.n_sat_gf_sameband_free, 32); // C1W: same band as the reference, free
+    EXPECT_EQ(rows.n_sat_gf_extra_nofreq, 0);
+    // Every channel is now completely pinned except the free C1W, so three of the four
+    // sum-to-zero rows are suppressed as redundant-and-fighting.
+    EXPECT_EQ(rows.n_s2z_suppressed, 3);
+    EXPECT_EQ(rows.n_s2z_channels, 4);          // the census is over the channels present
+    EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// THE L2X COLUMN'S OWN DIRECTION, NAMED.  The card asks for it by name, and it is a
+// different direction from the rd-3b family above: shift ONLY the C2X columns by a
+// per-satellite delta and leave every other column alone.  Nothing in the observation
+// equations sees it except the stations that track C2X — which on the field is a sparse
+// set — so before RF-0d it was weakly determined (a coverage problem wearing a datum's
+// clothes), and after RF-0d it is pinned.
+TEST(W6IonoConstraintTest, SatGfDatumPerSignalClosesTheSparseL2xDirection) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(32);
+    const std::vector<std::string> sigs{"C1C", "C1W", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    // The direction: one unit on this satellite's C2X column, nothing else.
+    const auto l2xDims = [&](const Eigen::MatrixXd& H) {
+        const Eigen::Index n = static_cast<Eigen::Index>(sats.size());
+        Eigen::MatrixXd A(H.rows(), n);
+        A.setZero();
+        for (Eigen::Index k = 0; k < n; ++k) {
+            Eigen::VectorXd v = Eigen::VectorXd::Zero(est.numShared());
+            v(est.codeBiasColumn(sats[static_cast<std::size_t>(k)], "C2X")) = 1.0;
+            A.col(k) = H * v;
+        }
+        Eigen::FullPivLU<Eigen::MatrixXd> lu(A);
+        lu.setThreshold(1e-9);
+        return static_cast<int>(n - lu.rank());
+    };
+
+    DatumRowsHarness pair_only;                 // RF-0c behaviour, for the contrast
+    pair_only.sat_gf_datum = NetworkSatGfDatum::NoneMode;
+    const auto before = pair_only.build(est, keys);
+    // With no geometry-free datum at all, the C2X levels are held only by their channel's
+    // single sum-to-zero row: 32 directions in, 1 closed, 31 left to the data.
+    EXPECT_EQ(l2xDims(before.H), 31);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::Zero;
+    const auto after = h.build(est, keys);
+    EXPECT_EQ(l2xDims(after.H), 0);             // every C2X column is now a datum
+}
+
+// Under broadcast_tgd the extra rows carry the SAME c*T_GD (the identity
+// (d_k - d_ref)/(mu_k - 1) = c*T_GD holds for every band k), and each one is counted as
+// an asserted zero ISC — the part of a "broadcast" datum the navigation message does not
+// actually state.
+TEST(W6IonoConstraintTest, SatGfDatumPerSignalCountsTheAssertedIscZeros) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(3);
+    const std::vector<std::string> sigs{"C1C", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_gf_target_m = {{"G01", -3.1}, {"G02", 1.7}, {"G03", 2.2}};
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_sat_gf_rows, 3);
+    EXPECT_EQ(rows.n_sat_gf_extra_rows, 3);
+    EXPECT_EQ(rows.n_sat_gf_isc_zero, 3);
+    EXPECT_EQ(rows.n_sat_gf_sameband_free, 0);
+    // Row order per satellite: IF pin, pair GF, then the extra(s) — so the extra row
+    // carries the same target as the pair row immediately before it.
+    EXPECT_DOUBLE_EQ(rows.z(1), -3.1);
+    EXPECT_DOUBLE_EQ(rows.z(2), -3.1);
+    EXPECT_DOUBLE_EQ(rows.z(4), 1.7);
+    EXPECT_DOUBLE_EQ(rows.z(5), 1.7);
+    EXPECT_EQ(rows.n_s2z_suppressed, 3);        // all three channels fully pinned
 }
 
 // broadcast_tgd pins the SAME row at c*T_GD.  Two things are checked and both matter:
@@ -503,7 +627,7 @@ TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdPinsTheLatchedMetresVerbatim) {
     // the per-satellite loop pushes each satellite's IF pin and then its geometry-free
     // row before moving on, and the sum-to-zero rows are appended after the loop.  So
     // satellite k's GF row is at 2k+1, and the 2 sum-to-zero rows are last.
-    EXPECT_EQ(rows.H.rows(), 4 * 2 + 2);
+    EXPECT_EQ(rows.H.rows(), 4 * 2);        // both sum-to-zero rows suppressed (RF-0d)
     EXPECT_DOUBLE_EQ(rows.z(1), -3.1);   // G01
     EXPECT_DOUBLE_EQ(rows.z(3), 1.7);    // G02
     EXPECT_DOUBLE_EQ(rows.z(5), 0.0);    // G03 — broadcast T_GD is exactly zero
@@ -597,4 +721,94 @@ TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_EQ(cfg.getNetworkConfig().sat_gf_datum, NetworkSatGfDatum::NoneMode);
     std::error_code ec; fs::remove(p, ec);
+}
+
+// ===========================================================================
+// Card RF-0d item 2 - the S-line DECLARATION, `sat_gf_datum=<mode>`.
+// ===========================================================================
+
+// A NEW field, never an overload of gfpin=.  That token's payload is its presence
+// ("the geometry-free direction is a datum") and a signal pair; this one answers what
+// presence cannot -- pinned at WHAT -- and the two answers differ by c*T_GD on every
+// emitted code bias of the satellite, with the opposite shift in the ionosphere the
+// consumer is told to estimate for itself.  It must round-trip BESIDE gfpin=, not
+// inside it, and must not be swallowed by the bare-':' realized-pivot fallback.
+TEST(W6IonoConstraintTest, SatGfDatumDeclarationRoundTripsOnTheSLine) {
+    const fs::path path = fs::temp_directory_path() / "w6_iono_satgfdatum_sline.txt";
+    std::error_code ec; fs::remove(path, ec);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "MBAR00UGA";
+    c.disc_threshold_m           = 0.05;
+    c.cb_pin_pair["G"]           = "C1C-C2W";
+    c.gf_pin_pair["G"]           = "C1C-C2W";
+    c.sat_gf_datum               = "broadcast_tgd";
+    c.present                    = true;
+
+    {
+        NetworkProductWriter w(path.string(), c);
+        ASSERT_TRUE(w.good());
+        w.write(makeMinimalEpoch());
+    }
+
+    bool ok = false;
+    SbasisContract parsed;
+    const auto recs = NetworkProductReader::read(path.string(), &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_EQ(parsed.sat_gf_datum, "broadcast_tgd");
+    EXPECT_EQ(parsed.gf_pin_pair.at("G"), "C1C-C2W");
+    EXPECT_EQ(parsed.cb_pin_pair.at("G"), "C1C-C2W");
+    EXPECT_TRUE(parsed.decl.clock_pivot_sat.empty());
+    fs::remove(path, ec);
+}
+
+// Byte-identity, the standing-invariant-#6 half: a producer that folds no such datum
+// writes the S line exactly as it did before the field existed, so every pre-RF-0d
+// product and every stored product hash still round-trips.  The armed file is the
+// unarmed file plus exactly that one token, and nothing else.
+TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
+    const fs::path with_p    = fs::temp_directory_path() / "w6_iono_satgf_with.txt";
+    const fs::path without_p = fs::temp_directory_path() / "w6_iono_satgf_without.txt";
+    std::error_code ec; fs::remove(with_p, ec); fs::remove(without_p, ec);
+
+    SbasisContract base;
+    base.decl.reference_receiver_id = "MBAR00UGA";
+    base.disc_threshold_m           = 0.05;
+    base.gf_pin_pair["G"]           = "C1C-C2W";
+    base.present                    = true;
+
+    { NetworkProductWriter w(without_p.string(), base); ASSERT_TRUE(w.good()); }
+    SbasisContract armed = base;
+    armed.sat_gf_datum = "zero";
+    { NetworkProductWriter w(with_p.string(), armed); ASSERT_TRUE(w.good()); }
+
+    // Compare the S LINES, not the whole files.  The '#' header legend is
+    // grammar-complete by contract (HeaderLegendDeclaresEveryEmittedField enforces it),
+    // so it names sat_gf_datum=<mode> in BOTH files by design — a whole-file search
+    // would find the legend and prove nothing about the record stream.
+    const auto sLine = [](const fs::path& p) {
+        std::ifstream f(p);
+        std::string ln;
+        while (std::getline(f, ln))
+            if (ln.rfind("S,", 0) == 0) return ln;
+        return std::string{};
+    };
+    const std::string a = sLine(without_p), b = sLine(with_p);
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(b.empty());
+    EXPECT_EQ(a.find("sat_gf_datum="), std::string::npos);
+    EXPECT_NE(b.find(",sat_gf_datum=zero"), std::string::npos);
+    // The armed S line is the unarmed S line plus exactly that token, appended last.
+    EXPECT_EQ(b, a + ",sat_gf_datum=zero");
+
+    // The value survives a round-trip VERBATIM rather than being normalized: a reader
+    // that predates a future mode must not silently rewrite the product's frame.
+    bool ok = false;
+    SbasisContract parsed;
+    NetworkProductReader::read(with_p.string(), &parsed, &ok);
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(parsed.sat_gf_datum, "zero");
+    fs::remove(with_p, ec); fs::remove(without_p, ec);
 }

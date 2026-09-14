@@ -1148,6 +1148,21 @@ NetworkSolPrepResult networkSolPrep(
         }
         pending_contract.cb_pin_pair = std::move(cb_decl);
         pending_contract.gf_pin_pair = std::move(gf_decl);
+        // RF-0d: declare WHICH VALUE the hard per-satellite geometry-free datum was
+        // pinned at.  Driven by the CONFIG, not by an epoch's realized rows, because
+        // unlike cbpin=/gfpin= this is not a per-epoch selection that can move with the
+        // signal set — the mode is fixed for the run, and a token that appeared and
+        // vanished with row availability would read as a datum change that never
+        // happened.  Empty in the default mode, so a pre-RF-0d product's S line is
+        // byte-identical.
+        switch (config_.getNetworkConfig().sat_gf_datum) {
+        case NetworkSatGfDatum::Zero:
+            pending_contract.sat_gf_datum = "zero";           break;
+        case NetworkSatGfDatum::BroadcastTgd:
+            pending_contract.sat_gf_datum = "broadcast_tgd";  break;
+        case NetworkSatGfDatum::NoneMode:
+            pending_contract.sat_gf_datum.clear();            break;
+        }
     }
     // B6 (P1-1): open the deferred contract writer at the FIRST emit, stamping the
     // realized per-constellation clock pivots (this epoch's plan) into the v2 header.

@@ -2990,6 +2990,14 @@ namespace GnssProcessor {
         // count says the run pinned a value the navigation message never asserted.
         size_t n_sat_gf_epochs = 0, n_sat_gf_rows = 0;
         size_t n_sat_gf_tgd = 0, n_sat_gf_tgd0 = 0, n_sat_gf_fallback = 0;
+        // RF-0d: the per-signal extension.  `extra` counts the rows beyond the
+        // ionosphere-free pair (what makes a sparse channel's level a datum),
+        // `isc0` how many of those asserted a zero inter-signal correction the
+        // navigation message never stated, `sameband` the columns deliberately
+        // left estimable, and `s2z_suppressed` the sum-to-zero rows dropped
+        // because the datum already pins every column of that channel.
+        size_t n_sat_gf_extra = 0, n_sat_gf_isc0 = 0;
+        size_t n_sat_gf_sameband = 0, n_sat_gf_s2z_suppressed = 0;
         // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.

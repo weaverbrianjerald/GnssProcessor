@@ -67,6 +67,12 @@
  *                                           #   Its presence means the pinned pair's
  *                                           #   B records ARE the datum (0) and the
  *                                           #   GF lump lives in the ionosphere
+ *     [,sat_gf_datum=<mode>]                #   RF-0d: WHICH VALUE that datum was
+ *                                           #   pinned at, zero | broadcast_tgd.
+ *                                           #   A separate token from gfpin= --
+ *                                           #   the two frames differ by c*T_GD on
+ *                                           #   every code bias and by the opposite
+ *                                           #   shift in the ionosphere
  *                                           #   repeated S lines mid-file are RTA-5
  *                                           #   contract re-broadcasts (positional)
  *   H,<week>,<tow>,<status>,<sigma0>,       # RTA-10 epoch-status heartbeat
@@ -244,6 +250,30 @@ struct SbasisContract {
     /// @c checkContract compares it only for constellations the consumer declares
     /// (the @c clock_pivot_sat / @ref cb_pin_pair semantics).
     std::map<std::string, std::string> gf_pin_pair;
+    /// RF-0d (`network.sat_gf_datum`): WHICH VALUE the hard per-satellite
+    /// geometry-free datum was pinned at — `"zero"` or `"broadcast_tgd"`; empty
+    /// when the producer folded no such datum.
+    ///
+    /// A NEW FIELD, deliberately not an overload of @ref gf_pin_pair.  That token's
+    /// payload is its PRESENCE ("the geometry-free direction is a datum, not an
+    /// estimate") and it carries a signal PAIR; this one answers the question that
+    /// presence cannot — *pinned at what?* — and the two answers differ by
+    /// `c*T_GD` on every emitted code bias of the satellite, with the opposite
+    /// shift in the emitted ionosphere (Odijk Table 8: the pinned lump moves
+    /// there).  Widening `gfpin=`'s value grammar to carry a mode would have made
+    /// a single token mean two unrelated things and broken the existing parser's
+    /// `<const>:<pair>` contract; a consumer that does not know `sat_gf_datum=`
+    /// skips it as an unknown field, exactly as the grammar intends.
+    ///
+    /// Serialized as a single trailing @c sat_gf_datum=<mode> S-line field ONLY
+    /// when non-empty, so every pre-RF-0d producer writes the S line byte for
+    /// byte.  An interpretation hint, not a replay-emitter parameter:
+    /// @c makeReplayEmitter ignores it (the datum does not change how emitted
+    /// values reconstruct into the store) and @c checkContract does not compare it
+    /// (a consumer estimating its own ionosphere is consistent under either mode —
+    /// it is the ABSOLUTE interpretation of the pair that differs, which matters
+    /// to a grader and to anyone mixing this product with an external DCB).
+    std::string       sat_gf_datum;
     bool              present{false};         ///< True when parsed from (or written to) a v2 header.
 };
 
