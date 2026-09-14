@@ -1,0 +1,29 @@
+{
+ "doc": "CONFIG_promotion_ledger.md",
+ "topic": "config-ledger",
+ "title": "Config promotion ledger — which default-OFF knobs are validated, and in what regime",
+ "groups": [
+  ["__preamble__", "cards/config-ledger/LEDGER-00-HOW-TO-READ.md", "LEDGER", "reference", "how to read the ledger — the verdict tiers, the evidence rules, and the relationship to CONFIG_promotion_ledger.json"],
+  ["## Tier 1 —", "cards/config-ledger/LEDGER-TIER-1-RECOMMEND-ON.md", "Tier 1", "reference", "RECOMMEND_ON — measured benefit, no known counter-scope"],
+  ["## Tier 2 —", "cards/config-ledger/LEDGER-TIER-2A-IONO-ZWD-CARRY.md", "Tier 2 (a)", "reference", "RECOMMEND_SCOPED, the iono / ZWD / carry-covariance rows"],
+  ["### `realtime.state_snapshot_path`", "cards/config-ledger/LEDGER-TIER-2B-SEAM-CLOCK-DATUM-SLIP.md", "Tier 2 (b)", "reference", "RECOMMEND_SCOPED, the snapshot-seam, clock-datum, code-datum and IF-TD reference rows"],
+  ["### `network.sticky_pivot`  (RTA-1", "cards/config-ledger/LEDGER-TIER-2C-RESUME-FAMILY.md", "Tier 2 (c)", "reference", "RECOMMEND_SCOPED, the sticky pivot and the whole `resume_*` / re-admission family"],
+  ["### `network.phase_datum_candidacy_usable`", "cards/config-ledger/LEDGER-TIER-2C2-CANDIDACY-AND-CAPTURE.md", "Tier 2 (c2)", "reference", "RECOMMEND_SCOPED, the cold anchor-fallback candidacy row and the snapshot capture / restore write-side rows"],
+  ["### `network.emit_clock_disc`", "cards/config-ledger/LEDGER-TIER-2D-EMIT-PARALLEL-RAIM.md", "Tier 2 (d)", "reference", "RECOMMEND_SCOPED, the emission, parallel, phase-datum and RAIM rows"],
+  ["### `network.sbasis_complete`", "cards/config-ledger/LEDGER-TIER-2E-SBASIS-SNAPSHOT-TRACE.md", "Tier 2 (e)", "reference", "RECOMMEND_SCOPED, the S-basis, snapshot-capture and trace rows"],
+  ["## Tier 3 —", "cards/config-ledger/LEDGER-TIER-3A-UNVALIDATED.md", "Tier 3 (a)", "reference", "UNVALIDATED, the SH / carry / clock-datum / MDB rows"],
+  ["### `network.raim_redundancy_normalize`", "cards/config-ledger/LEDGER-TIER-3B-RAIM-AND-HANDOVER.md", "Tier 3 (b)", "reference", "UNVALIDATED, the RAIM riders and the promoted handover pair"],
+  ["### `network.phase_leveling_los_scale`", "cards/config-ledger/LEDGER-TIER-3C-LEVELING-CARRY.md", "Tier 3 (c)", "reference", "UNVALIDATED, the leveling-carry family and the in-block iono / rx-clock carries"],
+  ["### `network.raim_erase_band_scope`", "cards/config-ledger/LEDGER-TIER-3D-SLIP-RESPONSE.md", "Tier 3 (d)", "reference", "UNVALIDATED, the slip-response scope knobs"],
+  ["### `network.cycle_slip.common_band_scope`", "cards/config-ledger/LEDGER-TIER-3E-BAND-SCOPE-AND-IFTD.md", "Tier 3 (e)", "reference", "UNVALIDATED, the common-band scope and the IF-TD pair / reference-arc rows"],
+  ["### `network.cycle_slip.refloat_band_scope`", "cards/config-ledger/LEDGER-TIER-3F-ORACLE-AR-F3.md", "Tier 3 (f)", "reference", "UNVALIDATED, the oracle knobs, the producer-AR trace and the F3 station block"],
+  ["## Tier 4 —", "cards/config-ledger/LEDGER-TIER-4-KEEP-OFF.md", "Tier 4", "reference", "KEEP_OFF — diagnostic, falsified, or superseded"],
+  ["### `network.emit_pb_gauge_level`", "cards/config-ledger/LEDGER-TIER-4B-KEEP-OFF.md", "Tier 4 (b)", "reference", "KEEP_OFF, continued — the PB-gauge level, GLONASS, lane fold, phase-datum and service-mode rows"],
+  ["## Cross-cutting notes", "cards/config-ledger/LEDGER-CROSS-CUTTING-NOTES.md", "cross-cutting", "reference", "the audit's cross-cutting notes — the rules that govern more than one row"],
+  ["## A1 Step 0c", "cards/config-ledger/LEDGER-A1-PCARRY-GUARD-AND-R-RESULTS.md", "A1", "closed", "the load-time parallel_carry / parallel_reduce guard, and results R1–R6"],
+  ["## A2 F0 / F4", "cards/config-ledger/LEDGER-A2-SESSION-GATES.md", "A2", "closed", "the F-series session gates — S2H, the H-heartbeat rider, the internal 12 h stability verdict, and the promotion shortlist"],
+  ["## A3 — the wu93 night", "cards/config-ledger/LEDGER-A3-WU93-NIGHT.md", "A3", "closed", "the wu93 night — the wind-up fix landed, the slip-response lane verdicts, and the golden capture"],
+  ["## A4 — THE GOLDEN CONFIGS", "cards/config-ledger/LEDGER-A4-GOLDEN-CONFIGS.md", "A4", "closed", "THE GOLDEN CONFIGS — the ledger made executable, and the smoke results"],
+  ["## A5 — the 2026-09-09 field session", "cards/config-ledger/LEDGER-A5-FIELD-SESSION.md", "A5", "closed", "the 2026-09-09 field session — the gap re-entry response, bridge v3, and the E1 probe"]
+ ]
+}

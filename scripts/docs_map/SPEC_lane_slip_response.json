@@ -1,0 +1,10 @@
+{
+ "doc": "SPEC_lane_slip_response.md",
+ "topic": "slip",
+ "title": "SPEC — the lane-integer slip cost is RESPONSE-inflicted (decomposition + fix ladder)",
+ "groups": [
+  ["__preamble__", "cards/slip/LANE-SLIP-RESPONSE.md", "lane slip response", "closed", "the headline decomposition — the lane-integer slip cost is 100 % response-inflicted; the fix ladder, and rung 1′ falsified as armed"],
+  ["## §6 Rung 3 v1 BUILT", "cards/slip/LANE-SNAP-RUNG3.md", "rung 3", "open", "the lane-preserving snap — v1/v2 falsified, the SEED SITE deleted as an exact solve no-op, and the v3 carry-domain observatory through its field arm"],
+  ["## §8 SPEC — the T4 apply leg", "cards/slip/T4-LANE-RESTORE-SPEC.md", "T4 lane restore", "open", "pend-and-restore v1 (value-only), `network.cycle_slip.relevel_t4_lane_restore` — spec only, not built"]
+ ]
+}

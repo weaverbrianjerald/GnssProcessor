@@ -1,0 +1,10 @@
+{
+ "doc": "SPEC_sbasis_realization_contract.md",
+ "topic": "network-vehicle",
+ "title": "The producer's S-basis realization contract (Odijk-2016 notation)",
+ "groups": [
+  ["__preamble__", "cards/network-vehicle/SBASIS-CONTRACT.md", "S-basis contract", "reference", "the realized basis, what the wire records mean, the realization-transfer contract, and the verification status with its known residues"],
+  ["## §E0", "cards/network-vehicle/SBASIS-THEORY-E.md", "S-basis theory", "reference", "the estimability spine, the datum-invariance theorem, the rank deficiencies, CC-R vs CC-S, the four theory-grounded levers and the Eq-34 gate"],
+  ["## §F1", "cards/network-vehicle/SBASIS-CONFORMANCE-F.md", "S-basis conformance", "reference", "the per-deficiency conformance table, the implicit S-basis the code adopts per mode, the compatibility audit and the design charter for the network side"]
+ ]
+}

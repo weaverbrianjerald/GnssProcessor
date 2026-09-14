@@ -266,8 +266,9 @@ Two mechanical constraints shaped the cuts:
    would require editing the text, which this pass will not do. Its items are the
    raw material for `status/OPEN_ITEMS.md`.
 
-Result: **19 monoliths → 168 card files + 2 decisions + 19 stubs + 19 archived
-originals.** Per-monolith tables are in [REORG_MAPPING.md](REORG_MAPPING.md).
+Result: **19 monoliths → 166 card files + 2 decision files + 19 stubs + 19
+archived originals** (168 split targets in all). Per-monolith tables are in
+[REORG_MAPPING.md](REORG_MAPPING.md).
 
 ### The ledger is NOT generated — it is split, with one hazard
 

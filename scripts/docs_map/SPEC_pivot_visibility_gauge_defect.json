@@ -1,0 +1,13 @@
+{
+ "doc": "SPEC_pivot_visibility_gauge_defect.md",
+ "topic": "network-vehicle",
+ "title": "SPEC — the single-pivot phase-bias gauge defect",
+ "groups": [
+  ["__preamble__", "cards/network-vehicle/PIVOT-GAUGE-DEFECT.md", "pivot gauge defect", "closed", "the single-pivot phase-bias gauge defect — the causal proof, the field evidence, the two-edge handover, and the THIRD ROOT named"],
+  ["## 5.08 R0 + 1(d) LANDED", "cards/network-vehicle/PIVOT-CARRY-REREF-R0-1D.md", "R0 + 1(d)", "closed", "`network.phase_anchor_carry_reref` — the carry re-reference closes the churn, with the adversarial review of the diff"],
+  ["## 6. Relationship to the T3", "cards/network-vehicle/PIVOT-GAUGE-DEFECT.md", "pivot gauge defect", "closed", "the single-pivot phase-bias gauge defect — the causal proof, the field evidence, the two-edge handover, and the THIRD ROOT named"],
+  ["## 8. The handover S-transform", "cards/network-vehicle/HANDOVER-STRANSFORM-SPEC.md", "queue 1(b)", "closed", "the handover S-transform spec — the transform, its rank-1 specialization to a pin swap, INC-0..3 and the gates"],
+  ["## §10 QUEUE item 2 EXECUTED", "cards/network-vehicle/PIVOT-ELECTION-QUEUE2.md", "queue item 2", "closed", "the datum-station election formalized as plumbing, and item 1(b)'s precondition priced"],
+  ["## §5.09 R2 EXECUTED", "cards/network-vehicle/PIVOT-R2-STICKY.md", "R2 sticky", "closed", "the sticky continuous target, composed with the pairing — churn dead, consumer 2×, and the trade named"]
+ ]
+}

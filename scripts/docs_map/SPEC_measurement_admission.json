@@ -1,0 +1,10 @@
+{
+ "doc": "SPEC_measurement_admission.md",
+ "topic": "raim-qc",
+ "title": "SPEC — product-referenced measurement admission (the corrupt-channel screen)",
+ "groups": [
+  ["__preamble__", "cards/raim-qc/MEAS-ADMISSION.md", "meas admission", "closed", "the product-referenced admission screen — the fault class no differential screen can see, the statistic, INC-1..3, knobs and the known-answer gates"],
+  ["## 9. Implementation record", "cards/raim-qc/MEAS-ADMISSION-IMPL.md", "meas admission impl", "closed", "the 2026-08-01 implementation record — every deviation from the spec, the gates as run, and the adversarial review"],
+  ["## 10. INC-4", "cards/raim-qc/MEAS-ADMISSION-INC4-REENTRY.md", "INC-4", "closed", "the arc RE-ENTRY vet — there were no mid-arc onsets; `adm_revet_hold` erases the event"]
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "doc": "SPEC_amb_iono_split_overcount.md",
+ "topic": "ionosphere",
+ "title": "SPEC — the AMBIGUITY / IONO SPLIT OVER-COUNT",
+ "groups": [
+  ["__preamble__", "cards/ionosphere/AMB-IONO-SPLIT.md", "AMB-IONO", "open", "why the network producer never reaches per-band integers on the quiet sim bed — the five measurements, the mechanism, the falsified list and the fix ladder"],
+  ["## §6 PRE-REGISTERED predictions", "cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md", "F3 (pre-reg)", "closed", "the pre-registered predictions for the F3 station block, and the round-2 / round-4 result amendments"],
+  ["## §6.9 The 24 h F3 arm", "cards/ionosphere/AMB-IONO-F3-24H.md", "F3 24 h", "closed", "the 24 h F3 arm — the settled number is NOT met, and the reason is an EDGE, not the mechanism"],
+  ["## §6.10 The RE-ADMISSION EDGE", "cards/network-vehicle/READMIT-EDGE.md", "READMIT", "closed", "the re-admission edge — `readmit_seed_horizon_s` promoted, the coupling-marginalize and handover-ratio halves KEEP_OFF"],
+  ["## §6.12 The \"post-eclipse", "cards/sim-bed/DD-TRACE-REF-SAT.md", "DD-REF", "closed", "the post-eclipse network-wide DD episode was the INSTRUMENT'S reference satellite, and the field re-grade that follows from it"],
+  ["## §6.14 The IF-TD reference gate", "cards/slip/IFTD-REF-GATE.md", "IF-TD ref gate", "closed", "the IF-TD reference gate is 100 % false on the sim bed, and the fix was already in the goldens"],
+  ["## §6.15 The FIELD F3 arm", "cards/network-vehicle/F3-FIELD-ARM.md", "F3 field", "closed", "the field F3 arm — bed, arms, truth-free instruments, and the pre-registered predictions with their pre-data amendments"],
+  ["### 6.15.4 Results", "cards/network-vehicle/F3-FIELD-ARM-RESULTS.md", "F3 field (results)", "closed", "the field F3 arm's results, filled as they landed"],
+  ["## §6.14.6 The follow-up build", "cards/slip/IFTD-REF-GATE-FOLLOWUP.md", "IF-TD ref gate (v2)", "closed", "abstain while cold, normalize the bar by the reference's elevation, and close the gating leak"],
+  ["## §6.16 The ZWD sink census", "cards/sim-bed/ZWD-SINK-CENSUS.md", "ZWD sink", "closed", "the ZWD sink census, the slipped-bed golden FAIL, and where the integer information is"],
+  ["## §6.17 The 2026-09-10 morning", "cards/ionosphere/AMB-IONO-0910-MORNING.md", "0910 morning", "closed", "the same-build control, three truth censuses, two falsified cards, and the field's phase-bias steps"],
+  ["## §6.18 The 2026-09-10 afternoon", "cards/ionosphere/AMB-IONO-0910-AFTERNOON.md", "0910 afternoon", "closed", "the level-memory and T4-persistence ladders, the wire wander, and the continuity card"],
+  ["## §6.19 The 2026-09-10 second half", "cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md", "0910 second half", "closed", "the slipped-bed probe ledger, the continuity closure, the false-alarm isolation, and the inert receiver clock"],
+  ["## §7 Open questions", "cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md", "AMB-IONO open", "open", "the open-question register — re-cut round 2, with the round-4 closures and items 15–21"],
+  ["## §8 Reproduction", "cards/ionosphere/AMB-IONO-SPLIT.md", "AMB-IONO", "open", "why the network producer never reaches per-band integers on the quiet sim bed — the five measurements, the mechanism, the falsified list and the fix ladder"]
+ ]
+}

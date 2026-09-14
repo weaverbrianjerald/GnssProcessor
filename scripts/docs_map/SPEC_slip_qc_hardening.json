@@ -1,0 +1,14 @@
+{
+ "doc": "SPEC_slip_qc_hardening.md",
+ "topic": "slip",
+ "title": "SPEC — Network slip-QC hardening (post IF-TD ↔ MW agreement audit, 2026-07-21)",
+ "groups": [
+  ["__preamble__", "cards/slip/SLIPQC-REF.md", "slip-QC", "reference", "the slip-QC hardening spec — evidence base, the binding ground rules, cards R / L / E / G, the shared harness, and what is still owed"],
+  ["## 8. Implementation record", "cards/slip/SLIPQC-IMPL-2026-07-21.md", "slip-QC impl", "closed", "the 2026-07-21 implementation record — what landed, the five findings that contradicted the spec's premises, and the same-build two-arm gate"],
+  ["## 9. Follow-up cards", "cards/slip/SLIPQC-FOLLOWUPS.md", "slip-QC follow-ups", "closed", "the 2026-07-22 follow-up cards D5-A / W / OP / H, and why the D5 lead outranked everything else"],
+  ["## 10. Card D5-A + H", "cards/slip/D5A-RETAP-ATTRIBUTION.md", "D5-A", "closed", "D5 re-tap attribution as built, the cross-experiment protocol, and the 2026-07-22 validation"],
+  ["## 11. Current status", "cards/slip/SLIPQC-REF.md", "slip-QC", "reference", "the slip-QC hardening spec — evidence base, the binding ground rules, cards R / L / E / G, the shared harness, and what is still owed"],
+  ["## 12. Card G RESPONSE", "cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md", "Card G response", "closed", "`gap_reentry_relevel` — round 1 was inert on the live-state walk, round 2's verdict, and bridge v3's flat result"],
+  ["## 13. Card ORACLE", "cards/slip/CARD-ORACLE-RELEVEL.md", "Card ORACLE", "closed", "`oracle_relevel`, the sim-only CEILING of a level-preserving re-level — the mechanism is exact and the plateau does not move"]
+ ]
+}

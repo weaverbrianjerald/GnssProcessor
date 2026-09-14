@@ -1,0 +1,13 @@
+{
+ "doc": "SPEC_clock_temporal_anchor.md",
+ "topic": "clock",
+ "title": "SPEC — Card Q3: the guarded temporal clock anchor (CTA)",
+ "groups": [
+  ["__preamble__", "cards/clock/Q3-ANCHOR-DESIGN.md", "Q3 design", "closed", "the guarded temporal clock anchor — the measured basis, stage A/B design, the empirical derivation and the pre-registered gates"],
+  ["## §5 Results", "cards/clock/Q3-ANCHOR-RESULTS.md", "Q3 results", "closed", "G0–G3, the binding knee, the FC-1 shadow-hour table, and the relationship to the surrounding cards"],
+  ["## §7 (2026-08-10, Fable) THE PHYSICAL FLOOR", "cards/clock/Q3-PHYSICAL-FLOOR.md", "Q3 floor", "closed", "the physical floor measured — trap 5 resolved, the FC-1 gate retired, the ladder re-scoped"],
+  ["## §8 (2026-08-10/11) THE FLOOR-GOVERNED LADDER", "cards/clock/Q3-FLOOR-GOVERNED-LADDER.md", "Q3 ladder", "closed", "the floor-governed ladder — floors derived not tuned, the guard's denominator bisected, and the descent 3e-5 → 1e-7"],
+  ["## §8.11 The consumer AR blunder", "cards/consumer/CONSUMER-AR-BLUNDER.md", "consumer AR", "closed", "the consumer AR blunder diagnosed and fixed — the innovation screen is the gate that catches it, and the consumer posture was a drag all along"],
+  ["## §9 (2026-08-31) G4's SIM HALF", "cards/clock/Q3-G4-SIM-HALF.md", "Q3 G4", "closed", "G4's sim half executed — the anchor truth-graded on the 12 h quiet flagship, and the sim q-ladder"]
+ ]
+}

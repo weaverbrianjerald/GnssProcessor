@@ -1,0 +1,10 @@
+{
+ "doc": "SPEC_phase_windup_sign.md",
+ "topic": "network-vehicle",
+ "title": "SPEC — the carrier-phase wind-up SIGN defect (and the wrapped-mode wrap)",
+ "groups": [
+  ["__preamble__", "cards/network-vehicle/WINDUP-SIGN-DEFECT.md", "wind-up sign", "closed", "the carrier-phase wind-up sign defect — why nothing caught it, why the fix is both lines together, the third site, and what landed"],
+  ["## §9 THE FIELD RESULT", "cards/network-vehicle/WINDUP-FIELD-LADDER.md", "wind-up field", "closed", "the three-arm field ladder — the slope lands on 2, never on 0; the 5-station matrix; the network-producer arm"],
+  ["## §10 The fractional-mode CENSUS", "cards/slip/WINDUP-FRACTIONAL-CENSUS.md", "wind-up census", "open", "the fractional-mode census — the two continuity horizons are INVERTED, `trace_windup_census`, and the restart response built default-OFF"]
+ ]
+}

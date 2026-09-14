@@ -1,0 +1,11 @@
+{
+ "doc": "SPEC_card1_coupling_carry.md",
+ "topic": "network-vehicle",
+ "title": "CARD 1 — Coupling-row carry: border TIME UPDATE (1d) + gauge restore (1e) + JOINT whitening (1b)",
+ "groups": [
+  ["__preamble__", "cards/network-vehicle/CARD-1D-COUPLING-CARRY.md", "Card 1d", "closed", "the border time-update defect, verified four ways — magnitude in the T7 lineage, the batch-exact validation, and the shipped scalar-κ build"],
+  ["## 8. Card 1b", "cards/network-vehicle/CARD-1B-JOINT-WHITENING.md", "Card 1b", "closed", "coupling-row JOINT whitening — PREMISE FALSIFIED, the toggle is a no-op, and what the flat σ actually is"],
+  ["## 13. Card 1f / 1g", "cards/network-vehicle/CARD-1F-1G-TRUNCATED-ROW-GAUGE.md", "Cards 1f + 1g", "closed", "the TRUNCATED-ROW gauge defect and the reinit-source widening — the positive control, the validation ladder, and the 2×2 isolation"],
+  ["## 14. FIXED — the eq34 D4", "cards/network-vehicle/EQ34-D4-S-TRANSFORM-FIX.md", "eq34 D4", "closed", "the eq34 D4 S-transform now re-bases `coupling[].s_prev`"]
+ ]
+}
