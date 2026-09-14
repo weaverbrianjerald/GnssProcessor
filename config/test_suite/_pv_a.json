@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "CARD PV, ARM PV-A (SPEC_event_harness s24.11, pre-registered 2026-09-14).  The KNOWN-CONVERGING",
+    "reference: config/test_suite/_fldf3_pl2.json exactly as the F3 field ladder ran it",
+    "(SPEC_amb_iono s6.15.4 probe 7 = the leveling vehicle: carry_invariant OFF, relevel_free_epoch,",
+    "carry_coupling_gauge_project and the sim golden's phase-datum family), clipped to 2 h from the",
+    "chain's own start and with the s24.8 trace set armed so the CM instruments can read it.",
+    "",
+    "NOT a single-variable A/B against _cm_a0 — the pl2 chain is the EXT63 lineage (dual-frequency,",
+    "EXTERNAL satellite code biases, SH deg-8 with the 32.24 TECU mean prior) while the field golden",
+    "is the FT63 lineage (triple-frequency L1/L2/L5, self-contained W6 OSB, SH deg-15).  The",
+    "single-variable arm is PV-B (_pv_b.json); this arm answers 'does the posture that converged on",
+    "s6.15.4's instruments also cross s24.8's bars'.  The full classified posture diff is in",
+    "runs/_cm_pvb/posture_diff.md.",
+    "",
+    "TRAP (the ladder's): max_duration_s is a PROCESSING key; network.max_duration_s only clips the",
+    "RINEX parse (the chain leaves it at 43200, which is what the parse wants).",
+    "The closed-loop WTZZ00DEU consumer is inherited from the chain and is byte-identical to the",
+    "block _cm_a0/arm.json carries (verified key-by-key before the arm ran) — nothing added here."
+  ],
+  "extends": [
+    "C:/GnssProcessor/config/test_suite/_fldf3_pl2.json"
+  ],
+  "processing": {
+    "max_duration_s": 7200.0
+  },
+  "network": {
+    "trace_postfit_rows": true,
+    "trace_postfit_keyed": true,
+    "trace_zwd": true,
+    "trace_epoch_status": true,
+    "product_output_path": "C:/GnssProcessor/runs/_cm_pva/products.txt",
+    "state_snapshot_path": "C:/GnssProcessor/runs/_cm_pva/state_snapshot.bin"
+  }
+}
