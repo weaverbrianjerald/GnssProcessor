@@ -333,6 +333,16 @@ struct LineAssembler {
                             const auto colon = v.find(':');
                             if (colon != std::string::npos)
                                 c.gf_pin_pair[v.substr(0, colon)] = v.substr(colon + 1);
+                        } else if (f[k].rfind("sat_gf_datum=", 0) == 0) {
+                            // RF-0d: WHICH VALUE the geometry-free datum was pinned at
+                            // ("zero" | "broadcast_tgd").  Stored verbatim — an unknown
+                            // future mode must survive a round-trip through this reader
+                            // rather than be normalized away.  Dispatched before the ':'
+                            // pivot fallback for the same reason as the two above: the
+                            // token name is checked first, and an unrecognized field
+                            // with no ':' would otherwise fall through harmlessly but a
+                            // future value containing one would not.
+                            c.sat_gf_datum = f[k].substr(13);
                         } else {
                             const auto colon = f[k].find(':');
                             if (colon != std::string::npos)
@@ -495,6 +505,16 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // it; checkContract compares it only for constellations the consumer declares.
     for (const auto& [cst, pair] : contract.gf_pin_pair)
         out_ << ",gfpin=" << cst << ':' << pair;
+    // RF-0d (network.sat_gf_datum): WHICH VALUE that geometry-free datum was pinned
+    // at.  A separate token on purpose — gfpin='s payload is its presence and a signal
+    // pair, and this answers the question presence cannot: the "zero" and
+    // "broadcast_tgd" frames differ by c*T_GD on every emitted code bias of the
+    // satellite, with the opposite shift in the ionosphere the consumer is told to
+    // estimate for itself.  ONLY when non-empty, so every pre-RF-0d producer writes the
+    // S line byte-for-byte; an unknown field is skipped by the parser below, which is
+    // what makes this a forward-compatible addition rather than a grammar break.
+    if (!contract.sat_gf_datum.empty())
+        out_ << ",sat_gf_datum=" << contract.sat_gf_datum;
     out_ << '\n';
 }
 
@@ -581,7 +601,8 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
-            "[,gfpin=<const>:<s1>-<s2>...]   (B6 S-basis contract)\n";
+            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>]"
+            "   (B6 S-basis contract)\n";
 }
 
 void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_changed,

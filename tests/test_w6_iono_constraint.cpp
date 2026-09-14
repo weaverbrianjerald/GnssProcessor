@@ -45,6 +45,7 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "logging/LogManager.hpp"
+#include "products/NetworkProductIO.hpp"   // RF-0d item 2: the S-line declaration
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -164,6 +165,24 @@ struct DatumRowsHarness {
                const std::string&) {});
     }
 };
+
+/// The smallest solution epoch the writer will serialize — RF-0d item 2 only needs a
+/// record to exist so the S line has a file to sit in; the epoch's CONTENT is not what
+/// these cases are about.
+NetworkSolutionEpoch makeMinimalEpoch() {
+    NetworkSolutionEpoch sol;
+    sol.epoch_time  = GnssTime{2313, 259200.0};
+    sol.iod_ssr     = 3;
+    sol.provider_id = 42;
+    sol.solution_id = 1;
+    NetworkSatSolution g1;
+    g1.sat                 = "G01";
+    g1.has_clock           = true;
+    g1.clock_c0_m          = 12.5;
+    g1.code_bias_m["C1W"]  = 0.3;
+    sol.sats.push_back(g1);
+    return sol;
+}
 
 /// A GPS roster: @p n_sats satellites, each carrying @p sigs.
 std::vector<std::string> gpsSats(int n_sats) {
@@ -702,4 +721,94 @@ TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_EQ(cfg.getNetworkConfig().sat_gf_datum, NetworkSatGfDatum::NoneMode);
     std::error_code ec; fs::remove(p, ec);
+}
+
+// ===========================================================================
+// Card RF-0d item 2 - the S-line DECLARATION, `sat_gf_datum=<mode>`.
+// ===========================================================================
+
+// A NEW field, never an overload of gfpin=.  That token's payload is its presence
+// ("the geometry-free direction is a datum") and a signal pair; this one answers what
+// presence cannot -- pinned at WHAT -- and the two answers differ by c*T_GD on every
+// emitted code bias of the satellite, with the opposite shift in the ionosphere the
+// consumer is told to estimate for itself.  It must round-trip BESIDE gfpin=, not
+// inside it, and must not be swallowed by the bare-':' realized-pivot fallback.
+TEST(W6IonoConstraintTest, SatGfDatumDeclarationRoundTripsOnTheSLine) {
+    const fs::path path = fs::temp_directory_path() / "w6_iono_satgfdatum_sline.txt";
+    std::error_code ec; fs::remove(path, ec);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "MBAR00UGA";
+    c.disc_threshold_m           = 0.05;
+    c.cb_pin_pair["G"]           = "C1C-C2W";
+    c.gf_pin_pair["G"]           = "C1C-C2W";
+    c.sat_gf_datum               = "broadcast_tgd";
+    c.present                    = true;
+
+    {
+        NetworkProductWriter w(path.string(), c);
+        ASSERT_TRUE(w.good());
+        w.write(makeMinimalEpoch());
+    }
+
+    bool ok = false;
+    SbasisContract parsed;
+    const auto recs = NetworkProductReader::read(path.string(), &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_TRUE(parsed.present);
+    EXPECT_EQ(parsed.sat_gf_datum, "broadcast_tgd");
+    EXPECT_EQ(parsed.gf_pin_pair.at("G"), "C1C-C2W");
+    EXPECT_EQ(parsed.cb_pin_pair.at("G"), "C1C-C2W");
+    EXPECT_TRUE(parsed.decl.clock_pivot_sat.empty());
+    fs::remove(path, ec);
+}
+
+// Byte-identity, the standing-invariant-#6 half: a producer that folds no such datum
+// writes the S line exactly as it did before the field existed, so every pre-RF-0d
+// product and every stored product hash still round-trips.  The armed file is the
+// unarmed file plus exactly that one token, and nothing else.
+TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
+    const fs::path with_p    = fs::temp_directory_path() / "w6_iono_satgf_with.txt";
+    const fs::path without_p = fs::temp_directory_path() / "w6_iono_satgf_without.txt";
+    std::error_code ec; fs::remove(with_p, ec); fs::remove(without_p, ec);
+
+    SbasisContract base;
+    base.decl.reference_receiver_id = "MBAR00UGA";
+    base.disc_threshold_m           = 0.05;
+    base.gf_pin_pair["G"]           = "C1C-C2W";
+    base.present                    = true;
+
+    { NetworkProductWriter w(without_p.string(), base); ASSERT_TRUE(w.good()); }
+    SbasisContract armed = base;
+    armed.sat_gf_datum = "zero";
+    { NetworkProductWriter w(with_p.string(), armed); ASSERT_TRUE(w.good()); }
+
+    // Compare the S LINES, not the whole files.  The '#' header legend is
+    // grammar-complete by contract (HeaderLegendDeclaresEveryEmittedField enforces it),
+    // so it names sat_gf_datum=<mode> in BOTH files by design — a whole-file search
+    // would find the legend and prove nothing about the record stream.
+    const auto sLine = [](const fs::path& p) {
+        std::ifstream f(p);
+        std::string ln;
+        while (std::getline(f, ln))
+            if (ln.rfind("S,", 0) == 0) return ln;
+        return std::string{};
+    };
+    const std::string a = sLine(without_p), b = sLine(with_p);
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(b.empty());
+    EXPECT_EQ(a.find("sat_gf_datum="), std::string::npos);
+    EXPECT_NE(b.find(",sat_gf_datum=zero"), std::string::npos);
+    // The armed S line is the unarmed S line plus exactly that token, appended last.
+    EXPECT_EQ(b, a + ",sat_gf_datum=zero");
+
+    // The value survives a round-trip VERBATIM rather than being normalized: a reader
+    // that predates a future mode must not silently rewrite the product's frame.
+    bool ok = false;
+    SbasisContract parsed;
+    NetworkProductReader::read(with_p.string(), &parsed, &ok);
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(parsed.sat_gf_datum, "zero");
+    fs::remove(with_p, ec); fs::remove(without_p, ec);
 }

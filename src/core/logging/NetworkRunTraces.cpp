@@ -1531,6 +1531,23 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // armed-only rule, so an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
                                           : std::string())
+               // RF-0b / RF-0c / RF-0d: the satellite code-bias DATUM is the product's
+               // frame, so it belongs in the provenance record — the "zero" and
+               // "broadcast_tgd" frames differ by c*T_GD on every emitted code bias, and
+               // the no-ionosphere-constraint posture means the emitted ionosphere and
+               // the code biases are only meaningful AS A PAIR.  Emitted ONLY when the
+               // posture is non-default (the trace_station_block precedent above), so an
+               // unarmed run's manifest bytes are unchanged.
+               << ((nc.w6_iono_constraint != NetworkW6IonoConstraint::Auto
+                    || nc.sat_gf_datum != NetworkSatGfDatum::NoneMode)
+                       ? fmt::format("\"w6_iono_constraint\":\"{}\","
+                                     "\"sat_gf_datum\":\"{}\",",
+                                     nc.w6_iono_constraint == NetworkW6IonoConstraint::None
+                                         ? "none" : "auto",
+                                     nc.sat_gf_datum == NetworkSatGfDatum::Zero ? "zero"
+                                     : nc.sat_gf_datum == NetworkSatGfDatum::BroadcastTgd
+                                         ? "broadcast_tgd" : "none")
+                       : std::string())
                // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §3.5 / §7.1): the
                // AMBIGUITY VEHICLE is the product's provenance, so the manifest records
                // it — and §3.5's whole reason for the q knob existing is that its 0.0
