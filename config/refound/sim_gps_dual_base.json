@@ -1,0 +1,987 @@
+{
+ "_comment": [
+  "RF-0 BASE CONFIG \u2014 the FROZEN POSTURE of the network re-founding",
+  "(docs/refound/NETWORK_REFOUNDING_2026-09-14.md).  GENERATED, not hand-written:",
+  "the posture dict is built ONCE from the two goldens and both beds get posture +",
+  "a bed overlay, so the POSTURE half of the field/sim diff is empty by construction.",
+  "",
+  "= golden_field_gps_dual U golden_sim_tri_w6 (FIELD wins on conflict) +",
+  "  (a) the leveling vehicle, 17 keys, literals from config/test_suite/_pv_b.json",
+  "      (SPEC_event_harness s24.11);",
+  "  (b) the physical clock time-link, 12 keys from runs/_cm_c8b/arm.json with",
+  "      clock_anchor_q 2.9e-8 (s24.16 c8b);",
+  "  (c) network.clock_disc_jump_test true (s24.20) \u2014 the wire contract;",
+  "  (d) network.estimate_iono_sh false \u2014 free slant iono, SH dropped from the",
+  "      producer.  DEPENDENT FORCING, recorded: with W6 still armed and",
+  "      network.code_bias_gf_datum unreachable under dual, the satellite-DCB iono",
+  "      constraint falls to the EXTERNAL GIM branch \u2014 GnssConfigLoadNetwork.cpp:2893",
+  "      forces estimation.ionosphere_weighting.enable = true, and",
+  "      ApplicationNetworkSetup.cpp:431-456 hard-errors without a .INX.  The COD",
+  "      GIM is loaded.  This is the standing external-data tension",
+  "      (feedback_no_external_data_dependence: 'the W6 sat code-bias path has a",
+  "      load-bearing GIM constraint ... an outstanding conflict'), now on the",
+  "      baseline posture rather than default-OFF.  On the SIM bed the same GIM IS",
+  "      the truth ionosphere (scenario_summary.json iono_background = 'gim',",
+  "      COD0OPSFIN_20241290000_01D_01H_GIM.INX).",
+  "  (e) the scope cut: GPS only, DUAL, lanes off, F3 off, seams/snapshots/warm",
+  "      resumes off, consumer cold and float.",
+  "",
+  "HOW DUAL IS MADE SOLVABLE (RF-0's first finding) \u2014 network.rx_code_bias_datum.",
+  "The RECEIVER code-bias sum-to-zero gauge is in the SIM golden and absent from the",
+  "FIELD golden.  Under TRIPLE the loader's own claim holds \u2014 'the receiver half is",
+  "already determined through the satellite gauge here' (GnssConfigLoadNetwork.cpp:",
+  "3099-3107) \u2014 and s24.14's c2 arm measured it a no-op on every bar.  Under DUAL",
+  "that claim FAILS: the receiver-DCB levels leave TEN extra near-zero directions,",
+  "the null-space gate sees 13 against a declared 1, SBC's cap (6/epoch) refuses the",
+  "completion, drop-and-heal anchors 30 columns and still re-gates at 3, and EVERY",
+  "epoch is withheld.  Armed, the same posture gates at 3 and SBC completes the 2",
+  "extra along their own eigenvectors: 20/20 emitted, 0 withheld.",
+  "",
+  "  MEASURED LADDER (20-epoch arms on main's Release 24977604..., this exe):",
+  "    _rf0_c5_repro      PV-B + frequency_mode dual  (the literal s24.14 c5)",
+  "                       -> 13 ev < cutoff, 0/20 emitted, 20 withheld",
+  "    _rf0_c5_fix        + L5 dropped from signal_priorities   -> 13, 0/20",
+  "    _rf0_c5_shoff      + estimate_iono_sh false              -> 13, 0/20",
+  "    _rf0_rxcbdat_off   THIS config minus rx_code_bias_datum  -> 13, 0/20",
+  "    _rf0_field_smoke   THIS config                           ->  3, 20/20",
+  "",
+  "  s24.14 c5's ATTRIBUTION IS REFUTED.  It read the 13 as 'W6's L5 code-bias",
+  "  columns registered but unobserved'.  They are not registered at all under dual:",
+  "  frequency_mode restricts the band map BEFORE any state is allocated",
+  "  (PppModel.cpp:147-158 getBandMap / activeFrequencyBands -> :957, applied as",
+  "  buildFrequencyBandMap's allowed_bands filter), and the W6 column count is",
+  "  n_cb = 97 IDENTICALLY on all five arms \u2014 L5 in or out of signal_priorities, SH",
+  "  on or off.  Putting L5 back into this config's priority list is byte-identical",
+  "  on the products (sha256 6218a202... both, _rf0_field_smoke vs",
+  "  _rf0_field_smoke_c5).  The reason c6 (require_atx_coverage) read as a",
+  "  'byte-identical gate failure to c5' is that neither arm ever touched the cause.",
+  "",
+  "  processing.signal_priorities.GPS below is nevertheless the loader's own",
+  "  expansion of the field golden's attribute string 'WCSLXPYMIQ' MINUS the band-5",
+  "  block \u2014 belt-and-braces, and measured byte-identical.  It matters only because",
+  "  decideConstellationCanonicals (PppModel.cpp:438-470) walks the priority list",
+  "  with NO band filter, so without it the constellation canonical map still",
+  "  registers C5x/L5x for every station on a run the scope cut says is L1/L2.  The",
+  "  ARRAY form is the loader's only way to drop a band: the STRING form is force-",
+  "  expanded over system_bands[\"GPS\"] = {'1','2','5'} at GnssConfigLoad.cpp:795-828.",
+  "",
+  "BED: the 61-station simnet60_quiet_wu93_24h truth bed, S30000SIM clock",
+  "datum, the SZZ000SIM held-out consumer, ACCUMULATED phase wind-up (the",
+  "generator accumulated it \u2014 scenario_summary phase_windup.accumulated) and",
+  "the generator's own phase sigma 0.003 m."
+ ],
+ "app_mode": "post",
+ "data_source": "internal",
+ "files": {
+  "internal_data_root": "C:/GnssProcessor/data"
+ },
+ "data_download": {
+  "enabled": false,
+  "product_source": "COD",
+  "product_type": "FIN",
+  "year": 2024,
+  "doy": 129
+ },
+ "processing": {
+  "mode": "ppp-rtk-network",
+  "active_systems": [
+   "GPS"
+  ],
+  "frequency_mode": "dual",
+  "channel_mode": "single",
+  "elevation_mask_deg": 15.0,
+  "exclude_eclipsing_satellites": true,
+  "leap_seconds_tai": 37.0,
+  "relinearize_geometry": false,
+  "eigen_threads": 20,
+  "max_duration_s": 21600.0,
+  "satellite_interpolation_mode": "lagrange",
+  "satellite_clock_interpolation_mode": "linear",
+  "signal_priorities": {
+   "GPS": [
+    "C1W",
+    "C1C",
+    "C1S",
+    "C1L",
+    "C1X",
+    "C1P",
+    "C1Y",
+    "C1M",
+    "C1I",
+    "C1Q",
+    "L1W",
+    "L1C",
+    "L1S",
+    "L1L",
+    "L1X",
+    "L1P",
+    "L1Y",
+    "L1M",
+    "L1I",
+    "L1Q",
+    "D1W",
+    "D1C",
+    "D1S",
+    "D1L",
+    "D1X",
+    "D1P",
+    "D1Y",
+    "D1M",
+    "D1I",
+    "D1Q",
+    "S1W",
+    "S1C",
+    "S1S",
+    "S1L",
+    "S1X",
+    "S1P",
+    "S1Y",
+    "S1M",
+    "S1I",
+    "S1Q",
+    "C2W",
+    "C2C",
+    "C2S",
+    "C2L",
+    "C2X",
+    "C2P",
+    "C2Y",
+    "C2M",
+    "C2I",
+    "C2Q",
+    "L2W",
+    "L2C",
+    "L2S",
+    "L2L",
+    "L2X",
+    "L2P",
+    "L2Y",
+    "L2M",
+    "L2I",
+    "L2Q",
+    "D2W",
+    "D2C",
+    "D2S",
+    "D2L",
+    "D2X",
+    "D2P",
+    "D2Y",
+    "D2M",
+    "D2I",
+    "D2Q",
+    "S2W",
+    "S2C",
+    "S2S",
+    "S2L",
+    "S2X",
+    "S2P",
+    "S2Y",
+    "S2M",
+    "S2I",
+    "S2Q"
+   ]
+  },
+  "rinex_skip_zero_values": true
+ },
+ "estimation": {
+  "estimate_velocity": false,
+  "estimate_phase_clock": false,
+  "ambiguity_resolution": {
+   "mode": 0
+  },
+  "adaptive_iono_process_noise": {
+   "enable": false
+  },
+  "ionosphere_weighting": {
+   "enable": true,
+   "elevation_cutoff_deg": 25.0,
+   "common_mode_sigma_m": 50.0,
+   "std_scale": 1.0,
+   "floor_m": 0.05
+  },
+  "estimate_ifb": false,
+  "estimate_sat_biases": false,
+  "no_bia_code_downweight": 1.0,
+  "between_satellite_sd": {
+   "enabled": false
+  },
+  "accumulate_phase_windup": true
+ },
+ "filter": {
+  "process_noise": {
+   "position_q": 100.0,
+   "clock_bias_q": 1000.0,
+   "phase_clock_q": 1e-09,
+   "troposphere_q": 1e-09,
+   "ionosphere_q": 0.001,
+   "code_bias_q": 0.0001,
+   "sat_bias_q": 1e-12,
+   "sat_code_bias_q": 1e-10,
+   "sat_phase_bias_q": 1e-12,
+   "sat_clock_q": 0.001,
+   "system_time_offset_q": 1e-12,
+   "ambiguity_q": 1e-12
+  },
+  "initial_std": {
+   "position": 100.0,
+   "clock": 1000.0,
+   "troposphere": 0.5,
+   "ionosphere": 5.0,
+   "ambiguity": 1000.0,
+   "code_bias": 10.0,
+   "sat_bias": 10.0,
+   "sat_phase_bias": 10.0,
+   "sat_clock": 1000.0,
+   "system_time_offset": 1000.0
+  },
+  "measurement_noise": {
+   "code_std_m": 0.3,
+   "phase_std_m": 0.003
+  },
+  "stochastic_model": "elevation",
+  "code_elevation_power": 1.0,
+  "phase_elevation_power": 1.0
+ },
+ "model_corrections": {
+  "enable_troposphere": true,
+  "enable_relativistic_correction": true,
+  "enable_shapiro_delay": true,
+  "enable_solid_earth_tide": true,
+  "enable_ocean_tide_loading": false,
+  "enable_pole_tide": true,
+  "enable_atmospheric_loading": false,
+  "enable_satellite_pco": true,
+  "enable_satellite_pcv": true,
+  "enable_receiver_pco": true,
+  "enable_receiver_pcv": true,
+  "enable_phase_windup": true,
+  "enable_higher_order_ionosphere": false,
+  "enable_code_phase_bias": false
+ },
+ "logging": {
+  "enable_main_log": true,
+  "levels": {
+   "measurement_model": "warn",
+   "state_manager": "warn",
+   "state_initializer": "warn",
+   "ppp_model": "warn",
+   "kalman_filter": "warn",
+   "network": "info",
+   "ambiguity_resolver": "warn"
+  },
+  "enable_rt_engine": true
+ },
+ "network": {
+  "epoch_sync_tolerance_s": 1.0,
+  "min_stations": 10,
+  "raim": true,
+  "raim_attribution": true,
+  "raim_within_epoch": true,
+  "raim_withhold_sigma0": 6.0,
+  "clock_runaway_check": true,
+  "phase_leveling": true,
+  "emit_ura": true,
+  "code_bias_disc_jump_test": true,
+  "cycle_slip": {
+   "mw_detect": true,
+   "if_phase_td": true,
+   "relevel_free_epoch": true,
+   "if_phase_td_ref_gate": true,
+   "anchor_slip_handover": true,
+   "mw_evidence_refloat": true,
+   "common_band_scope": true,
+   "if_phase_td_pairs": "all",
+   "common_band_ref_arc": true,
+   "if_phase_td_ref_arm_all": true,
+   "mw_lli_corroborate": true,
+   "gap_instrument": true
+  },
+  "cold_clock_seed": true,
+  "emit_clock_disc": true,
+  "clock_disc_jump_test": true,
+  "trace_zwd": true,
+  "trace_sat_bias_states": true,
+  "trace_rx_states": true,
+  "write_run_manifest": true,
+  "health_interval_s": 300.0,
+  "trace_stations": true,
+  "trace_epoch_status": true,
+  "trace_events": true,
+  "trace_flag_rates": true,
+  "emit_epoch_status_record": true,
+  "trace_postfit_sigma0": true,
+  "trace_postfit_keyed": true,
+  "trace_prefit_census": true,
+  "trace_topology": true,
+  "rhs_attrib_on_trip": true,
+  "trace_estimability": true,
+  "parallel_stations": true,
+  "parallel_carry": true,
+  "parallel_reduce": false,
+  "lane_carry": {
+   "enable": false
+  },
+  "closed_loop": {
+   "enable": true,
+   "consumer_undifferenced": true,
+   "consume_network_products": true,
+   "consume_network_clock": true,
+   "ar_mode": 0,
+   "consume_network_iono": true,
+   "station": {
+    "position_ecef": [
+     5378997.6974,
+     -1593331.7073,
+     3025603.1127
+    ],
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/SZZ000SIM/SZZ000SIM_R_20241290000_01D_30S_MO.rnx",
+    "name": "SZZ000SIM"
+   }
+  },
+  "rx_code_bias_datum": true,
+  "estimate_sat_code_bias": true,
+  "trace_dd_fractional": true,
+  "trace_station_residuals": true,
+  "trace_slip_events": true,
+  "phase_datum_prioritized": true,
+  "phase_anchor_carry_reref": true,
+  "carry_conditional_coupling": true,
+  "shared_carry_full_cov": true,
+  "carry_coupling_time_update": true,
+  "carry_invariant": false,
+  "carry_coupling_gauge_project": true,
+  "carry_coupling_reinit_sources": true,
+  "estimate_iono_sh": false,
+  "trace_ionosphere": true,
+  "trace_slip_raw": true,
+  "h_sigma0_prefit_census": true,
+  "emit_clock_frame_hold": true,
+  "phase_datum_handover_continuous": true,
+  "phase_datum_handover_max_var_m2": 0.01,
+  "clock_temporal_anchor": true,
+  "clock_anchor_max_gap_s": 120.0,
+  "clock_anchor_k": 6.0,
+  "clock_anchor_abs_m": 2.0,
+  "clock_anchor_recouple_epochs": 4,
+  "clock_anchor_mark": true,
+  "clock_anchor_resolve": true,
+  "clock_anchor_var_floor_m2": 1e-05,
+  "clock_anchor_sigma_floor_m": 0.0018,
+  "clock_anchor_gauge_free": false,
+  "clock_anchor_gauge_free_stat": "proj",
+  "clock_anchor_q": 2.9e-08,
+  "sticky_pivot": true,
+  "disc_threshold_frac_cycles": 0.25,
+  "parallel_seam": true,
+  "trace_section_timers": true,
+  "station_pd_pin_aware": true,
+  "phase_datum_min_stations": 2,
+  "cb_kaula_prior": true,
+  "cb_kaula_sigma_m": 3.0,
+  "sbasis_complete": true,
+  "code_datum_time_linked": true,
+  "exclude_unmodeled_antenna_stations": true,
+  "parallel_max_threads": 20,
+  "trace_phase_anchor": true,
+  "readmit_seed_horizon_s": 3900.0,
+  "scoped_handover_response": true,
+  "handover_stransform": true,
+  "parallel_min_stations": 8,
+  "phase_datum_eq34": false,
+  "carry_invariant_qz": 0.0001,
+  "carry_invariant_innov_gate": false,
+  "carry_invariant_innov_k": 4.0,
+  "carry_invariant_innov_calibrate": false,
+  "carry_invariant_innov_calibrate_window": 15.0,
+  "carry_vce": true,
+  "trace_dd_fractional_max_pairs": 2000,
+  "trace_dd_fractional_epoch_stride": 1,
+  "estimate_glonass": false,
+  "phase_bias_exclude_unmatched_antenna": true,
+  "carry_invariant_honesty": false,
+  "iono_constraint_deweight_adaptive": true,
+  "iono_constraint_deweight_window_epochs": 15.0,
+  "iono_constraint_deweight_sigma_hi": 3.0,
+  "iono_constraint_deweight_sigma_lo": 2.0,
+  "iono_constraint_deweight_floor": 0.0,
+  "iono_constraint_deweight_rate_limit": 0.25,
+  "iono_constraint_deweight_min_epochs": 5,
+  "emit_pb_filter": true,
+  "epoch_decimation_n": 1,
+  "emit_pb_filter_max_gap_s": 1500.0,
+  "emit_pb_filter_window_epochs": 15.0,
+  "phase_leveling_max_gap_s": 900.0,
+  "emit_pb_filter_emit_sigma": true,
+  "neq_export_epoch": -1,
+  "mw_wl": {
+   "ewl_enable": false,
+   "wl_inject_enable": false,
+   "uwl_enable": false,
+   "uwl_cold_fix": false
+  },
+  "max_duration_s": 21600.0,
+  "carry_rx_code_bias": true,
+  "adm_trace": true,
+  "adm_screen": true,
+  "carry_invariant_pd_safe": false,
+  "carry_invariant_innov_corroborate": false,
+  "redundancy_census": true,
+  "redundancy_census_stride": 10,
+  "carry_vce_components": "pl,pb,cb",
+  "prior_residual_census": true,
+  "prior_residual_families": "pl,pb,cb,zwd,rxcb",
+  "prior_residual_corroborate": true,
+  "prior_residual_global_sigma0": true,
+  "mdb": true,
+  "block_baarda": true,
+  "block_baarda_corroborate": true,
+  "datum_graph_census": true,
+  "congruence_screen": true,
+  "emit_pb_filter_gate_v2": true,
+  "trace_postfit_rows": true,
+  "clock_datum_station": "S30000SIM",
+  "product_output_path": "C:/GnssProcessor/runs/_rf0_sim6/products.txt",
+  "stations": [
+   {
+    "name": "S01000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S01000SIM/S01000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2265188.7012,
+     0.0,
+     -5942407.3354
+    ]
+   },
+   {
+    "name": "S02000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S02000SIM/S02000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2021407.8772,
+     1851772.8674,
+     -5740501.0647
+    ]
+   },
+   {
+    "name": "S03000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S03000SIM/S03000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     273912.3392,
+     -3121107.4037,
+     -5538666.6775
+    ]
+   },
+   {
+    "name": "S04000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S04000SIM/S04000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2110094.6191,
+     2752245.5542,
+     -5335245.8409
+    ]
+   },
+   {
+    "name": "S05000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S05000SIM/S05000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3705701.6763,
+     -655489.3702,
+     -5133600.7216
+    ]
+   },
+   {
+    "name": "S06000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S06000SIM/S06000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3397507.9405,
+     -2161218.134,
+     -4932019.1065
+    ]
+   },
+   {
+    "name": "S07000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S07000SIM/S07000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1106673.1228,
+     4116764.3558,
+     -4729018.3704
+    ]
+   },
+   {
+    "name": "S08000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S08000SIM/S08000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2064270.9522,
+     -3974619.9047,
+     -4527598.6397
+    ]
+   },
+   {
+    "name": "S09000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S09000SIM/S09000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4392069.1972,
+     1603975.5492,
+     -4326232.18
+    ]
+   },
+   {
+    "name": "S10000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S10000SIM/S10000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4487672.5452,
+     1852443.8311,
+     -4123617.4908
+    ]
+   },
+   {
+    "name": "S11000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S11000SIM/S11000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2128113.2168,
+     -4547662.7078,
+     -3922383.6383
+    ]
+   },
+   {
+    "name": "S12000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S12000SIM/S12000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1547939.7961,
+     4935074.6182,
+     -3720038.4962
+    ]
+   },
+   {
+    "name": "S13000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S13000SIM/S13000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4596705.4847,
+     -2663888.1516,
+     -3518931.9945
+    ]
+   },
+   {
+    "name": "S14000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S14000SIM/S14000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5315422.6762,
+     -1168583.9399,
+     -3317852.9163
+    ]
+   },
+   {
+    "name": "S15000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S15000SIM/S15000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3197637.6567,
+     4548309.9624,
+     -3115823.5363
+    ]
+   },
+   {
+    "name": "S16000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S16000SIM/S16000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -728568.2988,
+     -5622341.4988,
+     -2914841.8987
+    ]
+   },
+   {
+    "name": "S17000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S17000SIM/S17000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4411813.1306,
+     3718277.511,
+     -2713868.7132
+    ]
+   },
+   {
+    "name": "S18000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S18000SIM/S18000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5854622.9766,
+     242105.8997,
+     -2512131.2148
+    ]
+   },
+   {
+    "name": "S19000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S19000SIM/S19000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4212623.3859,
+     -4192116.0307,
+     -2311239.5401
+    ]
+   },
+   {
+    "name": "S20000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S20000SIM/S20000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -277920.2669,
+     6010320.5421,
+     -2109700.1561
+    ]
+   },
+   {
+    "name": "S21000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S21000SIM/S21000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3898490.8824,
+     -4671698.1465,
+     -1908866.7055
+    ]
+   },
+   {
+    "name": "S22000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S22000SIM/S22000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     6090331.3285,
+     819440.5909,
+     -1708023.4646
+    ]
+   },
+   {
+    "name": "S23000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S23000SIM/S23000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5086628.8173,
+     3539145.0419,
+     -1506701.1871
+    ]
+   },
+   {
+    "name": "S24000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S24000SIM/S24000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1370263.2173,
+     -6090944.0534,
+     -1305898.9284
+    ]
+   },
+   {
+    "name": "S25000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S25000SIM/S25000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3123707.4603,
+     5451277.822,
+     -1105068.7951
+    ]
+   },
+   {
+    "name": "S26000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S26000SIM/S26000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -6015176.8024,
+     -1919005.3175,
+     -903941.961
+    ]
+   },
+   {
+    "name": "S27000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S27000SIM/S27000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5755649.5185,
+     -2659251.8342,
+     -703132.97
+    ]
+   },
+   {
+    "name": "S28000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S28000SIM/S28000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2455423.289,
+     5867116.8614,
+     -502279.4143
+    ]
+   },
+   {
+    "name": "S29000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S29000SIM/S29000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2156525.1935,
+     -5995691.5768,
+     -301305.9671
+    ]
+   },
+   {
+    "name": "S30000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S30000SIM/S30000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5646469.6887,
+     2967631.571,
+     -100443.0203
+    ]
+   },
+   {
+    "name": "S31000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S31000SIM/S31000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -6166935.7629,
+     1625586.9508,
+     100423.3515
+    ]
+   },
+   {
+    "name": "S32000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S32000SIM/S32000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3446189.4087,
+     -5359613.3614,
+     301316.2718
+    ]
+   },
+   {
+    "name": "S33000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S33000SIM/S33000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1077222.1284,
+     6268014.7823,
+     502255.9947
+    ]
+   },
+   {
+    "name": "S34000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S34000SIM/S34000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5012136.8694,
+     -3881678.6011,
+     703043.3609
+    ]
+   },
+   {
+    "name": "S35000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S35000SIM/S35000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     6292952.093,
+     -521355.7515,
+     904034.6889
+    ]
+   },
+   {
+    "name": "S36000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S36000SIM/S36000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4266630.3117,
+     4612109.0895,
+     1105092.8393
+    ]
+   },
+   {
+    "name": "S37000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S37000SIM/S37000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     30453.5145,
+     -6242733.4836,
+     1305821.8198
+    ]
+   },
+   {
+    "name": "S38000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S38000SIM/S38000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4164188.9032,
+     4590415.345,
+     1506958.7567
+    ]
+   },
+   {
+    "name": "S39000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S39000SIM/S39000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -6117646.8857,
+     -566978.4875,
+     1707646.6163
+    ]
+   },
+   {
+    "name": "S40000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S40000SIM/S40000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     4846832.3351,
+     -3678572.6668,
+     1908884.5046
+    ]
+   },
+   {
+    "name": "S41000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S41000SIM/S41000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1077158.0771,
+     5920991.0982,
+     2110205.0209
+    ]
+   },
+   {
+    "name": "S42000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S42000SIM/S42000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -3164833.7543,
+     -5029232.3286,
+     2310887.6559
+    ]
+   },
+   {
+    "name": "S43000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S43000SIM/S43000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5651677.5197,
+     1548891.5466,
+     2512326.3397
+    ]
+   },
+   {
+    "name": "S44000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S44000SIM/S44000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -5133228.1861,
+     2634282.7642,
+     2713860.2821
+    ]
+   },
+   {
+    "name": "S45000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S45000SIM/S45000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1970595.7411,
+     -5315348.8366,
+     2914597.4422
+    ]
+   },
+   {
+    "name": "S46000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S46000SIM/S46000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2096605.6725,
+     5150264.2131,
+     3116278.4556
+    ]
+   },
+   {
+    "name": "S47000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S47000SIM/S47000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4916825.9277,
+     -2330170.6985,
+     3317038.9488
+    ]
+   },
+   {
+    "name": "S48000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S48000SIM/S48000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     5076915.0258,
+     -1565268.1682,
+     3518877.3484
+    ]
+   },
+   {
+    "name": "S49000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S49000SIM/S49000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2615710.4927,
+     4463241.6573,
+     3720835.5886
+    ]
+   },
+   {
+    "name": "S50000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S50000SIM/S50000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -1053981.8223,
+     -4908193.4846,
+     3921689.6007
+    ]
+   },
+   {
+    "name": "S51000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S51000SIM/S51000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3958209.1877,
+     2811726.1395,
+     4123835.0735
+    ]
+   },
+   {
+    "name": "S52000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S52000SIM/S52000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -4639766.3632,
+     578242.3955,
+     4326111.3339
+    ]
+   },
+   {
+    "name": "S53000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S53000SIM/S53000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     2902646.3175,
+     -3410151.6854,
+     4527106.8961
+    ]
+   },
+   {
+    "name": "S54000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S54000SIM/S54000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     155372.7678,
+     4260598.8711,
+     4729590.6749
+    ]
+   },
+   {
+    "name": "S55000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S55000SIM/S55000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2826473.0884,
+     -2868148.0124,
+     4932218.0185
+    ]
+   },
+   {
+    "name": "S56000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S56000SIM/S56000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     3758168.7873,
+     192156.2004,
+     5133393.6909
+    ]
+   },
+   {
+    "name": "S57000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S57000SIM/S57000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2674021.2834,
+     2209408.5096,
+     5336255.2212
+    ]
+   },
+   {
+    "name": "S58000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S58000SIM/S58000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     432848.6339,
+     -3102426.7751,
+     5537550.5097
+    ]
+   },
+   {
+    "name": "S59000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S59000SIM/S59000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     1554735.7565,
+     2257956.1359,
+     5740661.2559
+    ]
+   },
+   {
+    "name": "S60000SIM",
+    "rinex_path": "C:/GnssProcessor/runs/simnet60_quiet_wu93_24h/S60000SIM/S60000SIM_R_20241290000_01D_30S_MO.rnx",
+    "position_ecef": [
+     -2208068.2554,
+     -508072.2,
+     5943936.2097
+    ]
+   }
+  ]
+ }
+}
