@@ -3,6 +3,14 @@
 234 configs moved here from `config/test_suite/` on 2026-07-29. **Nothing was deleted**; every
 byte and all git history is intact, and any of these can be moved back or run in place.
 
+> **A second pass ran on 2026-09-14**: 282 more configs are in
+> [`test_suite/`](test_suite/), under the same policy as below (cited-by-name, plus the
+> whole `extends` chain of anything cited, plus every warm-resume config, plus the
+> shipped no-underscore configs). See [`test_suite/README.md`](test_suite/README.md) and
+> [`../test_suite/README.md`](../test_suite/README.md) for the counts and the one caveat
+> that pass added — nine archived arms have a bare-basename `extends` whose base stayed
+> behind, so they must be moved back or re-pointed before they run.
+
 ## Why they moved
 
 `config/test_suite/` had accumulated 350 configs, most of them one-off diagnostic A/B arms from
