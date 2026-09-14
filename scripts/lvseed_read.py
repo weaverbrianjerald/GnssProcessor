@@ -58,6 +58,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -238,6 +239,9 @@ def split_arcs(k, gap_epochs):
 def build_arcs(df, kind, gap_epochs, min_arc):
     """-> list of dicts, one per kept arc, in (station, sat, signal) order."""
     sub = df[df["kind"] == kind]
+    # a long run can end on a partially-flushed trace line, which pandas reads as NA
+    # in the key columns and which then makes the group-boundary test ambiguous
+    sub = sub.dropna(subset=["station", "sat", "signal", "resid_m", "w", "elev_deg"])
     sub = sub.sort_values(["station", "sat", "signal", "k"], kind="mergesort")
     sta = sub["station"].to_numpy(dtype=object)
     sat = sub["sat"].to_numpy(dtype=object)
@@ -2626,6 +2630,427 @@ def fmt_r8(R):
 
 
 # --------------------------------------------------------------------------- #
+# R9 — §24.19: the slip response's own mid-arc RE-LEVELS
+# --------------------------------------------------------------------------- #
+# Every (tier, event) this producer writes that re-seeds or frees a phase level
+# mid-arc.  `sig_from` says where that row's signal list lives in the detail
+# field; None = the row names no signal and applies to every band of the LOS.
+RELEVEL_KINDS = {
+    ("T4_attrib", "attrib_arc"): None,            # the arc refloat: == n_arc_refloat
+    ("T0_mw_detect", "mw_wl_slip"): "semi",       # detail "L1C;L2W"
+    ("T0_mw_detect", "lli_slip"): "semi",         # detail "LLI" (no signal named)
+    ("T1_if_slip", "if_slip"): "semi",
+    ("T1_if_slip", "refsat_reset"): "semi",
+    ("T0_gap", "arc_resume"): "semi",             # detail "L5Q;gap_ep=1;..."
+    ("T2_within_epoch", "we_refloat_arc"): "semi",
+    ("T2_within_epoch", "we_refloat_sat"): "semi",
+}
+BAND_OF_PHASE = {"L1": "L1", "L2": "L2", "L5": "L5"}
+
+
+def _band(sig):
+    if not sig or len(sig) < 2 or sig[1] not in "125":
+        return None
+    return "L" + sig[1]
+
+
+def read_r9(project, arm="_gl_on6", contrasts=("_gl_rxoff6", "_cm_c10"),
+            ep_per_hour=120, min_arc=30, gap_epochs=5, near_ep=1,
+            nshuffle=1000, seed=20260914, carryless=None):
+    carryless = set(carryless or CARRYLESS_8)
+    rng = np.random.default_rng(seed)
+    logs = os.path.join(arm_dir(project, arm), "logs")
+    k_of = lambda t: int(round((t - TOW0) / DT_S)) + 1                      # noqa: E731
+
+    # ---------------- (a) the event population ----------------
+    _h, rows = _scan_csv(os.path.join(logs, "network_events.csv"),
+                         lambda d, f: (d.get("tier"), d.get("event")) in RELEVEL_KINDS
+                         or (d.get("tier") == "PRIORRES"
+                             and "mech=relevel_free" in (d.get("detail") or "")),
+                         limit=10 ** 7)
+    kinds = defaultdict(list)
+    events = []          # (k, station, sat, band or None, kind)
+    for line in rows:
+        f = line.split(",")
+        tow, tier, ev_, sat, sta, detail = (float(f[1]), f[2], f[3], f[4], f[5], f[9])
+        key = (tier, ev_)
+        if tier == "PRIORRES":
+            key = ("PRIORRES", "mech=relevel_free")
+            sigs = [t[4:] for t in detail.split() if t.startswith("sig=")]
+        elif RELEVEL_KINDS.get(key) == "semi":
+            sigs = [s for s in detail.split(";")[0].split(";") if s and s[0] == "L"
+                    and len(s) >= 2 and s[1] in "125"]
+            if not sigs:                                   # e.g. the bare "LLI" detail
+                sigs = []
+        else:
+            sigs = []
+        kinds[key].append(line)
+        bands = sorted({_band(s) for s in sigs} - {None}) or [None]
+        for b in bands:
+            events.append((k_of(tow), sta, sat, b, f"{tier}/{ev_}"))
+    ev_df = pd.DataFrame(events, columns=["k", "station", "sat", "band", "kind"])
+    ev_df["hour"] = ((ev_df["k"] - 1) // ep_per_hour + 1).astype(int)
+
+    # reconcile against the producer's own run-end voice
+    out_txt = _scan_lines(os.path.join(arm_dir(project, arm), "stdout.txt"))
+    runend = {}
+    for pat, key in ((r"(\d+) detector-marked \(station, amb\) free-epoch latches",
+                      "free_epoch_latches"),
+                     (r"(\d+) inject-site skips actually taken", "inject_site_skips"),
+                     (r"(\d+) RESUMPTION\(s\)", "gap_resumptions")):
+        for ln in out_txt:
+            m = re.search(pat, ln)
+            if m:
+                runend[key] = int(m.group(1))
+                break
+    st = pd.read_csv(os.path.join(logs, "network_epoch_status.csv"))
+    st["k"] = np.rint((st["tow"].to_numpy() - TOW0) / DT_S).astype(int) + 1
+    st["hour"] = ((st["k"] - 1) // ep_per_hour + 1).astype(int)
+    n_arc_refloat = float(pd.to_numeric(st["n_arc_refloat"], errors="coerce").sum())
+
+    df = load_pf_rows(project, arm)
+    code = df[df["kind"] == "code"].copy()
+    code["hour"] = ((code["k"] - 1) // ep_per_hour + 1).astype(int)
+    keyed = pd.read_csv(os.path.join(logs, "network_pf_keyed.csv"))
+    keyed["k"] = np.rint((keyed["tow"].to_numpy() - TOW0) / DT_S).astype(int) + 1
+    keyed["hour"] = ((keyed["k"] - 1) // ep_per_hour + 1).astype(int)
+    sta_k = keyed[keyed["kind"] == "STA"]
+
+    hours = sorted(int(h) for h in st["hour"].unique())
+    per_hour = {}
+    for h in hours:
+        e = ev_df[ev_df["hour"] == h]
+        med = sta_k[sta_k["hour"] == h].groupby("key")["rms_code"].median()
+        cnt = e.groupby("station", observed=True).size()
+        xs = [float(cnt.get(str(k), 0)) for k in med.index]
+        ys = [float(v) for v in med.values]
+        per_hour[h] = dict(
+            n_events=int(len(e)),
+            n_events_by_kind=dict(e.groupby("kind", observed=True).size()),
+            n_stations_with_event=int(e["station"].nunique()),
+            i_p50=q(ys, .5), i_p90=q(ys, .9),
+            spearman_events_vs_rms=spearman(xs, ys), pearson_events_vs_rms=pearson(xs, ys),
+            n_sta=len(ys))
+    # --------------- (b) per LOS arc ---------------
+    arcs = build_arcs(df, "code", gap_epochs, min_arc)
+    ev_set = defaultdict(set)          # (sta, sat, band) -> {k}
+    ev_any = defaultdict(set)          # (sta, sat)       -> {k}
+    for r in events:
+        k, sta, sat, b, _kd = r
+        ev_any[(sta, sat)].add(k)
+        if b:
+            ev_set[(sta, sat, b)].add(k)
+        else:
+            for bb in ("L1", "L2", "L5"):
+                ev_set[(sta, sat, bb)].add(k)
+    arc_rows = []
+    for a in arcs:
+        b = BAND_OF.get(a["signal"])
+        ks = set(int(x) for x in a["k"])
+        n_in = len(ev_set.get((a["station"], a["sat"], b), set()) & ks)
+        n_any = len(ev_any.get((a["station"], a["sat"]), set()) & ks)
+        res = a["res"]
+        arc_rows.append(dict(station=a["station"], sat=a["sat"], signal=a["signal"],
+                             band=b, n=a["n"], k0=a["k0"], k1=a["k1"],
+                             n_relevel_band=n_in, n_relevel_any=n_any,
+                             growth=float(abs(res[:3].mean() - res[9:].mean())),
+                             final_abs_level=float(abs(res[9:].mean())),
+                             rate_per_hour=float(n_in / (a["n"] * DT_S / 3600.0))))
+    def arc_corr(xf, yf):
+        x = [r[xf] for r in arc_rows]
+        y = [r[yf] for r in arc_rows]
+        nm, np95 = perm_null(x, y, n=min(nshuffle, 500))
+        xa, ya = np.asarray(x, float), np.asarray(y, float)
+        tm = np.isfinite(xa) & np.isfinite(ya)
+        if tm.sum() > 20:
+            lo, hi = np.quantile(ya[tm], [0.01, 0.99])
+            tm &= (ya >= lo) & (ya <= hi)
+        return dict(n=len(x), r=pearson(x, y), rho=spearman(x, y),
+                    r_trim=pearson(xa[tm], ya[tm]), n_trim=int(tm.sum()),
+                    null_absr_mean=nm, null_absr_p95=np95)
+    B = dict(
+        n_arcs=len(arc_rows),
+        frac_arcs_with_relevel=float(np.mean([r["n_relevel_band"] > 0 for r in arc_rows]))
+        if arc_rows else float("nan"),
+        growth_vs_n_relevel=arc_corr("n_relevel_band", "growth"),
+        final_vs_n_relevel=arc_corr("n_relevel_band", "final_abs_level"),
+        growth_vs_n_relevel_any=arc_corr("n_relevel_any", "growth"),
+        med_growth_with=q([r["growth"] for r in arc_rows if r["n_relevel_band"] > 0], .5),
+        med_growth_without=q([r["growth"] for r in arc_rows if r["n_relevel_band"] == 0], .5),
+        med_final_with=q([r["final_abs_level"] for r in arc_rows if r["n_relevel_band"] > 0], .5),
+        med_final_without=q([r["final_abs_level"] for r in arc_rows
+                             if r["n_relevel_band"] == 0], .5))
+
+    # --------------- (c) the wire ---------------
+    import wire_vs_code_census as wc
+    t_hi = TOW0 + DT_S * (max(hours) * ep_per_hour - 1)
+    ser, evc, _c = _census_series(project, arm, TOW0, t_hi)
+    # A T4 refloat is TRIGGERED BY a large post-fit residual, so a wire step beside it
+    # is coincidence with unknown direction.  The T0/T1 detectors read RAW observables
+    # (LLI bits, MW/GF, IF time-difference) and are solve-independent — measured here:
+    # their counts are identical across all three arms — so an enrichment on THOSE
+    # events does establish direction.  Split the population.
+    DETECTOR_KINDS = ("T0_gap/arc_resume", "T0_mw_detect/lli_slip",
+                      "T0_mw_detect/mw_wl_slip", "T1_if_slip/if_slip",
+                      "T1_if_slip/refsat_reset")
+    sat_ep = defaultdict(set)           # sat -> epochs where ANY station re-levelled it
+    sat_ep_det = defaultdict(set)       # ... restricted to the raw-observable detectors
+    sat_ep_t4 = defaultdict(set)        # ... restricted to the post-fit T4 refloat
+    for k, sta, sat, _b, _kd in events:
+        sat_ep[sat].add(int(k))
+        if _kd in DETECTOR_KINDS:
+            sat_ep_det[sat].add(int(k))
+        elif _kd == "T4_attrib/attrib_arc":
+            sat_ep_t4[sat].add(int(k))
+    kspan = np.arange(1, max(hours) * ep_per_hour + 1)
+    C, per_sat = {}, {}
+    pooled_near, pooled_away = [], []
+    for sat in sorted({key[0] if isinstance(key, tuple) else key for key in ser["phase"]}):
+        steps = []                       # (k_of_second_epoch, |dD|)
+        for key, s_ in ser["phase"].items():
+            if (key[0] if isinstance(key, tuple) else key) != sat:
+                continue
+            for arc in wc.split_arcs(s_, evc.get(sat, {}), declared=False):
+                for p, qq in zip(arc[:-1], arc[1:]):
+                    t0, d0, _ = s_[p]
+                    t1, d1, _ = s_[qq]
+                    if k_of(t1) - k_of(t0) == 1:
+                        steps.append((k_of(t1), abs(d1 - d0)))
+        if not steps:
+            continue
+        ks = np.array([k for k, _ in steps])
+        dv = np.array([v for _, v in steps], float)
+        E = np.array(sorted(sat_ep.get(sat, ())), dtype=int)
+        if E.size == 0:
+            continue
+        def enrich(bset):
+            near = np.isin(ks, bset)
+            for j in range(1, near_ep + 1):
+                near |= np.isin(ks - j, bset) | np.isin(ks + j, bset)
+            if not near.any() or near.all():
+                return float("nan"), float("nan"), float("nan"), near
+            return (float(dv[near].mean()), float(dv[~near].mean()),
+                    float(dv[near].mean() / dv[~near].mean()), near)
+        mn, ma, ratio, near = enrich(E)
+        nulls = np.empty(nshuffle)
+        for i in range(nshuffle):
+            _a, _b2, rr, _n = enrich(rng.choice(kspan, size=E.size, replace=False))
+            nulls[i] = rr
+        pooled_near.extend(dv[near].tolist())
+        pooled_away.extend(dv[~near].tolist())
+        sub = {}
+        for tag, S in (("detector", sat_ep_det.get(sat, ())),
+                       ("t4", sat_ep_t4.get(sat, ()))):
+            Es = np.array(sorted(S), dtype=int)
+            if Es.size == 0:
+                sub[tag] = dict(n=0, enrichment=float("nan"), null_mean=float("nan"),
+                                null_p95=float("nan"))
+                continue
+            m2, a2, r2, _n2 = enrich(Es)
+            nl = np.empty(min(nshuffle, 300))
+            for i in range(len(nl)):
+                _x, _y, rr2, _z = enrich(rng.choice(kspan, size=Es.size, replace=False))
+                nl[i] = rr2
+            sub[tag] = dict(n=int(Es.size), enrichment=r2,
+                            null_mean=float(np.nanmean(nl)),
+                            null_p95=float(np.nanquantile(nl, .95)))
+        per_sat[sat] = dict(n_steps=int(len(steps)), n_relevel_epochs=int(E.size),
+                            coverage=float(near.mean()),
+                            mean_absdD_near=mn, mean_absdD_away=ma, enrichment=ratio,
+                            null_mean=float(np.nanmean(nulls)),
+                            null_p95=float(np.nanquantile(nulls, .95)), **sub)
+    C["per_sat"] = per_sat
+    C["pooled"] = dict(
+        n_near=len(pooled_near), n_away=len(pooled_away),
+        mean_near=float(np.mean(pooled_near)) if pooled_near else float("nan"),
+        mean_away=float(np.mean(pooled_away)) if pooled_away else float("nan"),
+        enrichment=float(np.mean(pooled_near) / np.mean(pooled_away))
+        if pooled_away and np.mean(pooled_away) else float("nan"),
+        med_enrichment_per_sat=q([v["enrichment"] for v in per_sat.values()], .5),
+        med_null_per_sat=q([v["null_mean"] for v in per_sat.values()], .5),
+        med_null_p95_per_sat=q([v["null_p95"] for v in per_sat.values()], .5),
+        frac_sats_above_own_null_p95=float(np.mean(
+            [v["enrichment"] > v["null_p95"] for v in per_sat.values()]))
+        if per_sat else float("nan"),
+        med_enrich_detector=q([v["detector"]["enrichment"] for v in per_sat.values()], .5),
+        med_null_detector=q([v["detector"]["null_mean"] for v in per_sat.values()], .5),
+        frac_above_null_p95_detector=float(np.nanmean(
+            [1.0 if (np.isfinite(v["detector"]["enrichment"])
+                     and v["detector"]["enrichment"] > v["detector"]["null_p95"]) else 0.0
+             for v in per_sat.values() if v["detector"]["n"] > 0])),
+        med_enrich_t4=q([v["t4"]["enrichment"] for v in per_sat.values()], .5),
+        med_null_t4=q([v["t4"]["null_mean"] for v in per_sat.values()], .5),
+        frac_above_null_p95_t4=float(np.nanmean(
+            [1.0 if (np.isfinite(v["t4"]["enrichment"])
+                     and v["t4"]["enrichment"] > v["t4"]["null_p95"]) else 0.0
+             for v in per_sat.values() if v["t4"]["n"] > 0])))
+
+    # --------------- (d) the rate ---------------
+    # denominator: (station, satellite) LOS-hours actually observed
+    los_h = code.groupby(["station", "sat", "hour"], observed=True).size().reset_index()
+    los_hours_by_sta = los_h.groupby("station", observed=True).size().to_dict()
+    ev_by_sta = ev_df.groupby("station", observed=True).size().to_dict()
+    elev = {}
+    for r in df[["station", "sat", "k", "elev_deg"]].itertuples(index=False):
+        elev[(str(r.station), str(r.sat), int(r.k))] = float(r.elev_deg)
+    ev_el = [elev.get((sta, sat, int(k))) for k, sta, sat, _b, _kd in events]
+    ev_el = np.array([x for x in ev_el if x is not None], float)
+    all_el = code["elev_deg"].to_numpy(float)
+    edges = [10, 20, 30, 45, 60, 91]
+    el_bins = []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        n_ev = int(((ev_el >= lo) & (ev_el < hi)).sum())
+        n_rows = int(((all_el >= lo) & (all_el < hi)).sum())
+        el_bins.append(dict(bin=f"{lo}-{hi}", n_events=n_ev, n_code_rows=n_rows,
+                            events_per_1k_rows=float(1000.0 * n_ev / n_rows)
+                            if n_rows else float("nan")))
+    sta_rate = []
+    for sta, lh in sorted(los_hours_by_sta.items()):
+        n = ev_by_sta.get(sta, 0)
+        sta_rate.append(dict(station=str(sta), n_events=int(n), los_hours=int(lh),
+                             rate_per_los_hour=float(n / lh) if lh else float("nan"),
+                             carryless=str(sta) in carryless))
+    sta_rate.sort(key=lambda r: -r["rate_per_los_hour"])
+    cl = [r["rate_per_los_hour"] for r in sta_rate if r["carryless"]]
+    rest = [r["rate_per_los_hour"] for r in sta_rate if not r["carryless"]]
+    D = dict(by_elev=el_bins, by_station=sta_rate,
+             carryless_p50=q(cl, .5), rest_p50=q(rest, .5),
+             carryless_max=float(max(cl)) if cl else float("nan"),
+             rest_max=float(max(rest)) if rest else float("nan"),
+             n_carryless=len(cl), n_rest=len(rest),
+             ratio=float(q(cl, .5) / q(rest, .5)) if rest and q(rest, .5) else float("nan"))
+
+    # contrast arms: the headline counts only
+    contrast = {}
+    for c in contrasts:
+        p = os.path.join(arm_dir(project, c), "logs", "network_events.csv")
+        if not os.path.isfile(p):
+            continue
+        _hh, rr = _scan_csv(p, lambda d, f: (d.get("tier"), d.get("event")) in RELEVEL_KINDS,
+                            limit=10 ** 7)
+        ot = _scan_lines(os.path.join(arm_dir(project, c), "stdout.txt"))
+        re_ = {}
+        for pat, key in ((r"(\d+) detector-marked \(station, amb\) free-epoch latches",
+                          "free_epoch_latches"),
+                         (r"(\d+) inject-site skips actually taken", "inject_site_skips")):
+            for ln in ot:
+                m = re.search(pat, ln)
+                if m:
+                    re_[key] = int(m.group(1))
+                    break
+        contrast[c] = dict(n_rows=len(rr), run_end=re_, by_kind=dict(
+            (f"{k[0]}/{k[1]}", sum(1 for ln in rr
+                                   if (ln.split(",")[2], ln.split(",")[3]) == k))
+            for k in RELEVEL_KINDS))
+    return dict(arm=arm, hours=hours, n_event_rows=len(rows), n_expanded=len(events),
+                kinds={f"{a}/{b}": dict(n=len(v), sample=v[0]) for (a, b), v in kinds.items()},
+                run_end=runend, n_arc_refloat_epoch_status=n_arc_refloat,
+                per_hour=per_hour, arcs=B, wire=C, rate=D, contrast=contrast)
+
+
+def _scan_lines(path):
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.readlines()
+
+
+def fmt_r9(R):
+    L = [f"R9 - sec 24.19: the slip response's own mid-arc RE-LEVELS  ({R['arm']})",
+         "frozen reading: (c) enrichment > 1.5 over the null AND (b) r > 0.5 => the re-leveling",
+         "  IS the wire's random walk and the drift's channel; (c) ~ 1 and (b) < 0.3 => exonerated;",
+         "  a rate > 1 per LOS per hour at the eight carry-less stations against < 0.3 elsewhere",
+         "  => the rate is the bad-station signature (false slips on noisy code).",
+         "",
+         "(a) THE EVENT POPULATION - every (tier, event) this producer writes that frees or",
+         "    re-seeds a phase level mid-arc, one quoted row each:"]
+    for k, v in sorted(R["kinds"].items(), key=lambda kv: -kv[1]["n"]):
+        L.append(f"  {k:34s} n = {v['n']:5d}")
+        L.append(f"      | {v['sample']}")
+    L += ["",
+          f"  rows {R['n_event_rows']} -> {R['n_expanded']} (station, sat, BAND, epoch) events",
+          f"  RECONCILIATION against the producer's own voice:",
+          f"    run-end 'detector-marked (station, amb) free-epoch latches' : "
+          f"{R['run_end'].get('free_epoch_latches')}",
+          f"    run-end 'inject-site skips actually taken'                  : "
+          f"{R['run_end'].get('inject_site_skips')}",
+          f"    run-end 'RESUMPTION(s)' (slip-QC card G gap instrumentation): "
+          f"{R['run_end'].get('gap_resumptions')}",
+          f"    epoch_status n_arc_refloat summed over the run              : "
+          f"{R['n_arc_refloat_epoch_status']:.0f}"]
+    L += ["", "(a) per hour, beside (i)",
+          f"  {'h':>2s} {'events':>7s} {'stations':>9s} {'(i) p50':>8s} {'(i) p90':>8s} "
+          f"{'rho(events, rms)':>17s} {'r':>7s} {'n_sta':>6s}"]
+    for h, p in R["per_hour"].items():
+        L.append(f"  {h:2d} {p['n_events']:7d} {p['n_stations_with_event']:9d} "
+                 f"{f(p['i_p50'],3)!s:>8s} {f(p['i_p90'],3)!s:>8s} "
+                 f"{f(p['spearman_events_vs_rms'])!s:>17s} "
+                 f"{f(p['pearson_events_vs_rms'])!s:>7s} {p['n_sta']:6d}")
+    B = R["arcs"]
+    L += ["", f"(b) per LOS code arc (>= 30 rows): {B['n_arcs']} arcs, "
+              f"{f(B['frac_arcs_with_relevel'],3)} carry at least one same-band re-level",
+          f"  {'read':34s} {'n':>6s} {'r':>7s} {'rho':>7s} {'r_trim':>7s} {'NULL':>6s} {'NULLp95':>8s}"]
+    for key in ("growth_vs_n_relevel", "final_vs_n_relevel", "growth_vs_n_relevel_any"):
+        c = B[key]
+        L.append(f"  {key:34s} {c['n']:6d} {f(c['r'])!s:>7s} {f(c['rho'])!s:>7s} "
+                 f"{f(c['r_trim'])!s:>7s} {f(c['null_absr_mean'])!s:>6s} "
+                 f"{f(c['null_absr_p95'])!s:>8s}")
+    L.append(f"  median growth  with a re-level {f(B['med_growth_with'],3)} m  vs without "
+             f"{f(B['med_growth_without'],3)} m")
+    L.append(f"  median |level| with a re-level {f(B['med_final_with'],3)} m  vs without "
+             f"{f(B['med_final_without'],3)} m")
+    P = R["wire"]["pooled"]
+    L += ["", "(c) THE WIRE - |dD_phase| at epochs within +-1 of a re-level of that satellite",
+          f"  pooled: near {f(P['mean_near'],4)} m ({P['n_near']} steps) vs away "
+          f"{f(P['mean_away'],4)} m ({P['n_away']}) -> enrichment {f(P['enrichment'],3)}",
+          f"  per satellite: median enrichment {f(P['med_enrichment_per_sat'],3)} against a "
+          f"median shuffled null of {f(P['med_null_per_sat'],3)} (null p95 "
+          f"{f(P['med_null_p95_per_sat'],3)});",
+          f"    satellites above their OWN null p95: {f(P['frac_sats_above_own_null_p95'],3)} "
+          "(0.05 is chance)",
+          "  DIRECTION SPLIT - a T4 refloat is TRIGGERED BY a large post-fit residual, so a",
+          "    wire step beside it is coincidence of unknown direction.  The T0/T1 detectors read",
+          "    RAW observables and are solve-independent (their counts are identical in all three",
+          "    arms, below), so an enrichment on THOSE establishes direction:",
+          f"    raw DETECTOR events : median enrichment {f(P['med_enrich_detector'],3)} vs null "
+          f"{f(P['med_null_detector'],3)}; above own null p95 in "
+          f"{f(P['frac_above_null_p95_detector'],3)} of satellites",
+          f"    post-fit T4 refloat : median enrichment {f(P['med_enrich_t4'],3)} vs null "
+          f"{f(P['med_null_t4'],3)}; above own null p95 in {f(P['frac_above_null_p95_t4'],3)}",
+          f"  {'sat':4s} {'steps':>6s} {'relev ep':>9s} {'cover':>6s} {'near':>7s} {'away':>7s} "
+          f"{'enrich':>7s} {'null':>6s} {'nullp95':>8s} {'det':>6s} {'T4':>6s}"]
+    for sat in ("G29", "G28", "G32", "G18"):
+        v = R["wire"]["per_sat"].get(sat)
+        if not v:
+            continue
+        L.append(f"  {sat:4s} {v['n_steps']:6d} {v['n_relevel_epochs']:9d} "
+                 f"{f(v['coverage'],3)!s:>6s} {f(v['mean_absdD_near'],4)!s:>7s} "
+                 f"{f(v['mean_absdD_away'],4)!s:>7s} {f(v['enrichment'],3)!s:>7s} "
+                 f"{f(v['null_mean'],3)!s:>6s} {f(v['null_p95'],3)!s:>8s} "
+                 f"{f(v['detector']['enrichment'],2)!s:>6s} {f(v['t4']['enrichment'],2)!s:>6s}")
+    D = R["rate"]
+    L += ["", "(d) THE RATE",
+          f"  by elevation: {'bin':>8s} {'events':>8s} {'code rows':>10s} {'events/1k rows':>15s}"]
+    for b in D["by_elev"]:
+        L.append(f"{'':16s}{b['bin']:>8s} {b['n_events']:8d} {b['n_code_rows']:10d} "
+                 f"{f(b['events_per_1k_rows'],3)!s:>15s}")
+    L += [f"  the eight carry-less stations: rate per LOS-hour p50 {f(D['carryless_p50'],3)} "
+          f"(max {f(D['carryless_max'],3)}, n {D['n_carryless']}) vs the rest p50 "
+          f"{f(D['rest_p50'],3)} (max {f(D['rest_max'],3)}, n {D['n_rest']}) -> ratio "
+          f"{f(D['ratio'],2)}",
+          f"  {'station':11s} {'events':>7s} {'LOS-hours':>10s} {'rate/LOS-h':>11s}  (worst 12)"]
+    for r in D["by_station"][:12]:
+        L.append(f"  {r['station']:11s}{'*' if r['carryless'] else ' '}{r['n_events']:6d} "
+                 f"{r['los_hours']:10d} {f(r['rate_per_los_hour'],3)!s:>11s}")
+    L.append("    (* = one of the eight rx-CB carry-less stations)")
+    if R["contrast"]:
+        L += ["", "  contrast arms (event rows + the run-end latch counters):"]
+        for c, v in R["contrast"].items():
+            L.append(f"    {c:12s} rows {v['n_rows']:5d}  run-end {v['run_end']}")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------- #
 # witness — per-station code rms vs arcs born inside the run
 # --------------------------------------------------------------------------- #
 def read_witness(project, arms, gap_epochs, min_arc):
@@ -2682,7 +3107,7 @@ def emit(out_dir, name, obj, text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8",
+    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9",
                                      "witness", "all"])
     ap.add_argument("--project", default=PROJECT_DEFAULT)
     ap.add_argument("--arms", default=",".join(ARMS_DEFAULT))
@@ -2695,6 +3120,9 @@ def main():
     ap.add_argument("--sat", default="G06", help="r5: the satellite under test")
     ap.add_argument("--station", default="DJIG00DJI", help="r5b: the station under test")
     ap.add_argument("--tow", type=float, default=265470.0, help="r5c/r5d: the election epoch")
+    ap.add_argument("--r9-arm", default="_gl_on6", help="r9: the arm under test")
+    ap.add_argument("--r9-contrasts", default="_gl_rxoff6,_cm_c10",
+                    help="r9: arms read for their event counts only")
     ap.add_argument("--r8-arm", default="_gl_on6", help="r8: the arm under test")
     ap.add_argument("--r8-contrast", default="_cm_c10", help="r8: the no-screen contrast")
     ap.add_argument("--r7-min-arc", type=int, default=20,
@@ -2738,6 +3166,10 @@ def main():
                         min_rows=a.min_settled_rows)
             # one output per arm — R8b reads two arms and they must not collide
             emit(out_dir, f"r8{a.r8_arm}", r, fmt_r8(r))
+        elif t == "r9":
+            r = read_r9(a.project, arm=a.r9_arm,
+                        contrasts=tuple(s for s in a.r9_contrasts.split(",") if s))
+            emit(out_dir, f"r9{a.r9_arm}", r, fmt_r9(r))
         elif t == "witness":
             r = read_witness(a.project, arms, a.gap_epochs, a.min_arc)
             emit(out_dir, "witness", r, fmt_witness(r))
