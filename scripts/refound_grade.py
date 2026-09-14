@@ -34,7 +34,9 @@ is the only thing that reports them:
 Everything else printed below is a DIAGNOSTIC — read to explain a delta, never a
 bar.  Each such block says so in its own header.
 
-READ-ONLY.  Nothing here writes into a run directory.
+The producer is never re-run and no solve artifact is touched; the only files written
+are the optional --json summary and wire_step_audit.py's own
+`<run>/_rf0_step_audit.json`.
 """
 import argparse
 import csv
@@ -159,21 +161,41 @@ def wire_tables(run_dir, seed_cfg_path, data_root, label, n_hours):
     if res is None:
         return None, "census returned nothing"
     # pooled_table rows: (h, n, p50, p95, rms, n_steps);  level_table: (h, n, p50, p95)
-    ph = {r[0]: r for r in res[("median", "phase", "tracking")]["table"]}
-    co = {r[0]: r for r in res[("median", "code", "tracking")]["table"]}
+    def tab(kind, tag):
+        return {r[0]: r for r in res[("median", kind, tag)]["table"]}
+    ph, co, ck = tab("phase", "tracking"), tab("code", "tracking"), tab("clk", "tracking")
+    phd, cod, ckd = tab("phase", "declared"), tab("code", "declared"), tab("clk", "declared")
     lv = {r[0]: r for r in res[("level", "clk")]}
     out = []
     for h in hours:
-        p, c, l = ph.get(h), co.get(h), lv.get(h)
+        p, c, k, l = ph.get(h), co.get(h), ck.get(h), lv.get(h)
+        pd_, cd_, kd_ = phd.get(h), cod.get(h), ckd.get(h)
         out.append(dict(h=h,
                         n_phase=int(p[1]) if p else 0,
                         d_phase_rms=float(p[4]) if p else float("nan"),
                         n_code=int(c[1]) if c else 0,
                         d_code_rms=float(c[4]) if c else float("nan"),
+                        d_clk_rms=float(k[4]) if k else float("nan"),
                         clk_level_p50=float(l[2]) if l else float("nan"),
+                        # the SAME statistic re-segmented at the producer's OWN declared
+                        # discontinuities — what a consumer that honours the M4 contract
+                        # actually integrates across.
+                        d_phase_rms_declared=float(pd_[4]) if pd_ else float("nan"),
+                        d_code_rms_declared=float(cd_[4]) if cd_ else float("nan"),
+                        d_clk_rms_declared=float(kd_[4]) if kd_ else float("nan"),
+                        d_phase_p50=float(p[2]) if p else float("nan"),
                         phase_steps=int(p[5]) if p else 0,
                         code_steps=int(c[5]) if c else 0))
-    return out, None
+    # the tail: which arcs carry the pooled phase sum of squares
+    rows = res[("median", "phase", "tracking")]["rows"]
+    tot = sum(r["rms"] ** 2 * r["n"] for r in rows) or float("nan")
+    worst = sorted(rows, key=lambda r: -r["rms"] * r["rms"] * r["n"])[:8]
+    tail = dict(n_arcs=len(rows),
+                top8_share=sum(r["rms"] ** 2 * r["n"] for r in worst) / tot,
+                worst=[dict(sat=r["sat"], sig=r["sig"], n=r["n"], rms=r["rms"],
+                            max_abs=r["max_abs"], nstep=r["nstep"],
+                            max_step=r["max_step"]) for r in worst])
+    return dict(hours=out, phase_tail=tail), None
 
 
 # ----------------------------------------------------------------------------
@@ -235,11 +257,15 @@ def zwd_table(run_dir, n_hours, bar_m=0.5):
 
 
 Q3_PATTERNS = [
-    ("clock time-link (Q3)", re.compile(r"CLK-ANCHOR|clock temporal anchor|cta_", re.I)),
-    ("clock step test", re.compile(r"clock step test|CLK_STEP|clock_disc", re.I)),
-    ("producer complete", re.compile(r"Network producer complete", re.I)),
-    ("SBC", re.compile(r"Network \(SBC\)", re.I)),
-    ("observability gate", re.compile(r"observability gate", re.I)),
+    ("producer complete", re.compile(r"Network producer complete")),
+    ("Q3 clock time-link", re.compile(r"Card Q3 / guarded temporal clock anchor")),
+    ("wire contract / step marks", re.compile(r"Card CLK-R / clock emission re-base")),
+    ("leveling vehicle", re.compile(r"leveling-carry retirement census|relevel_free_epoch|"
+                                    r"free-epoch")),
+    ("phase datum", re.compile(r"phase[- ]datum family|PHASE_ANCHOR|phase anchor")),
+    ("iono posture", re.compile(r"Network \(W6\): GIM loaded|SH-iono|estimate_iono_sh is OFF")),
+    ("SBC", re.compile(r"Network \(SBC\): (first completion|[0-9])")),
+    ("observability gate", re.compile(r"observability gate at TOW")),
 ]
 
 
@@ -269,7 +295,8 @@ def step_audit(runs_root, arm, tow0, python_exe=None):
     if not os.path.isfile(out_json):
         return None, f"wire_step_audit wrote no json (rc={p.returncode}): {p.stderr[-300:]}"
     with open(out_json, encoding="utf-8") as fh:
-        return json.load(fh), None
+        doc = json.load(fh)
+    return doc.get(arm, doc), None
 
 
 # ----------------------------------------------------------------------------
@@ -308,11 +335,24 @@ def print_bed(name, bed):
     if bed["wire"] is None:
         print("    (unavailable: " + str(bed["wire_error"]) + ")")
     else:
-        print("    hour |  n_phase | D_phase m |   n_code | D_code m | clk LEVEL p50 m")
-        print("    -----+----------+-----------+----------+----------+----------------")
+        print("         |     TRACKING arcs (a whole pass)      |  re-segmented at the "
+              "producer's DECLARED  |")
+        print("    hour |  n_phase  D_phase   D_code    D_clk  |  D_phase   D_code    "
+              "D_clk  | clk LEVEL p50")
+        print("    -----+--------------------------------------+-------------------------"
+              "-------+--------------")
         for r in bed["wire"]:
-            print(f"    {r['h']:4d} | {r['n_phase']:8d} | {f(r['d_phase_rms'], 9)} | "
-                  f"{r['n_code']:8d} | {f(r['d_code_rms'], 8)} | {f(r['clk_level_p50'], 15)}")
+            print(f"    {r['h']:4d} | {r['n_phase']:8d} {f(r['d_phase_rms'], 9)}"
+                  f"{f(r['d_code_rms'], 9)}{f(r['d_clk_rms'], 9)}  |"
+                  f"{f(r['d_phase_rms_declared'], 9)}{f(r['d_code_rms_declared'], 9)}"
+                  f"{f(r['d_clk_rms_declared'], 9)}  |{f(r['clk_level_p50'], 14)}")
+        t = bed["wire_tail"]
+        print(f"    phase tail: {t['top8_share'] * 100:.1f} % of the pooled within-arc "
+              f"sum of squares sits in 8 of {t['n_arcs']} tracking arcs —")
+        for w in t["worst"][:5]:
+            print(f"      {w['sat']} {w['sig']:4s} n={w['n']:4d}  rms {w['rms']:8.3f} m  "
+                  f"max|D| {w['max_abs']:8.3f}  steps>0.25 {w['nstep']:3d}  "
+                  f"max step {w['max_step']:8.3f} m")
 
     print("\n  DIAGNOSTICS — NOT BARS.  Read to explain a delta, never to grade.")
     if bed["code_rms"]:
@@ -327,8 +367,23 @@ def print_bed(name, bed):
                   + (("   " + " ".join(r["worst"])) if r["worst"] else ""))
     sa = bed.get("step_audit")
     if sa:
-        print("    unsignalled wire steps (wire_step_audit): "
-              + json.dumps(sa.get("summary", sa))[:600])
+        print("    unsignalled wire steps (wire_step_audit; sig = the per-key disc counter "
+              "incremented at that epoch):")
+        cnt = sa.get("counts", {})
+        rows = sa.get("rows", {})
+        for kind in ("CLK", "PB", "CB"):
+            if kind not in cnt:
+                continue
+            bits = []
+            for bar in ("0.5", "2.0", "10.0"):
+                b = cnt[kind].get(bar, {})
+                bits.append(f">{bar} m: {b.get('true', 0)} sig / {b.get('false', 0)} UNSIG")
+            print(f"      {kind:3s} ({rows.get(kind, 0)} rows)  " + "   ".join(bits))
+        hr = sa.get("hourly", {})
+        if hr:
+            print("      per hour, UNSIGNALLED > 2 m: " + "  ".join(
+                f"h{h}={hr[h].get(k, {}).get('2.0', {}).get('false', 0)}({k})"
+                for h in sorted(hr, key=lambda x: int(x)) for k in ("CLK", "PB")))
     elif bed.get("step_audit_error"):
         print("    unsignalled wire steps: " + bed["step_audit_error"])
     for k, v in (bed.get("run_end") or {}).items():
@@ -347,11 +402,12 @@ def grade_bed(name, run_dir, station, n_hours, runs_root, data_root, do_steps):
     seed_cfg = os.path.join(run_dir, "arm.json")
     if not os.path.isfile(seed_cfg):
         seed_cfg = os.path.join(run_dir, "config.json")
-    wire, werr = (None, "no arm.json / config.json in the run dir")
+    wire, werr, tail = None, "no arm.json / config.json in the run dir", None
     if os.path.isfile(seed_cfg):
         try:
-            wire, werr = wire_tables(run_dir, seed_cfg, data_root,
-                                     name.lower(), n_hours)
+            got, werr = wire_tables(run_dir, seed_cfg, data_root, name.lower(), n_hours)
+            if got:
+                wire, tail = got["hours"], got["phase_tail"]
         except Exception as exc:                               # noqa: BLE001
             wire, werr = None, f"{type(exc).__name__}: {exc}"
     bed = dict(
@@ -361,7 +417,7 @@ def grade_bed(name, run_dir, station, n_hours, runs_root, data_root, do_steps):
         first_subdecimetre=(dict(tow=fs["tow"], err3d=fs["err3d"],
                                  minutes=(fs["tow"] - t0) / 60.0) if fs and t0 else None),
         resets=dict(n_lines=len(hits), lines=hits[:8], n_step_proxy=nstep),
-        wire=wire, wire_error=werr,
+        wire=wire, wire_error=werr, wire_tail=tail,
         wire_reference="the COD 30 s CLK + COD MGX OSB .BIA"
                        + (" — WHICH IS THIS BED'S TRUTH" if name == "SIM" else ""),
         code_rms=code_rms_table(run_dir, n_hours),
