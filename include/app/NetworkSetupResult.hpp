@@ -74,6 +74,15 @@ namespace GnssProcessor {
         /// loop's LiveEphemerisStore catch-up feed.
         std::vector<BroadcastEphemeris> brdc_nav_staged;
         std::size_t brdc_nav_cursor = 0;
+        /// RF-0c (`network.sat_gf_datum: "broadcast_tgd"`): per-satellite
+        /// geometry-free pin target in METRES, `c * T_GD` from the navigation
+        /// message.  RUN-LATCHED — read once at setup and never updated — because a
+        /// datum that changed mid-run would step the emitted code biases and the
+        /// estimable ionosphere together with nothing on the wire declaring it
+        /// (standing invariant #7's decoupling edge, with no response wired).
+        /// Empty in every other mode, which is what makes the row builder fall back
+        /// to a zero target rather than guess.
+        std::map<std::string, double> sat_gf_target_m;
         /// Phase 3b: the co-estimated SH-VTEC field model (estimate_iono_sh), or
         /// null (external-GIM / no-iono paths).
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model;

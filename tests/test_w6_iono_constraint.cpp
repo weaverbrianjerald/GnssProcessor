@@ -121,6 +121,11 @@ struct DatumRowsHarness {
     bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
     bool gf_datum{false};              ///< RF-0b's whole point: the GF pin is NOT armed.
+    /// RF-0c: the hard per-satellite geometry-free datum mode and its run-latched
+    /// broadcast targets (metres, `c*T_GD`).  Off by default so every RF-0b case above
+    /// keeps measuring the un-datumed posture it was written for.
+    NetworkSatGfDatum sat_gf_datum{NetworkSatGfDatum::NoneMode};
+    std::map<std::string, double> sat_gf_target_m;
     std::set<std::string> gf_family_constellations;
 
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
@@ -148,6 +153,7 @@ struct DatumRowsHarness {
         return NetworkSbasis::buildCodeBiasDatumRows(
             est, registered_code_keys, gpsCodeFreq, cb_time_linked,
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
+            sat_gf_datum, sat_gf_target_m,
             gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
             code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
             this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,
@@ -405,4 +411,190 @@ TEST(W6IonoConstraintTest, TheGeometryFreePinClosesEveryDirection) {
 
     EXPECT_EQ(rows.n_gf_pin_sats, 32);
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// ===========================================================================
+// Card RF-0c — the HARD per-satellite geometry-free datum (network.sat_gf_datum).
+// ===========================================================================
+
+// Standing invariant #6: the default builds no row at all, so an unarmed run folds
+// exactly the rows RF-0b folded.
+TEST(W6IonoConstraintTest, SatGfDatumDefaultBuildsNoRow) {
+    LogManager log;
+    const fs::path p = writeTempConfig("gf_default", networkConfig("", kW6));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_EQ(cfg.getNetworkConfig().sat_gf_datum, NetworkSatGfDatum::NoneMode);
+    std::error_code ec; fs::remove(p, ec);
+
+    NetworkEstimator est;
+    const auto sats = gpsSats(32);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+    DatumRowsHarness h;                       // sat_gf_datum defaults to NoneMode
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.n_sat_gf_rows, 0);
+    EXPECT_EQ(rows.H.rows(), 34);             // 32 IF pins + 2 sum-to-zero, unchanged
+}
+
+// THE CARD'S BAR, on real datum rows.  RF-0b left 31 of 32 rd-3b directions open with
+// only the IF pin and the sum-to-zero rows; the hard geometry-free datum must close
+// every one — with no prior anywhere in the picture, because a prior is exactly what
+// this card exists to stop standing in for a datum.
+TEST(W6IonoConstraintTest, SatGfDatumZeroClosesEveryDirection) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(32);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::Zero;
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_sat_gf_rows, 32);
+    EXPECT_EQ(rows.H.rows(), 66);                     // 32 IF + 32 GF + 2 sum-to-zero
+    EXPECT_EQ(rows.z.cwiseAbs().maxCoeff(), 0.0);     // every target zero in this mode
+    EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// The same, on a roster with same-band companions (C1W beside C1C, C2X beside C2W) —
+// the field's actual shape.  The pin touches only the ionosphere-free pair, but the
+// rd-3b shift moves EVERY one of the satellite's columns by its own mu, so a single
+// row on the pair still closes the whole per-satellite direction.  Worth its own case
+// because the opposite (needing one row per signal) is the plausible reading, and it
+// is the reading the L2X wire tail would suggest.
+TEST(W6IonoConstraintTest, SatGfDatumClosesDirectionsWithSameBandCompanions) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(16);
+    const std::vector<std::string> sigs{"C1C", "C1W", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::Zero;
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_sat_gf_rows, 16);
+    EXPECT_EQ(rows.n_s2z_channels, 4);
+    EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// broadcast_tgd pins the SAME row at c*T_GD.  Two things are checked and both matter:
+// the RHS lands verbatim (the geometry-free combination of the IS-GPS-200 biases is
+// exactly c*T_GD — no frequency factor), and the datum still closes every direction,
+// because a pin's rank is in its Jacobian and not in its target.
+TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdPinsTheLatchedMetresVerbatim) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(4);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_gf_target_m = {{"G01", -3.1}, {"G02", 1.7}, {"G03", 0.0}};   // G04: no record
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_sat_gf_rows, 4);
+    EXPECT_EQ(rows.n_sat_gf_tgd_hits, 2);      // G01, G02
+    EXPECT_EQ(rows.n_sat_gf_tgd_zero, 1);      // G03 broadcasts exactly zero
+    EXPECT_EQ(rows.n_sat_gf_tgd_missing, 1);   // G04 has no navigation record
+    EXPECT_EQ(rows.n_sat_gf_pair_not_l1l2, 0);
+
+    // ROW ORDER IS INTERLEAVED, and that is the builder's contract, not an accident:
+    // the per-satellite loop pushes each satellite's IF pin and then its geometry-free
+    // row before moving on, and the sum-to-zero rows are appended after the loop.  So
+    // satellite k's GF row is at 2k+1, and the 2 sum-to-zero rows are last.
+    EXPECT_EQ(rows.H.rows(), 4 * 2 + 2);
+    EXPECT_DOUBLE_EQ(rows.z(1), -3.1);   // G01
+    EXPECT_DOUBLE_EQ(rows.z(3), 1.7);    // G02
+    EXPECT_DOUBLE_EQ(rows.z(5), 0.0);    // G03 — broadcast T_GD is exactly zero
+    EXPECT_DOUBLE_EQ(rows.z(7), 0.0);    // G04 — the fallback, counted above
+    EXPECT_EQ(rows.z(0), 0.0);           // and the IF pins keep their own zero target
+    EXPECT_EQ(rows.z(2), 0.0);
+    EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// A pinned pair the navigation message never described must NOT be given a group delay.
+// Here the only two distinct frequencies are L1 and L5, so T_GD (an L1/L2 quantity) does
+// not apply: the row is still folded — the datum must be complete or the gate withholds —
+// but at zero, and counted, so the run-end line can say what fraction of a
+// "broadcast_tgd" product is not actually the physical datum.
+TEST(W6IonoConstraintTest, SatGfDatumBroadcastTgdRefusesANonL1L2Pair) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(3);
+    const std::vector<std::string> sigs{"C1C", "C5Q"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_gf_target_m = {{"G01", -3.1}, {"G02", 1.7}, {"G03", 2.2}};
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_sat_gf_rows, 3);
+    EXPECT_EQ(rows.n_sat_gf_tgd_hits, 0);
+    EXPECT_EQ(rows.n_sat_gf_pair_not_l1l2, 3);
+    // The targets themselves — not just the counters — must be zero: a counted fallback
+    // that still pinned the map's value would be the worst of both.
+    EXPECT_EQ(rows.z.cwiseAbs().maxCoeff(), 0.0);
+    EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
+}
+
+// --- the interlocks ---
+
+TEST(W6IonoConstraintTest, SatGfDatumParsesBothArmedModes) {
+    LogManager log;
+    for (const char* mode : {"zero", "broadcast_tgd"}) {
+        const fs::path p = writeTempConfig(std::string("gf_") + mode,
+            networkConfig(std::string(kIonoWeightOn),
+                          std::string(kW6) +
+                          "    \"w6_iono_constraint\": \"none\",\n" +
+                          "    \"sat_gf_datum\": \"" + mode + "\",\n"));
+        GnssConfig cfg;
+        ASSERT_TRUE(cfg.loadFromJson(p, log)) << mode;
+        EXPECT_EQ(cfg.getNetworkConfig().sat_gf_datum,
+                  std::string(mode) == "zero" ? NetworkSatGfDatum::Zero
+                                              : NetworkSatGfDatum::BroadcastTgd);
+        EXPECT_FALSE(cfg.getIonosphereWeightingConfig().enabled);
+        std::error_code ec; fs::remove(p, ec);
+    }
+}
+
+// With an ionosphere constraint present this direction is DETERMINED BY DATA, so a pin
+// is a second datum fighting the data rather than replacing it.  The card's precondition,
+// enforced.
+TEST(W6IonoConstraintTest, SatGfDatumRequiresTheNoConstraintPosture) {
+    LogManager log;
+    const fs::path p = writeTempConfig("gf_needs_none",
+        networkConfig("", std::string(kW6) + "    \"sat_gf_datum\": \"zero\",\n"));
+    GnssConfig cfg;
+    EXPECT_FALSE(cfg.loadFromJson(p, log));
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// Both knobs build the SAME row on the SAME pair; two of them is a singular stack, not
+// a stronger datum.  Triple frequency so code_bias_gf_datum's own dual gate passes and
+// it is THIS interlock being exercised.
+TEST(W6IonoConstraintTest, SatGfDatumRefusesTheOdijkGfPin) {
+    LogManager log;
+    const fs::path p = writeTempConfig("gf_vs_gf",
+        networkConfig("    \"frequency_mode\": \"triple\",\n",
+                      std::string(kW6) +
+                      "    \"w6_iono_constraint\": \"none\",\n"
+                      "    \"code_bias_gf_datum\": true,\n"
+                      "    \"sat_gf_datum\": \"zero\",\n"));
+    GnssConfig cfg;
+    EXPECT_FALSE(cfg.loadFromJson(p, log));
+    std::error_code ec; fs::remove(p, ec);
+}
+
+// A typo must fall back to the posture that changes nothing, never to a datum.
+TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
+    LogManager log;
+    const fs::path p = writeTempConfig("gf_typo",
+        networkConfig("", std::string(kW6) +
+                          "    \"w6_iono_constraint\": \"none\",\n"
+                          "    \"sat_gf_datum\": \"tgd\",\n"));
+    GnssConfig cfg;
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_EQ(cfg.getNetworkConfig().sat_gf_datum, NetworkSatGfDatum::NoneMode);
+    std::error_code ec; fs::remove(p, ec);
 }

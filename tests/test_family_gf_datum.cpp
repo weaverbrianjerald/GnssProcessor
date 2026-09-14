@@ -59,6 +59,11 @@ double muRel(const std::string& base_sig, const std::string& sig) {
 /// exactly as the driver contract requires ("cleared by caller").  Self-contained rather
 /// than shared with test_network_estimator.cpp's harness: that one is file-local, and the
 /// suite convention is one owner per suite name.
+/// RF-0c's per-satellite geometry-free datum is not this card's concern: these cases
+/// exercise network.code_bias_gf_datum's FAMILY extension, so the RF-0c mode stays off
+/// and its target map empty (the builder then builds no RF-0c row at all).
+const std::map<std::string, double> kNoSatGfTargets{};
+
 struct FamilyRowsHarness {
     using Pair = std::pair<std::string, std::string>;
 
@@ -93,6 +98,7 @@ struct FamilyRowsHarness {
         return NetworkSbasis::buildCodeBiasDatumRows(
             est, registered_code_keys, galCodeFreq, cb_time_linked,
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
+            NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
             gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
             code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
             this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,

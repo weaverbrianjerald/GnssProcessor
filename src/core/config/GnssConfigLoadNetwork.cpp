@@ -2912,6 +2912,32 @@ namespace GnssProcessor {
         const bool w6_iono_none =
             network_config_.w6_iono_constraint == NetworkW6IonoConstraint::None;
 
+        // --- RF-0c: the HARD per-satellite geometry-free datum -------------------
+        // Parsed beside its parent selector because it only has meaning inside the
+        // no-constraint posture: with an ionosphere constraint present the direction
+        // this pins is already determined, and pinning it anyway is an over-constraint.
+        // Validated below, after the W6 chain, so the chain's forced values are visible.
+        {
+            const std::string s = jval<std::string>(json, "network.sat_gf_datum",
+                                                    "sat_gf_datum", std::string{"none"});
+            if (s.empty() || s == "none")
+                network_config_.sat_gf_datum = NetworkSatGfDatum::NoneMode;
+            else if (s == "zero")
+                network_config_.sat_gf_datum = NetworkSatGfDatum::Zero;
+            else if (s == "broadcast_tgd")
+                network_config_.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+            else {
+                network_config_.sat_gf_datum = NetworkSatGfDatum::NoneMode;
+                log->error("Network (RF-0c): network.sat_gf_datum = '{}' is not one of "
+                           "none|zero|broadcast_tgd — falling back to 'none' (no "
+                           "geometry-free datum row).  The three modes emit DIFFERENT "
+                           "satellite code-bias frames and a different estimable "
+                           "ionosphere, so the datum is never selected by a typo.", s);
+            }
+        }
+        const NetworkSatGfDatum sat_gf_mode = network_config_.sat_gf_datum;
+        const bool sat_gf_on = sat_gf_mode != NetworkSatGfDatum::NoneMode;
+
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
             promote_sat_code_bias_ = true;   // estimate it on every raw code row (not fallback-only)
@@ -3163,6 +3189,87 @@ namespace GnssProcessor {
                           "loose prior sits on the OSB columns (network.cb_kaula_prior).  Read the "
                           "null-space gate's observed-vs-declared and the run-end W6-IONO-NONE "
                           "line before grading the emitted code biases.");
+        }
+
+        // --- RF-0c validation: the hard per-satellite geometry-free datum -------
+        // Placed after the RF-0b block so `w6_iono_none` and the W6 chain's forced
+        // `iono_weighting_.enabled` are both settled and can be tested as they will
+        // actually run, not as the JSON wrote them.
+        if (sat_gf_on) {
+            const char* mode_name =
+                sat_gf_mode == NetworkSatGfDatum::Zero ? "zero" : "broadcast_tgd";
+            if (!estimate_network_sat_code_bias_) {
+                log->warn("Network (RF-0c): network.sat_gf_datum = {} is INERT without "
+                          "network.estimate_sat_code_bias — there are no satellite "
+                          "code-bias columns, so there is no geometry-free combination to "
+                          "pin and the rows would fold onto nothing.  Arm the W6 slice, or "
+                          "drop the datum.", mode_name);
+            }
+            if (!w6_iono_none) {
+                // The card's own precondition.  An ionosphere constraint DETERMINES this
+                // direction from data (the GIM's common-mode-free R, or the SH field's
+                // between-satellite structure); pinning it as well is not redundancy, it
+                // is a second datum fighting the data for the same parameter — and the
+                // emitted code biases would then be neither the data's nor the pin's.
+                log->error("Network (RF-0c): network.sat_gf_datum = {} requires "
+                           "network.w6_iono_constraint = none.  The per-satellite "
+                           "geometry-free direction is a DATUM only when the ionosphere is "
+                           "unconstrained; with the external GIM or the co-estimated "
+                           "SH-VTEC field armed it is DETERMINED BY DATA (Odijk 2016 rd 3b "
+                           "exists only under a free slant ionosphere), so this pin would "
+                           "fight the constraint instead of replacing it.  Arm "
+                           "w6_iono_constraint = none, or drop sat_gf_datum.", mode_name);
+                return false;
+            }
+            if (estimate_network_iono_sh_ || iono_weighting_.enabled) {
+                // Belt and braces: w6_iono_constraint = none already refuses the SH field
+                // and forces the weighting off, so reaching here means a future edit
+                // re-opened a path to an armed constraint.  Fail rather than emit a
+                // double-datumed product that still looks healthy at the gate.
+                log->error("Network (RF-0c): network.sat_gf_datum = {} is armed with an "
+                           "ionosphere constraint still live (estimate_iono_sh = {}, "
+                           "estimation.ionosphere_weighting.enable = {}).  Mutually "
+                           "exclusive — one datum per rank deficiency.  Drop one.",
+                           mode_name, estimate_network_iono_sh_, iono_weighting_.enabled);
+                return false;
+            }
+            if (network_code_bias_gf_datum_) {
+                // Both build a geometry-free pin on the same pair.  Two identical rows is
+                // not a stronger datum, it is a singular constraint stack.
+                log->error("Network (RF-0c): network.sat_gf_datum = {} is armed together "
+                           "with network.code_bias_gf_datum.  Both pin the SAME "
+                           "per-satellite geometry-free combination on the SAME "
+                           "ionosphere-free pin pair — arming both folds the row twice.  "
+                           "Use code_bias_gf_datum for the triple-frequency Odijk posture, "
+                           "sat_gf_datum for the dual-frequency one.", mode_name);
+                return false;
+            }
+            if (sat_gf_mode == NetworkSatGfDatum::BroadcastTgd)
+                log->info("Network producer (RF-0c): HARD per-satellite GEOMETRY-FREE "
+                          "code-bias datum ARMED at the BROADCAST TGD — one pin row per "
+                          "satellite on (d2-d1)/(mu2-mu1) over the ionosphere-free pin's "
+                          "own pair, RHS = c*T_GD from the navigation message "
+                          "(IS-GPS-200 §20.3.3.3.3.2: the broadcast clock is L1/L2 "
+                          "ionosphere-free, so d1 = c*T_GD and d2 = c*gamma*T_GD, whose "
+                          "IF combination is EXACTLY zero and whose geometry-free "
+                          "combination is EXACTLY c*T_GD — the two pins compose).  "
+                          "Run-latched per satellite so the datum cannot churn mid-run.  "
+                          "Folded as a constraint row BEFORE the null-space gate, so the "
+                          "DECLARED S-basis dimension is UNCHANGED.  The estimable slant "
+                          "ionosphere is then referenced to the broadcast DCB convention; "
+                          "a consumer must apply the emitted ionosphere and code biases AS "
+                          "A PAIR.");
+            else
+                log->info("Network producer (RF-0c): HARD per-satellite GEOMETRY-FREE "
+                          "code-bias datum ARMED at ZERO — one pin row per satellite on "
+                          "(d2-d1)/(mu2-mu1) over the ionosphere-free pin's own pair, RHS "
+                          "0 (Odijk 2016 rd 3b, Eq. 30; the same arbitrary-but-legal S-basis "
+                          "choice network.code_bias_gf_datum makes, reached here at DUAL "
+                          "frequency).  Folded as a constraint row BEFORE the null-space "
+                          "gate, so the DECLARED S-basis dimension is UNCHANGED.  The "
+                          "geometry-free lump moves into the slant ionosphere (their "
+                          "Table 8), so a consumer must apply the emitted ionosphere and "
+                          "code biases AS A PAIR.");
         }
 
         // --- FAMILY-GF: the rd-3b pin, per partitioned secondary channel family ---

@@ -2901,6 +2901,16 @@ namespace GnssProcessor {
         // the IF pin against NOTHING — in both cases the satellite code biases have no
         // datum whatever, which a clean-looking log would never reveal.
         size_t n_w6_iono_none_epochs = 0, n_w6_iono_none_s2z_rows = 0;
+        // RF-0c (network.sat_gf_datum): epochs on which the HARD per-satellite
+        // geometry-free datum folded, the cumulative row count, and — under
+        // broadcast_tgd — how those rows were targeted: `tgd` a non-zero c*T_GD from
+        // the navigation message, `tgd0` a satellite the constellation broadcasts at
+        // T_GD = 0 exactly (physical, just numerically zero), `fallback` a satellite
+        // with no navigation record or whose pinned pair is not (L1, L2).  The split
+        // matters because all three look identical on the wire: only the fallback
+        // count says the run pinned a value the navigation message never asserted.
+        size_t n_sat_gf_epochs = 0, n_sat_gf_rows = 0;
+        size_t n_sat_gf_tgd = 0, n_sat_gf_tgd0 = 0, n_sat_gf_fallback = 0;
         // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.

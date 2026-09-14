@@ -65,6 +65,7 @@
 #include <utility>
 #include <vector>
 
+#include "config/GnssConfigTypes.hpp"   // RF-0c: NetworkSatGfDatum (the GF datum mode)
 #include "filter/NetworkEstimator.hpp"
 
 namespace GnssProcessor {
@@ -291,6 +292,11 @@ public:
         int n_gf_only_pair{0};  ///< GF-pinned satellites carrying NO third band, i.e. whose code bias is now fully datum-fixed and has no estimable content left (Odijk §5.1) — a count, because "emitted nothing" and "estimated zero" look identical downstream.
         int n_family_gf_rows{0};   ///< FAMILY-GF: (satellite, partitioned secondary family) pairs that received an extra geometry-free row.
         int n_family_gf_only_pair{0}; ///< FAMILY-GF: of those, the ones whose family carries NO third band, so the ISC is the family's entire estimable content (the 11 XX− stations' world).  Scanned over the FAMILY's signal subset, never over the satellite's whole signal list — a Q-pinned satellite with X channels registered would otherwise always look like it had a third band.
+        int n_sat_gf_rows{0};      ///< RF-0c: satellites that received the HARD per-satellite geometry-free datum row (@c network.sat_gf_datum).  Standing invariant #4 — under `w6_iono_constraint: "none"` this row IS the datum for the between-satellite split, so 0 here with the knob armed means the run had no datum at all.
+        int n_sat_gf_tgd_hits{0};  ///< RF-0c / `broadcast_tgd`: of those rows, the ones pinned at a NON-ZERO `c*T_GD` from the navigation message.
+        int n_sat_gf_tgd_zero{0};  ///< RF-0c / `broadcast_tgd`: rows whose satellite HAS a navigation record but broadcasts `T_GD = 0` exactly — physically pinned, numerically identical to `zero`.  Separated from the fallbacks so "the constellation says zero" never reads as "we could not find a value".
+        int n_sat_gf_tgd_missing{0}; ///< RF-0c / `broadcast_tgd`: rows whose satellite had NO navigation record — fell back to a zero target.
+        int n_sat_gf_pair_not_l1l2{0}; ///< RF-0c / `broadcast_tgd`: rows whose ionosphere-free pin pair is not an (L1, L2) band pair, so the broadcast T_GD does not describe it — fell back to a zero target rather than assert a delay for a pair the navigation message never referenced.
     };
 
     /// FAMILY-GF (docs/SPEC_family_gf_datum.md §3.1): a receiver channel FAMILY tag.
@@ -437,6 +443,14 @@ public:
      *                                  on the family-filtered signal set, through the SAME
      *                                  code path and the SAME frequency source as the IF pin.
      * @param this_epoch_cb_reseed      [out] Card-2 re-seed scratch (cleared by caller).
+     * @param sat_gf_datum              RF-0c (@c network.sat_gf_datum): the HARD
+     *                                  per-satellite geometry-free datum mode.
+     *                                  @c NoneMode builds no row (byte-identical).
+     * @param sat_gf_target_m           RF-0c: per-satellite geometry-free pin target in
+     *                                  metres, used only under
+     *                                  @c NetworkSatGfDatum::BroadcastTgd (@c c*T_GD,
+     *                                  run-latched at setup).  A satellite absent from
+     *                                  the map is pinned at 0 and counted.
      * @param basis_relatch_disc_pending  [in/out] pending per-sat disc bumps.
      * @param emitEvent                 L2 event-row callback (tier, event, sat,
      *                                  station, statistic, threshold, action, detail).
@@ -447,6 +461,8 @@ public:
         const std::function<double(const std::string&, const std::string&)>& freqOf,
         bool cb_time_linked, bool clock_signal_basis_hold, bool emit_clock_disc,
         bool gf_datum,
+        NetworkSatGfDatum sat_gf_datum,
+        const std::map<std::string, double>& sat_gf_target_m,
         const std::set<std::string>& gf_family_constellations,
         const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
         const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,

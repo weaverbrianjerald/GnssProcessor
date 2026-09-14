@@ -857,6 +857,53 @@ namespace GnssProcessor {
      * Default @ref Auto reproduces today's selection exactly (byte-identical,
      * standing invariant #6).  SOLVE-AFFECTING when set to @ref None.
      */
+    /**
+     * @brief HARD per-satellite geometry-free code-bias datum
+     *        (@c network.sat_gf_datum, card RF-0c —
+     *        docs/refound/RF-0b_dcb_datum_2026-09-15.md, last section).
+     *
+     * RF-0b measured the hole this closes.  Under @ref NetworkW6IonoConstraint::None each
+     * satellite keeps one geometry-free direction (Odijk et al. 2016 rank deficiency 3b:
+     * @f$I_r^s \to I_r^s + \beta^s@f$ compensated by @f$d^s_j \to d^s_j - \mu_j\beta^s@f$)
+     * that nothing self-contained closes — the ionosphere-free pin is invariant under it
+     * by construction, and the per-(constellation, signal) sum-to-zero rows change by
+     * @f$-\mu_j\sum_s\beta^s@f$ and so see only the constellation-wide shift.  With 32 GPS
+     * satellites that is 31 open directions; on RF-0b the loose 3 m diagonal
+     * @c network.cb_kaula_prior silently became their datum (with it off the gate saw 39
+     * near-zero directions and the run emitted nothing).
+     *
+     * A datum is the correct answer, not a prior.  The satellite geometry-free code bias
+     * is not separately estimable from the slant ionosphere under two frequencies, so the
+     * S-basis FIXES it and the estimable ionosphere absorbs the true value (their Table 8:
+     * @f$\tilde\iota = \iota + d_{r,GF} - d^s_{GF}@f$) — consistent for any consumer that
+     * floats its own per-satellite slant ionosphere, which ours does.
+     *
+     * @ref Zero pins the combination at 0, the same arbitrary-but-legal choice
+     * @c network.code_bias_gf_datum makes (that knob implements the identical row but is
+     * refused under @c frequency_mode = dual, where it would also fix the ionosphere-free
+     * half and leave nothing estimable — RF-0c reaches the row at dual because it is armed
+     * independently of that gate).  @ref BroadcastTgd pins it at the value the NAVIGATION
+     * MESSAGE already asserts: the broadcast clock is referenced to the L1/L2
+     * ionosphere-free combination and the single-frequency user corrections
+     * @f$\Delta t_{L1} = \Delta t_{SV} - T_{GD}@f$, @f$\Delta t_{L2} = \Delta t_{SV} -
+     * \gamma T_{GD}@f$ imply @f$d^s_1 = c\,T_{GD}@f$ and @f$d^s_2 = c\,\gamma\,T_{GD}@f$
+     * (IS-GPS-200 §20.3.3.3.3.2).  Those satisfy the ionosphere-free pin EXACTLY
+     * (@f$a_1 + a_2\gamma = 0@f$ by the definition of the weights), and their geometry-free
+     * combination is exactly @f$c\,T_{GD}@f$ — so the two pins compose without fighting,
+     * and the emitted ionosphere is then referenced to the broadcast DCB convention rather
+     * than to an arbitrary zero.  Signal-in-space only: no external product is read.
+     *
+     * Default @ref NoneMode is byte-identical (no row is built).  SOLVE-AFFECTING
+     * otherwise.  Requires @c network.w6_iono_constraint = "none": an ionosphere
+     * constraint already determines this direction, and two datums for one deficiency is
+     * an over-constraint, not a belt and braces.
+     */
+    enum class NetworkSatGfDatum {
+        NoneMode,     ///< (default) no geometry-free datum row — the pre-knob producer, byte-identical.  Under `w6_iono_constraint: "none"` the between-satellite geometry-free split is then left to whatever loose prior sits on the OSB columns (RF-0b's finding).
+        Zero,         ///< One hard pin row per satellite on `(d_2 - d_1)/(mu_2 - mu_1)` at 0, over the ionosphere-free pin's own signal pair.  The arbitrary-but-legal S-basis choice; the geometry-free lump moves into the slant ionosphere.
+        BroadcastTgd  ///< The same row pinned at `c * T_GD` from the navigation message (GPS Tgd / the first group delay), run-latched per satellite so the datum cannot churn mid-run.  A satellite whose ionosphere-free pin pair is not an L1/L2 pair, or that has no navigation record, falls back to 0 and is counted.
+    };
+
     enum class NetworkW6IonoConstraint {
         Auto, ///< (default) today's three-way selection: the co-estimated SH-VTEC field if `network.estimate_iono_sh`, else the free-slant Odijk posture if `network.code_bias_gf_datum`, else the external IONEX GIM (hard error without a `.INX`).  Byte-identical to the pre-knob producer.
         None  ///< NO ionosphere constraint: free per-LOS slant ionosphere, no GIM loaded, `estimation.ionosphere_weighting` forced OFF, and the satellite code-bias datum left to the IF pin + per-(constellation, signal) sum-to-zero rows.  Refuses `network.estimate_iono_sh` and `network.code_bias_gf_datum` (each is a DIFFERENT answer to the same rank deficiency); INERT without `network.estimate_sat_code_bias`.
@@ -1466,6 +1513,13 @@ namespace GnssProcessor {
         /// signal) sum-to-zero rows @ref NetworkSbasis::buildCodeBiasDatumRows already
         /// folds.  SOLVE-AFFECTING when set to @c None.
         NetworkW6IonoConstraint w6_iono_constraint{ NetworkW6IonoConstraint::Auto };
+        /// RF-0c: HARD per-satellite geometry-free code-bias datum
+        /// (@ref NetworkSatGfDatum).  Default @c NoneMode builds no row and is
+        /// byte-identical; @c Zero and @c BroadcastTgd each add ONE constraint row per
+        /// satellite beside the ionosphere-free pin, folded pre-gate at the same gauge
+        /// weight, so @c Plan::declared_dimension is untouched.  Requires
+        /// @c w6_iono_constraint = @c None.  SOLVE-AFFECTING when armed.
+        NetworkSatGfDatum sat_gf_datum{ NetworkSatGfDatum::NoneMode };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

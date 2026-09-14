@@ -4195,6 +4195,54 @@ int networkTeardown(
                           ? fmt::format("ON, sigma {:.1f} m", config_.networkCbKaulaSigmaM())
                           : std::string{"OFF"});
     }
+    // RF-0c (network.sat_gf_datum): armed-only run-end line.  Under the no-constraint
+    // posture this row is the ONLY thing closing each satellite's geometry-free
+    // direction, so its fold count is the difference between a datumed product and one
+    // whose code biases were shaped by whatever loose prior happened to be armed.
+    if (config_.getNetworkConfig().sat_gf_datum != NetworkSatGfDatum::NoneMode) {
+        const bool tgd = config_.getNetworkConfig().sat_gf_datum
+                             == NetworkSatGfDatum::BroadcastTgd;
+        const char* mode = tgd ? "broadcast_tgd" : "zero";
+        if (ctx.counters.n_sat_gf_rows == 0)
+            log->warn("Network (SAT-GF-DATUM): the hard per-satellite geometry-free datum "
+                      "is ARMED at '{}' but folded ZERO row(s) over the run — no satellite "
+                      "ever presented a two-distinct-frequency code-bias pair, so every "
+                      "satellite's geometry-free direction ran UNPINNED under a free slant "
+                      "ionosphere.  This run is NOT the posture it claims (standing "
+                      "invariant #4); do not grade its code biases or its ionosphere.",
+                      mode);
+        else if (tgd && ctx.counters.n_sat_gf_tgd == 0)
+            log->warn("Network (SAT-GF-DATUM): '{}' folded {} row(s) on {} epoch(s) but NOT "
+                      "ONE carried a non-zero c*T_GD ({} broadcast T_GD = 0, {} fell back "
+                      "to zero for want of a navigation record or an L1/L2 pinned pair) — "
+                      "the run is numerically identical to sat_gf_datum = zero and must be "
+                      "reported as such, not as the physical datum.",
+                      mode, ctx.counters.n_sat_gf_rows, ctx.counters.n_sat_gf_epochs,
+                      ctx.counters.n_sat_gf_tgd0, ctx.counters.n_sat_gf_fallback);
+        else
+            log->info("Network (SAT-GF-DATUM): hard per-satellite GEOMETRY-FREE datum '{}' "
+                      "— {} pin row(s) over {} epoch(s) (mean {:.2f} satellites per epoch), "
+                      "each on (d2-d1)/(mu2-mu1) over that satellite's ionosphere-free pin "
+                      "pair, folded as a constraint row BEFORE the null-space gate so the "
+                      "declared S-basis dimension is untouched.{}  The estimable slant "
+                      "ionosphere absorbs the pinned value (Odijk 2016 Table 8), so the "
+                      "emitted ionosphere and code biases must be applied AS A PAIR.",
+                      mode, ctx.counters.n_sat_gf_rows, ctx.counters.n_sat_gf_epochs,
+                      ctx.counters.n_sat_gf_epochs
+                          ? static_cast<double>(ctx.counters.n_sat_gf_rows)
+                                / static_cast<double>(ctx.counters.n_sat_gf_epochs)
+                          : 0.0,
+                      tgd ? fmt::format("  TARGETS: {} row(s) at a non-zero c*T_GD, {} at a "
+                                        "broadcast T_GD of exactly 0, {} FELL BACK to zero "
+                                        "(no navigation record, or a pinned pair the "
+                                        "navigation message never referenced) — the "
+                                        "fallback count is the part of this product that "
+                                        "is NOT the physical datum it is named for.",
+                                        ctx.counters.n_sat_gf_tgd,
+                                        ctx.counters.n_sat_gf_tgd0,
+                                        ctx.counters.n_sat_gf_fallback)
+                          : std::string{});
+    }
     // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
     // tell a live gauge from an armed-but-inert one is the fold count, so print it
     // even (especially) when it is zero.

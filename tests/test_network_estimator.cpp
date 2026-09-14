@@ -4006,6 +4006,10 @@ double gpsCodeFreq(const std::string& /*sat*/, const std::string& sig) {
 // scratch outs before each call, exactly as the driver contract requires
 // ("cleared by caller").  The emitEvent stub counts firings and records the
 // last (tier, event, sat, detail) for the re-latch assertions.
+/// RF-0c (network.sat_gf_datum) off for every case in this file: these lock the INC-8
+/// IF-pin / sum-to-zero shape, which the RF-0c row sits beside without changing.
+const std::map<std::string, double> kNoSatGfTargets{};
+
 struct CbDatumRowsHarness {
     using Pair = std::pair<std::string, std::string>;
 
@@ -4048,6 +4052,7 @@ struct CbDatumRowsHarness {
         return NetworkSbasis::buildCodeBiasDatumRows(
             est, registered_code_keys, gpsCodeFreq, cb_time_linked,
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
+            NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
             gf_family_constellations, code_bias_prev,
             code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
             held_clock_ref, this_epoch_if_pin_sel, this_epoch_if_pin_real,
