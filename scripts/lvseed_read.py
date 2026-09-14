@@ -1919,6 +1919,329 @@ def fmt_r6(R):
 
 
 # --------------------------------------------------------------------------- #
+# R7 — §24.15: is the wire's within-arc wander its ANCHOR station's code level?
+# --------------------------------------------------------------------------- #
+def anchor_timelines(logs, k_of):
+    """Piecewise-constant anchor station per epoch.
+
+    PHASE_ANCHOR rows carry `A->B` in the detail field, so the incumbent BEFORE the
+    first handover is that handover's own `from` — which is how a satellite with at
+    least one election gets an anchor for the whole window even though the initial
+    election files no event.  PBGAUGE rows carry `<sat>_<signal>` and `from=A`, so
+    they give the same timeline keyed per SIGNAL (which is what a split-referencing
+    satellite like G18 actually has).  Returns (per_sat, per_sat_signal), each
+    {key: [(k_start, station)]} sorted, k_start = 1 for the incumbent.
+    """
+    _h, rows = _scan_csv(os.path.join(logs, "network_events.csv"),
+                         lambda d, f: d.get("tier") in ("PHASE_ANCHOR", "PBGAUGE"),
+                         limit=10 ** 6)
+    per_sat, per_sig = defaultdict(list), defaultdict(list)
+    for line in rows:
+        f = line.split(",")
+        tier, ent, to_sta, detail = f[2], f[4], f[5], f[9]
+        k = k_of(float(f[1]))
+        frm = None
+        if "->" in detail:
+            frm = detail.split("->")[0].strip()
+        elif detail.startswith("from="):
+            frm = detail[5:].strip()
+        if tier == "PHASE_ANCHOR":
+            per_sat[ent].append((k, frm, to_sta))
+        else:
+            per_sig[ent.replace("_", "|", 1)].append((k, frm, to_sta))
+
+    def build(d):
+        out = {}
+        for key, evs in d.items():
+            evs = sorted(set(evs))
+            tl = []
+            if evs[0][1]:
+                tl.append((1, evs[0][1]))
+            for k, _frm, to in evs:
+                if tl and tl[-1][0] == k:
+                    tl[-1] = (k, to)
+                else:
+                    tl.append((k, to))
+            out[key] = tl
+        return out
+    return build(per_sat), build(per_sig)
+
+
+def anchor_at(timeline, k):
+    sta = None
+    for k0, s in (timeline or ()):
+        if k0 <= k:
+            sta = s
+        else:
+            break
+    return sta
+
+
+def struct_ratio(d, lag_lo=1, lag_hi=10):
+    """sigma^2(tau) = 0.5*mean[(D(t+tau)-D(t))^2]; returns sigma^2(hi)/sigma^2(lo).
+
+    White noise gives ~1, a random walk ~lag_hi/lag_lo (=10), a pure linear drift
+    ~ (hi/lo)^2 (=100)."""
+    d = np.asarray(d, float)
+    def sv(tau):
+        if len(d) <= tau:
+            return float("nan")
+        dd = d[tau:] - d[:-tau]
+        return 0.5 * float(np.mean(dd * dd))
+    lo, hi = sv(lag_lo), sv(lag_hi)
+    return float(hi / lo) if np.isfinite(lo) and lo > 0 and np.isfinite(hi) else float("nan")
+
+
+def read_r7(project, arm="_cm_pvb", t_lo=TOW0, t_hi=266370.0, min_arc_ep=20,
+            null_draws=20, seed=20260914):
+    import wire_vs_code_census as wc
+    rng = np.random.default_rng(seed)
+    k_of = lambda t: int(round((t - TOW0) / DT_S)) + 1                      # noqa: E731
+    logs = os.path.join(arm_dir(project, arm), "logs")
+    ser, ev, _c = _census_series(project, arm, t_lo, t_hi)
+    tl_sat, tl_sig = anchor_timelines(logs, k_of)
+
+    df = load_pf_rows(project, arm)
+    code = df[df["kind"] == "code"]
+    code = code[(code["k"] >= k_of(t_lo)) & (code["k"] <= k_of(t_hi))]
+    # per (sat, station, epoch): signal-pooled and C1-only code level, plus elevation
+    g = code.groupby(["sat", "station", "k"], observed=True)
+    lvl = g["resid_m"].mean().to_dict()
+    elv = g["elev_deg"].mean().to_dict()
+    c1 = code[code["signal"].isin(["C1C", "C1W", "C1X"])]
+    lvl_c1 = c1.groupby(["sat", "station", "k"], observed=True)["resid_m"].mean().to_dict()
+    # per (sat, epoch): the tracking-set mean  (B)
+    B = code.groupby(["sat", "k"], observed=True)["resid_m"].mean().to_dict()
+    # per epoch: the network-wide mean over every satellite  (C, the common-mode control)
+    C = code.groupby("k", observed=True)["resid_m"].mean().to_dict()
+
+    def wabsmean(rows, field):
+        v = np.abs(np.array([r[field] for r in rows], float))
+        w = np.array([r["n"] for r in rows], float)
+        m = np.isfinite(v)
+        return float((v[m] * w[m]).sum() / w[m].sum()) if m.any() else float("nan")
+
+    sats = sorted({str(s) for s in code["sat"].unique()})
+    g32_series = []
+    out = dict(arm=arm, window=[t_lo, t_hi], min_arc_ep=min_arc_ep,
+               n_sats_in_rows=len(sats),
+               n_sats_with_anchor=len(tl_sat),
+               sats_without_anchor=[s for s in sats if s not in tl_sat],
+               sats={}, arcs=[])
+
+    for sat in sats:
+        rows = []
+        for key, s_ in ser["phase"].items():
+            if (key[0] if isinstance(key, tuple) else key) != sat:
+                continue
+            sig = key[1] if isinstance(key, tuple) else ""
+            for arc in wc.split_arcs(s_, ev.get(sat, {}), declared=True):
+                if len(arc) < min_arc_ep:
+                    continue
+                kk = np.array([k_of(s_[i][0]) for i in arc])
+                dd = np.array([s_[i][1] for i in arc], float)
+                tlS = tl_sat.get(sat)
+                tlG = tl_sig.get(f"{sat}|{sig}") or tlS
+                aS = np.array([lvl.get((sat, anchor_at(tlS, int(k)), int(k)), np.nan)
+                               if tlS else np.nan for k in kk])
+                aG = np.array([lvl.get((sat, anchor_at(tlG, int(k)), int(k)), np.nan)
+                               if tlG else np.nan for k in kk])
+                a1 = np.array([lvl_c1.get((sat, anchor_at(tlS, int(k)), int(k)), np.nan)
+                               if tlS else np.nan for k in kk])
+                ae = np.array([elv.get((sat, anchor_at(tlS, int(k)), int(k)), np.nan)
+                               if tlS else np.nan for k in kk])
+                bb = np.array([B.get((sat, int(k)), np.nan) for k in kk])
+                cc = np.array([C.get(int(k), np.nan) for k in kk])
+                rA, _i, _ = ols_slope(aS, dd)
+                sA = rA
+                rA = pearson(aS, dd)
+                sB, _i2, rB = ols_slope(bb, dd)
+                # a size-matched, autocorrelation-matched NULL: the same statistic
+                # against a DIFFERENT satellite's anchor level over the same epochs
+                others = [s for s in sats if s != sat and s in tl_sat]
+                nulls = []
+                for _ in range(null_draws):
+                    o = str(rng.choice(others)) if others else None
+                    if not o:
+                        continue
+                    av = np.array([lvl.get((o, anchor_at(tl_sat[o], int(k)), int(k)), np.nan)
+                                   for k in kk])
+                    nulls.append(abs(pearson(av, dd)))
+                rows.append(dict(
+                    sat=sat, signal=sig, k0=int(kk[0]), k1=int(kk[-1]), n=len(kk),
+                    D_rms=float(np.sqrt(np.mean((dd - dd.mean()) ** 2))),
+                    r_A=rA, slope_A=sA, r_A_persignal=pearson(aG, dd),
+                    r_A_c1=pearson(a1, dd), r_B=rB, slope_B=sB, r_C_commonmode=pearson(cc, dd),
+                    anchor_elev_mean=float(np.nanmean(ae)) if np.isfinite(ae).any() else float("nan"),
+                    anchor_stations=sorted({anchor_at(tlS, int(k)) for k in kk} - {None}),
+                    null_absr_mean=float(np.mean(nulls)) if nulls else float("nan"),
+                    null_absr_p95=float(np.quantile(nulls, .95)) if nulls else float("nan"),
+                    struct_ratio_10_over_1=struct_ratio(dd)))
+                if sat == "G32":
+                    g32_series.append((sig, kk, dd, aS, bb))
+        out["arcs"].extend(rows)
+        if not rows:
+            out["sats"][sat] = dict(n_arcs=0, has_anchor=sat in tl_sat)
+            continue
+        w = np.array([r["n"] for r in rows], float)
+
+        def wmean(field):
+            v = np.array([r[field] for r in rows], float)
+            m = np.isfinite(v)
+            return float((v[m] * w[m]).sum() / w[m].sum()) if m.any() else float("nan")
+        out["sats"][sat] = dict(
+            has_anchor=sat in tl_sat, n_arcs=len(rows), n_rows=int(w.sum()),
+            D_rms_wmean=wmean("D_rms"),
+            r_A_wmean=wmean("r_A"), r_A_persignal_wmean=wmean("r_A_persignal"),
+            r_A_c1_wmean=wmean("r_A_c1"), r_B_wmean=wmean("r_B"),
+            r_C_wmean=wmean("r_C_commonmode"),
+            absr_A_wmean=wabsmean(rows, "r_A"), absr_B_wmean=wabsmean(rows, "r_B"),
+            null_absr_wmean=wmean("null_absr_mean"),
+            anchor_elev_wmean=wmean("anchor_elev_mean"),
+            r_Drms_vs_anchor_elev=pearson([r["anchor_elev_mean"] for r in rows],
+                                          [r["D_rms"] for r in rows]),
+            struct_ratio_p50=q([r["struct_ratio_10_over_1"] for r in rows], .5),
+            anchors=sorted({s for r in rows for s in r["anchor_stations"]}))
+
+    A = out["arcs"]
+    w = np.array([r["n"] for r in A], float)
+
+    def pw(field):
+        v = np.array([r[field] for r in A], float)
+        m = np.isfinite(v)
+        return float((v[m] * w[m]).sum() / w[m].sum()) if m.any() else float("nan")
+    # arcs whose satellite never elected an anchor have no (A); every (A)-keyed
+    # fraction below is taken over the arcs where (A) exists, never over all arcs
+    withA = [r for r in A if np.isfinite(r["r_A"])]
+    both_weak = [r for r in withA if abs(r["r_A"]) < 0.3 and abs(r["r_B"]) < 0.3]
+    out["pooled"] = dict(
+        n_arcs=len(A), n_rows=int(w.sum()), n_arcs_with_anchor=len(withA),
+        r_A_wmean=pw("r_A"), r_A_persignal_wmean=pw("r_A_persignal"),
+        r_A_c1_wmean=pw("r_A_c1"), r_B_wmean=pw("r_B"), r_C_wmean=pw("r_C_commonmode"),
+        absr_A_wmean=wabsmean(A, "r_A"), absr_B_wmean=wabsmean(A, "r_B"),
+        absr_B_wmean_on_withA=wabsmean(withA, "r_B") if withA else float("nan"),
+        null_absr_wmean=pw("null_absr_mean"),
+        frac_arcs_rA_gt_0p5=float(np.mean([abs(r["r_A"]) > 0.5 for r in withA]))
+        if withA else float("nan"),
+        frac_arcs_rB_gt_0p5=float(np.mean([abs(r["r_B"]) > 0.5 for r in A])),
+        frac_arcs_both_lt_0p3=float(len(both_weak) / len(withA)) if withA else float("nan"),
+        r_Drms_vs_anchor_elev=pearson([r["anchor_elev_mean"] for r in A],
+                                      [r["D_rms"] for r in A]),
+        rho_Drms_vs_anchor_elev=spearman([r["anchor_elev_mean"] for r in A],
+                                         [r["D_rms"] for r in A]),
+        weak_arc_struct=dict(
+            n=len(both_weak),
+            p50=q([r["struct_ratio_10_over_1"] for r in both_weak], .5),
+            p10=q([r["struct_ratio_10_over_1"] for r in both_weak], .10),
+            p90=q([r["struct_ratio_10_over_1"] for r in both_weak], .90),
+            frac_gt_5=float(np.mean([r["struct_ratio_10_over_1"] > 5 for r in both_weak]))
+            if both_weak else float("nan"),
+            frac_lt_2=float(np.mean([r["struct_ratio_10_over_1"] < 2 for r in both_weak]))
+            if both_weak else float("nan")))
+
+    # G32's anchors, read one tenure at a time
+    g32 = []
+    tl = tl_sat.get("G32", [])
+    for i, (k0, sta) in enumerate(tl):
+        k1 = tl[i + 1][0] - 1 if i + 1 < len(tl) else k_of(t_hi)
+        ks = [k for k in range(k0, k1 + 1)]
+        el = [elv.get(("G32", sta, k), np.nan) for k in ks]
+        # read each tenure on the SLICE of every arc that lies inside it, not on
+        # whole arcs that merely overlap it (an arc can span three tenures)
+        seg_d, seg_a, seg_b, nseg, wsum, rms_acc = [], [], [], 0, 0.0, 0.0
+        for _sig, kk, dd, aS, bb in g32_series:
+            m = (kk >= k0) & (kk <= k1)
+            if m.sum() < 5:
+                continue
+            nseg += 1
+            d_ = dd[m]
+            seg_d.append(d_ - d_.mean())
+            seg_a.append(aS[m])
+            seg_b.append(bb[m])
+            rms_acc += float(((d_ - d_.mean()) ** 2).sum())
+            wsum += int(m.sum())
+        g32.append(dict(tenure_k=[k0, k1], n_epochs=k1 - k0 + 1, station=sta,
+                        elev_mean=float(np.nanmean(el)) if np.isfinite(el).any() else float("nan"),
+                        n_arc_segments=nseg, n_epoch_rows=wsum,
+                        D_rms=float(math.sqrt(rms_acc / wsum)) if wsum else float("nan"),
+                        r_A=pearson(np.concatenate(seg_a), np.concatenate(seg_d))
+                        if seg_d else float("nan"),
+                        r_B=pearson(np.concatenate(seg_b), np.concatenate(seg_d))
+                        if seg_d else float("nan")))
+    out["g32_tenures"] = g32
+    return out
+
+
+def fmt_r7(R):
+    P = R["pooled"]
+    L = [f"R7 - sec 24.15: is the within-arc D_phase wander the ANCHOR station's own code level?",
+         f"  {R['arm']}, tow {R['window'][0]:.0f}..{R['window'][1]:.0f}, declared arcs >= "
+         f"{R['min_arc_ep']} epochs.",
+         "frozen reading: r(A) > 0.5 and r(A) > r(B) => the wire follows its anchor's code level;",
+         "  r(B) > r(A) > 0.5 => network-wide code tracking; both < 0.3 => not code-driven.",
+         "",
+         "(A) = the anchor station's per-LOS code residual level for that satellite, the anchor per",
+         "  epoch reconstructed from the PHASE_ANCHOR rows (a handover's own `from` gives the",
+         "  incumbent, so one election covers the whole window).  (B) = the tracking-set mean of",
+         "  that satellite's per-LOS code residuals.  (C) = the network-wide mean over EVERY",
+         "  satellite, a common-mode control neither (A) nor (B) separates on its own.",
+         f"  {R['n_sats_with_anchor']} of {R['n_sats_in_rows']} satellites have an election in the",
+         f"  window, so (A) exists for those; no anchor for: "
+         f"{', '.join(R['sats_without_anchor']) or '-'}",
+         "  NULL = the same |r| against a DIFFERENT satellite's anchor level over the same epochs",
+         f"  ({20} draws/arc): it matches arc length and autocorrelation, so r must beat IT,",
+         "  not zero."]
+    hdr = (f"{'sat':4s} {'arcs':>5s} {'rows':>6s} {'D rms':>7s} {'r(A)':>7s} {'r(A)sig':>8s} "
+           f"{'r(A)C1':>7s} {'r(B)':>7s} {'r(C)':>7s} {'|r(A)|':>7s} {'|r(B)|':>7s} {'NULL':>6s} "
+           f"{'anc elev':>8s} {'rmsVSel':>8s} {'strct':>6s} {'anchors':>7s}")
+    L += ["", hdr, "-" * len(hdr)]
+    for sat, s in R["sats"].items():
+        if not s.get("n_arcs"):
+            continue
+        tag = "*" if sat in R6_SATS else ("c" if sat in R6_CONTROLS else " ")
+        L.append(f"{sat:3s}{tag}{s['n_arcs']:5d} {s['n_rows']:6d} {f(s['D_rms_wmean'],4)!s:>7s} "
+                 f"{f(s['r_A_wmean'])!s:>7s} {f(s['r_A_persignal_wmean'])!s:>8s} "
+                 f"{f(s['r_A_c1_wmean'])!s:>7s} {f(s['r_B_wmean'])!s:>7s} "
+                 f"{f(s['r_C_wmean'])!s:>7s} {f(s['absr_A_wmean'])!s:>7s} "
+                 f"{f(s['absr_B_wmean'])!s:>7s} {f(s['null_absr_wmean'],2)!s:>6s} "
+                 f"{f(s['anchor_elev_wmean'],1)!s:>8s} {f(s['r_Drms_vs_anchor_elev'],2)!s:>8s} "
+                 f"{f(s['struct_ratio_p50'],1)!s:>6s} {len(s['anchors']):7d}")
+    L.append("  (* = the wire's noisy four, c = the controls; blank = every other GPS satellite)")
+    L += ["",
+          f"POOLED over {P['n_arcs']} arcs / {P['n_rows']} rows, weighted by arc length:",
+          f"  r(A) {f(P['r_A_wmean'])}  r(A) per-signal {f(P['r_A_persignal_wmean'])}  "
+          f"r(A) C1-only {f(P['r_A_c1_wmean'])}  r(B) {f(P['r_B_wmean'])}  "
+          f"r(C) common mode {f(P['r_C_wmean'])}",
+          f"  |r(A)| {f(P['absr_A_wmean'])}  |r(B)| {f(P['absr_B_wmean'])}  "
+          f"NULL |r| {f(P['null_absr_wmean'])}  -> gap over null: A "
+          f"{f(P['absr_A_wmean'] - P['null_absr_wmean'])}, B "
+          f"{f(P['absr_B_wmean'] - P['null_absr_wmean'])}",
+          f"  of the {P['n_arcs_with_anchor']} arcs where (A) exists: |r(A)| > 0.5 in "
+          f"{f(P['frac_arcs_rA_gt_0p5'],3)}, BOTH |r(A)| and |r(B)| < 0.3 in "
+          f"{f(P['frac_arcs_both_lt_0p3'],3)};  |r(B)| > 0.5 over ALL arcs: "
+          f"{f(P['frac_arcs_rB_gt_0p5'],3)}",
+          f"  r(within-arc D rms, anchor elevation) across arcs: Pearson "
+          f"{f(P['r_Drms_vs_anchor_elev'])}, Spearman {f(P['rho_Drms_vs_anchor_elev'])}"]
+    ws = P["weak_arc_struct"]
+    L += ["",
+          f"SPECTRUM of the {ws['n']} arcs where BOTH |r(A)| and |r(B)| < 0.3 -- the Allan-like",
+          "  structure ratio sigma^2(lag 10) / sigma^2(lag 1).  White noise ~ 1, a random walk ~ 10,",
+          "  a pure linear drift ~ 100.",
+          f"  p10 {f(ws['p10'],2)}  p50 {f(ws['p50'],2)}  p90 {f(ws['p90'],2)}  "
+          f"frac > 5 {f(ws['frac_gt_5'],3)}  frac < 2 {f(ws['frac_lt_2'],3)}"]
+    L += ["", "G32's anchors, one tenure at a time (each arc SLICED to the tenure, not whole",
+          "  arcs that merely overlap it):",
+          f"  {'tenure k':>12s} {'n_ep':>5s} {'station':11s} {'elev':>6s} {'segs':>5s} "
+          f"{'rows':>5s} {'D rms':>7s} {'r(A)':>7s} {'r(B)':>7s}"]
+    for t in R["g32_tenures"]:
+        L.append(f"  {(str(t['tenure_k'][0]) + '-' + str(t['tenure_k'][1])):>12s} "
+                 f"{t['n_epochs']:5d} {t['station']:11s} {f(t['elev_mean'],1)!s:>6s} "
+                 f"{t['n_arc_segments']:5d} {int(t['n_epoch_rows']):5d} {f(t['D_rms'],4)!s:>7s} "
+                 f"{f(t['r_A'])!s:>7s} {f(t['r_B'])!s:>7s}")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------- #
 # witness — per-station code rms vs arcs born inside the run
 # --------------------------------------------------------------------------- #
 def read_witness(project, arms, gap_epochs, min_arc):
@@ -1975,7 +2298,8 @@ def emit(out_dir, name, obj, text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "witness", "all"])
+    ap.add_argument("read", choices=["r1", "r2", "r3", "r4", "r5", "r6", "r7",
+                                     "witness", "all"])
     ap.add_argument("--project", default=PROJECT_DEFAULT)
     ap.add_argument("--arms", default=",".join(ARMS_DEFAULT))
     ap.add_argument("--out", default=None)
@@ -1987,6 +2311,8 @@ def main():
     ap.add_argument("--sat", default="G06", help="r5: the satellite under test")
     ap.add_argument("--station", default="DJIG00DJI", help="r5b: the station under test")
     ap.add_argument("--tow", type=float, default=265470.0, help="r5c/r5d: the election epoch")
+    ap.add_argument("--r7-min-arc", type=int, default=20,
+                    help="r7: minimum declared-arc length in epochs")
     ap.add_argument("--r6-sats", default=",".join(R6_SATS + R6_CONTROLS),
                     help="r6: satellites under test (the first four are flagged as the noisy set)")
     a = ap.parse_args()
@@ -2018,6 +2344,9 @@ def main():
             r = read_r6(a.project, arm=arms[0],
                         sats=[s for s in a.r6_sats.split(",") if s] or None)
             emit(out_dir, "r6", r, fmt_r6(r))
+        elif t == "r7":
+            r = read_r7(a.project, arm=arms[0], min_arc_ep=a.r7_min_arc)
+            emit(out_dir, "r7", r, fmt_r7(r))
         elif t == "witness":
             r = read_witness(a.project, arms, a.gap_epochs, a.min_arc)
             emit(out_dir, "witness", r, fmt_witness(r))
