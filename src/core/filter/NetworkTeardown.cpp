@@ -360,6 +360,34 @@ int networkTeardown(
               "({} of those withheld by the observability gate, {} by the A4 σ̂0 ceiling) — "
               "of {} synced.",
               n_emitted, n_skipped, n_gate_withheld, n_sigma0_withheld, synced.size());
+    // --- Card RF-PD-fix: the TRUTHFUL in-solve station count -----------------
+    // UNCONDITIONAL, unlike the RF-PD readout below.  The whole point of this line
+    // is that `network_epoch_status.csv`'s `n_present` is NOT the number of stations
+    // in the solve — an unarmed run has exactly the same need to know that, and the
+    // count cannot be recovered from any other artifact.  Standing invariant #4: the
+    // denominator is printed so "min 59" is distinguishable from "never recorded".
+    {
+        const auto& c = ctx.counters;
+        if (c.sta_in_solve_epochs > 0) {
+            std::vector<int> v = c.sta_in_solve_ep;
+            std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
+                             v.end());
+            const int med = v[v.size() / 2];
+            const int mx  = *std::max_element(c.sta_in_solve_ep.begin(),
+                                              c.sta_in_solve_ep.end());
+            log->info("Network (card RF-PD-fix): stations IN THE SOLVE — n_sta_in_solve "
+                      "min {} (TOW {:.0f}) / median {} / max {} over {} consume epoch(s); "
+                      "n_sta_pd_dropped {} total; {} station re-admission(s) after an "
+                      "absence (longest gap {} epoch(s)).  n_present in "
+                      "network_epoch_status.csv counts the ROSTER, not this set.",
+                      c.sta_in_solve_min, c.sta_in_solve_min_tow, med, mx,
+                      c.sta_in_solve_epochs, c.pd_drop_total, c.sta_readmit_events,
+                      c.sta_readmit_max_gap_ep);
+        } else {
+            log->info("Network (card RF-PD-fix): n_sta_in_solve was never recorded — no "
+                      "consume epoch completed (every epoch aborted, or the loop never ran).");
+        }
+    }
     // --- Card RF-PD: the addStation PD drop, read out ------------------------
     // Standing invariant #4: this drop is an uninstrumented amputation —
     // `present[i]=false` while network_epoch_status.csv still reports the station in

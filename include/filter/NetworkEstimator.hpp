@@ -158,16 +158,27 @@ public:
      * @param y   Prefit residual (length @c m).  Any pivot-receiver datum pins
      *            local to this station are folded into @p A_r / @p W / @p y by
      *            the caller (tight prior rows).
+     * @param prior Optional DIAGONAL prior rows folded into this station's
+     *            @f$N_{rr}/u_r@f$ BEFORE the positive-definiteness test, instead
+     *            of afterwards through @ref addStationPrior — card RF-PD-fix
+     *            (@c network.station_prior_before_pd).  See
+     *            @ref NetworkNormalEquations::StationPrior.  Empty (the default)
+     *            ⇒ the legacy path, byte-identical.  A row passed here MUST NOT
+     *            also be passed to @ref addStationPrior: the two do not sum.
      * @return The 0-based station index for @ref reconstructStation.
      * @throws std::logic_error if called before @ref beginEpoch or after
      *         @ref solve (start a new epoch with @ref beginEpoch first).
      */
     std::size_t addStation(const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
-                           const Eigen::MatrixXd& W, const Eigen::VectorXd& y);
+                           const Eigen::MatrixXd& W, const Eigen::VectorXd& y,
+                           const NetworkNormalEquations::StationPrior& prior =
+                               NetworkNormalEquations::StationPrior{});
 
     /// Overload with a diagonal weight (per-observation variances⁻¹).
     std::size_t addStation(const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
-                           const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y);
+                           const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y,
+                           const NetworkNormalEquations::StationPrior& prior =
+                               NetworkNormalEquations::StationPrior{});
 
     /**
      * @brief Set the per-station fan-out used by the Schur reduction (@ref

@@ -2332,6 +2332,46 @@ namespace GnssProcessor {
          */
         bool trace_station_pd_null{ false };
         /**
+         * @brief Card RF-PD-fix: fold the station's own DATUM rows into its local
+         *        block BEFORE the @c addStation positive-definiteness test
+         *        (@c network.station_prior_before_pd).
+         *
+         * `NetworkNormalEquations::addStation` judges a station on its
+         * OBSERVATION rows alone and the driver drops a rejected station for the
+         * epoch (`present[i]=false`), while the station's own prior rows — the
+         * RXCB-DATUM row above all — are installed by `addStationPrior` one call
+         * LATER.  The station is therefore judged WITHOUT the only row that
+         * gauges its receiver DCB, and thrown away for lacking it: card RF-PD
+         * measured 23 633 (golden) / 30 340 (vehicle) rejections over 720 epochs
+         * of the 6 h RF-0g field posture, EVERY one of them carrying the same
+         * rank-1 null — the receiver-DCB ↔ slant-iono ↔ ambiguity confound, mass
+         * split AMB 77.8 % / IONO 21.0 % / CBIAS 1.2 %, `n_eig = 1` on 100 % of
+         * rows — and every survivor saved only by the accident of a prioritized
+         * phase-datum anchor's 1e10 pin landing in its block (anchored
+         * station-epochs rejected: 0 / 14 370).
+         *
+         * ON, the RXCB-DATUM rows travel to @ref
+         * NetworkNormalEquations::addStation as a
+         * @ref NetworkNormalEquations::StationPrior and are folded into
+         * @f$N_{rr}@f$ / @f$u_r@f$ before the LDLᵀ factorization, so the test
+         * sees the matrix the SOLVE uses.  The same rows are then withheld from
+         * the later `addStationPrior` call — the two paths do not sum, so a row
+         * that entered here must not enter again.
+         *
+         * @par Scope — datum rows ONLY
+         * The phase-leveling / rx-CB CARRY rows stay on the post-test path
+         * deliberately (card RF-PD §6 (a)): folding a carried value into the
+         * ADMISSION decision would let the carry's own staleness decide whether
+         * a station is in the solve, which is invariant #7's decoupling edge and
+         * needs its own card.
+         *
+         * SOLVE-AFFECTING (it changes which stations are in the network), and
+         * INERT without @c network.rx_code_bias_datum — there are then no datum
+         * rows to move.  Default OFF ⇒ nothing is collected, nothing is folded
+         * early, byte-identical.
+         */
+        bool station_prior_before_pd{ false };
+        /**
          * @brief SPEC_day129_frame_guards Phase 2.2: SH-field health GATE
          *        (@c network.sh_health_gate) — gate emission, not just warn.
          *

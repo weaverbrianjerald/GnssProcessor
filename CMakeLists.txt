@@ -335,6 +335,7 @@ add_executable(gnss_tests
     tests/test_rinex_nav_parser.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_network_normal_equations.cpp
+    tests/test_neq_station_prior_before_pd.cpp
     tests/test_pd_safe_fold.cpp
     tests/test_carry_aware_covariance.cpp
     tests/test_family_gf_datum.cpp

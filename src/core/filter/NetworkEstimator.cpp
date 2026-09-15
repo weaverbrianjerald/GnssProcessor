@@ -199,17 +199,19 @@ void NetworkEstimator::requireAccumulating_() const {
 std::size_t NetworkEstimator::addStation(const Eigen::MatrixXd& A_s,
                                          const Eigen::MatrixXd& A_r,
                                          const Eigen::MatrixXd& W,
-                                         const Eigen::VectorXd& y) {
+                                         const Eigen::VectorXd& y,
+                                         const NetworkNormalEquations::StationPrior& prior) {
     requireAccumulating_();
-    return neq_.addStationObservations(A_s, A_r, W, y);
+    return neq_.addStationObservations(A_s, A_r, W, y, prior);
 }
 
 std::size_t NetworkEstimator::addStation(const Eigen::MatrixXd& A_s,
                                          const Eigen::MatrixXd& A_r,
                                          const Eigen::VectorXd& w_diag,
-                                         const Eigen::VectorXd& y) {
+                                         const Eigen::VectorXd& y,
+                                         const NetworkNormalEquations::StationPrior& prior) {
     requireAccumulating_();
-    return neq_.addStationObservations(A_s, A_r, w_diag, y);
+    return neq_.addStationObservations(A_s, A_r, w_diag, y, prior);
 }
 
 Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {

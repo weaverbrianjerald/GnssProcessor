@@ -245,6 +245,7 @@ namespace GnssProcessor {
         bool rx_cb_on{};      ///< rx-CB carry (SPEC_rx_cb_carry); loader guarantees code_datum_time_linked.
         bool rx_cb_datum{};   ///< RXCB-DATUM: zero-mean-over-receivers DCB datum (network.rx_code_bias_datum).
         double rx_cb_datum_sigma{};  ///< RXCB-DATUM loose physical-bound sigma in m (network.rx_code_bias_datum_sigma_m).
+        bool sta_prior_pre_pd{};  ///< Card RF-PD-fix: fold the station's DATUM rows before the addStation PD test (network.station_prior_before_pd).
         double rx_cb_q{};   ///< rx-CB carry RW process noise (m²/s).
         bool rx_cb_demean{};  ///< Card LV-2 (SPEC_level_information_budget): inject η = λ·(innov − μ_c) and gate on |innov − μ_c|; loader guarantees rx_cb_on.
         int rx_cb_demean_min_sta{};  ///< Card LV-2: contributing-station floor below which μ_c FREEZES (thin-mean guard).
@@ -2371,6 +2372,26 @@ namespace GnssProcessor {
         /// over a whole band of ambiguities, so the family that ends up ranked first
         /// is close to arbitrary while the MASS split is stable.
         std::map<std::string, double> pd_drop_family_mass;
+        /// --- Card RF-PD-fix: the TRUTHFUL in-solve station count + invariant #7's
+        /// RE-COUPLING edge.  `network_epoch_status.csv`'s `n_present` is the roster
+        /// that reached the consume loop, not the set that entered the arrowhead, so a
+        /// PD-dropped (or assembly-dropped) station still reads as present.  These are
+        /// what the run-end tail and `network_run_summary.csv` report instead, and they
+        /// are ALWAYS accumulated — the `sta_readmitted` EVENT rows ride
+        /// `network.trace_topology`, the counters do not.  The per-station return
+        /// bookkeeping is here, in the run context, precisely so no seam keeps it in a
+        /// function-local (the INC-12 rule).
+        struct StationSolveTrack {
+            bool      ever_in_solve = false;  ///< distinguishes a RETURN from a first sighting
+            long long absent_streak = 0;      ///< consecutive consume epochs out of the solve
+        };
+        std::map<std::string, StationSolveTrack> sta_solve_track;
+        std::vector<int> sta_in_solve_ep;        ///< per consume epoch: stations that entered the arrowhead
+        long long sta_in_solve_epochs = 0;       ///< #epochs the above was recorded for (DENOMINATOR)
+        int       sta_in_solve_min = -1;         ///< min over the run (−1 = never recorded)
+        double    sta_in_solve_min_tow = 0.0;    ///< …its epoch
+        long long sta_readmit_events = 0;        ///< stations that re-entered the solve after ≥ 1 absent epoch
+        long long sta_readmit_max_gap_ep = 0;    ///< longest absence that ended in a readmission
         // --- Card Q3, the guarded temporal clock anchor.
         // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
         // mechanism is INERT no matter how clean the log reads, so every disposition is

@@ -1031,6 +1031,18 @@ struct StationAssembly {
     std::vector<Eigen::Index> carry_cols;  ///< A_r columns receiving a carried prior (ASCENDING — determinism).
     Eigen::VectorXd           carry_dNrr;  ///< Per-column information increment Λ = 1/var_eff.
     Eigen::VectorXd           carry_dur;   ///< Per-column RHS increment η = Λ·(value_abs − x_lin).
+    // Card RF-PD-fix (network.station_prior_before_pd): the station's own DATUM rows,
+    // held SEPARATE from the carry above so they can be handed to addStation and folded
+    // into N_rr/u_r BEFORE its positive-definiteness test — the test otherwise judges a
+    // station without the only row that gauges its receiver DCB and drops it for lacking
+    // it (docs/refound/RF-PD_station_rejection_2026-09-15.md).  A row lands in EXACTLY
+    // one of the two vectors: with the knob OFF the RXCB-DATUM rows stay in carry_* at
+    // their historical position in the coalesce (byte-identical), with it ON they move
+    // here and are withheld from the later addStationPrior call, which does not sum.
+    // Empty ⇒ nothing to fold early.
+    std::vector<Eigen::Index> prior_cols;  ///< A_r columns receiving a pre-PD datum row (ASCENDING).
+    Eigen::VectorXd           prior_dNrr;  ///< Per-column information increment Λ = 1/σ².
+    Eigen::VectorXd           prior_dur;   ///< Per-column RHS increment η = Λ·(0 − x_lin).
     // Card 1 (network.carry_conditional_coupling): the appended conditional coupling
     // rows live IN A_s/A_r (not in carry_cols), so the within-epoch RAIM refloat must
     // know which rows to withhold.  cpl_row_start = the first A_s/A_r row index of the

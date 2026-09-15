@@ -2335,6 +2335,23 @@ namespace GnssProcessor {
                       "eigen-decomposition per REJECTED block only; the rejection and the "
                       "station drop are unchanged (measure-only, solve byte-identical).");
         }
+        // Card RF-PD-fix: install the station's own DATUM rows BEFORE the PD test.
+        // SOLVE-AFFECTING (it changes which stations are in the network) — the
+        // rx_code_bias_datum cross-check is deferred to that knob's own block, which
+        // is parsed further down.
+        network_config_.station_prior_before_pd =
+            jval<bool>(json, "network.station_prior_before_pd", "station_prior_before_pd", false);
+        if (network_config_.station_prior_before_pd) {
+            log->info("Network (card RF-PD-fix): network.station_prior_before_pd ON — each "
+                      "station's RXCB-DATUM rows are folded into its local block N_rr/u_r "
+                      "BEFORE addStation's positive-definiteness test, so the test judges the "
+                      "same matrix the solve uses (they were installed one call LATER, by "
+                      "addStationPrior, and the station was rejected for the missing datum "
+                      "row).  The same rows are withheld from that later call — the two paths "
+                      "do not sum.  The phase-leveling / rx-CB CARRY rows stay on the "
+                      "post-test path deliberately, so no carried value enters the admission "
+                      "decision.  SOLVE-AFFECTING: expect MORE stations in the solve.");
+        }
         // The trace_events cross-check is NOT here: network.trace_events is parsed
         // further down (see the sink check right after it), so testing it at this
         // point reads a default and warns on a run that HAS the sink armed.
@@ -3442,6 +3459,16 @@ namespace GnssProcessor {
                        "a non-positive sigma is an infinite-information HARD pin of every "
                        "receiver DCB to zero, not a datum.", network_rx_code_bias_datum_sigma_m_);
             return false;
+        }
+        // Card RF-PD-fix cross-check (deferred from station_prior_before_pd's own
+        // arming block — rx_code_bias_datum is parsed only here).  Standing
+        // invariant #4: the fix moves the RXCB-DATUM rows earlier, so without that
+        // datum there is nothing to move and the knob is INERT while reading armed.
+        if (network_config_.station_prior_before_pd && !network_rx_code_bias_datum_) {
+            log->warn("Network (card RF-PD-fix): network.station_prior_before_pd is armed but "
+                      "network.rx_code_bias_datum is OFF — the fix moves exactly the RXCB-DATUM "
+                      "rows ahead of the PD test, so with no datum rows to move it is INERT and "
+                      "the addStation rejections will be unchanged.  Arm rx_code_bias_datum too.");
         }
         if (network_rx_code_bias_datum_) {
             if (!estimate_ifb_) {

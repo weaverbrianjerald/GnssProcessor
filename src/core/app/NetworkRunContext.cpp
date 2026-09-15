@@ -162,6 +162,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
     k.rx_cb_datum = config_.networkRxCodeBiasDatum();
     k.rx_cb_datum_sigma = config_.networkRxCodeBiasDatumSigmaM();
+    k.sta_prior_pre_pd = config_.getNetworkConfig().station_prior_before_pd;
     k.rx_cb_q = config_.networkRxCbCarryQ();
     k.rx_cb_demean = config_.networkRxCbCarryDemean();   // loader guarantees rx_cb_on
     k.rx_cb_demean_min_sta = config_.networkRxCbCarryDemeanMinStations();

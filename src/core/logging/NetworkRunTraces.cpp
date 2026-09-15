@@ -1538,6 +1538,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_pd_null
                        ? std::string("\"trace_station_pd_null\":true,") : std::string())
+               // Card RF-PD-fix: SOLVE-AFFECTING (it decides which stations are in the
+               // network), so an archived logs/ folder has to be able to say which side
+               // of it produced the products.  Emitted ONLY when armed (the
+               // trace_station_block / young-inflate rule), so an unarmed run's manifest
+               // bytes are unchanged.
+               << (nc.station_prior_before_pd
+                       ? std::string("\"station_prior_before_pd\":true,") : std::string())
                // RF-0b / RF-0c / RF-0d: the satellite code-bias DATUM is the product's
                // frame, so it belongs in the provenance record — the "zero" and
                // "broadcast_tgd" frames differ by c*T_GD on every emitted code bias, and
@@ -2117,14 +2124,29 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
         const std::filesystem::path rs_csv_path = log_dir_ / "network_run_summary.csv";
         std::ofstream rs_csv(rs_csv_path);
         if (rs_csv) {
+            // Card RF-PD-fix: four APPENDED columns (the existing ten keep their order
+            // and meaning, so a positional reader of the old schema is unaffected and a
+            // header-keyed one picks these up).  `n_stations` is the ROSTER; these say
+            // how many of it actually entered the arrowhead, which is the number
+            // network_epoch_status.csv's `n_present` is NOT.  -1 = never recorded.
             rs_csv << "n_synced,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,loop_ms,"
-                      "ms_per_epoch,n_stations,n_threads,parallel\n";
+                      "ms_per_epoch,n_stations,n_threads,parallel,"
+                      "n_sta_in_solve_min,n_sta_in_solve_med,n_sta_pd_dropped,n_sta_readmitted\n";
             const double ms_per_epoch = n_loop_epochs
                 ? loop_ms / static_cast<double>(n_loop_epochs) : 0.0;
+            int in_solve_med = -1;
+            if (!counters.sta_in_solve_ep.empty()) {
+                std::vector<int> v = counters.sta_in_solve_ep;
+                std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2),
+                                 v.end());
+                in_solve_med = v[v.size() / 2];
+            }
             rs_csv << n_synced << ',' << n_emitted << ',' << n_skipped << ','
                    << n_gate_withheld << ',' << n_sigma0_withheld << ','
                    << fmt::format("{:.1f}", loop_ms) << ',' << fmt::format("{:.3f}", ms_per_epoch) << ','
-                   << n_stations << ',' << n_threads << ',' << (parallel_on ? 1 : 0) << '\n';
+                   << n_stations << ',' << n_threads << ',' << (parallel_on ? 1 : 0) << ','
+                   << counters.sta_in_solve_min << ',' << in_solve_med << ','
+                   << counters.pd_drop_total << ',' << counters.sta_readmit_events << '\n';
             rs_csv.close();
         } else {
             log->warn("Network: failed to open run-summary CSV {}", rs_csv_path.string());

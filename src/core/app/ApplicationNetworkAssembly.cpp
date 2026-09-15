@@ -2384,6 +2384,7 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     const bool   rx_cb_on      = ctx.knobs.rx_cb_on;             // rx-CB carry (SPEC_rx_cb_carry)
     const bool   rx_cb_datum  = ctx.knobs.rx_cb_datum;           // RXCB-DATUM: zero-mean-over-receivers DCB datum (shares the pl_cb walk with the carry)
     const double rx_cb_datum_sigma = ctx.knobs.rx_cb_datum_sigma; // RXCB-DATUM loose physical-bound sigma (m)
+    const bool   sta_prior_pre_pd = ctx.knobs.sta_prior_pre_pd;   // RF-PD-fix: route the RXCB-DATUM rows to the PRE-PD fold
     const double rx_cb_q       = ctx.knobs.rx_cb_q;              // rx-CB carry RW process noise (m²/s)
     const bool   rx_cb_demean  = ctx.knobs.rx_cb_demean;         // Card LV-2: fold η = λ(innov − μ), gate on |innov − μ|
     const bool   rx_cb_step_gate = ctx.knobs.rx_cb_step_gate;    // Card LV-4: retire the frame-dependent inject screen (the harvest owns the event)
@@ -3141,6 +3142,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             if (legacy_local_inject || rx_cb_on || rx_cb_datum || iono_on || opin_on) {
                 const Eigen::VectorXd x_lin = st.sm->getStateVector();
                 std::vector<std::tuple<Eigen::Index, double, double>> inj;  // (col, Λ, η) — legacy diagonal path
+                // Card RF-PD-fix: the PRE-PD half of the same channel.  Rows land here
+                // ONLY under network.station_prior_before_pd, and then never in `inj` —
+                // the two are folded by different calls that do not sum.  Empty OFF, so
+                // the finalize below is a no-op and R.prior_* stays empty.
+                std::vector<std::tuple<Eigen::Index, double, double>> inj_prior;  // (col, Λ, η) — RF-PD-fix pre-PD datum rows
                 // QUEUE 8b (scope=relevel): the per-sat re-level census, filled by the
                 // pl_amb walk below and consumed by the iono-carry block after it.
                 // freed = any band in the latched free set; seen/carried partition the
@@ -4073,7 +4079,17 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                             const double lam = 1.0 / (rx_cb_datum_sigma * rx_cb_datum_sigma);
                             const double eta = lam * (0.0 - x_lin(cb_idx));
                             if (std::isfinite(lam) && std::isfinite(eta)) {
-                                inj.emplace_back(cbcol, lam, eta);
+                                // Card RF-PD-fix: with station_prior_before_pd the DATUM
+                                // rows leave the carry vector entirely and go to the
+                                // PRE-PD fold instead, so addStation's PD test sees the
+                                // row that gauges this station's receiver DCB.  They must
+                                // not appear in BOTH — addStationPrior does not sum with
+                                // what addStation already folded.  OFF, this is the
+                                // original emplace at the original point in the walk, so
+                                // the coalesce order and every byte downstream are
+                                // unchanged.
+                                if (sta_prior_pre_pd) inj_prior.emplace_back(cbcol, lam, eta);
+                                else                  inj.emplace_back(cbcol, lam, eta);
                                 ++R.pl_cb_datum_rows;
                             }
                         }
@@ -4194,6 +4210,35 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
                         R.carry_cols[static_cast<size_t>(k)] = std::get<0>(inj[static_cast<size_t>(k)]);
                         R.carry_dNrr(k) = std::get<1>(inj[static_cast<size_t>(k)]);
                         R.carry_dur(k)  = std::get<2>(inj[static_cast<size_t>(k)]);
+                    }
+                    // Card RF-PD-fix: the same finalize for the PRE-PD datum rows —
+                    // ascending column order for a deterministic fold, and the same
+                    // coalesce because a single receiver DCB column can in principle
+                    // receive more than one datum row (information is additive, and
+                    // addStation's diagonal fold, like addStationPrior's, does not sum
+                    // duplicate entries).  Empty OFF ⇒ R.prior_* untouched.
+                    std::sort(inj_prior.begin(), inj_prior.end(),
+                              [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+                    if (inj_prior.size() > 1) {
+                        std::size_t w = 0;
+                        for (std::size_t r = 1; r < inj_prior.size(); ++r) {
+                            if (std::get<0>(inj_prior[r]) == std::get<0>(inj_prior[w])) {
+                                std::get<1>(inj_prior[w]) += std::get<1>(inj_prior[r]);
+                                std::get<2>(inj_prior[w]) += std::get<2>(inj_prior[r]);
+                            } else {
+                                inj_prior[++w] = inj_prior[r];
+                            }
+                        }
+                        inj_prior.resize(w + 1);
+                    }
+                    const Eigen::Index npri = static_cast<Eigen::Index>(inj_prior.size());
+                    R.prior_cols.resize(static_cast<size_t>(npri));
+                    R.prior_dNrr.resize(npri);
+                    R.prior_dur.resize(npri);
+                    for (Eigen::Index k = 0; k < npri; ++k) {
+                        R.prior_cols[static_cast<size_t>(k)] = std::get<0>(inj_prior[static_cast<size_t>(k)]);
+                        R.prior_dNrr(k) = std::get<1>(inj_prior[static_cast<size_t>(k)]);
+                        R.prior_dur(k)  = std::get<2>(inj_prior[static_cast<size_t>(k)]);
                     }
                 }
             }
@@ -4552,7 +4597,19 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         if (R.cpl_joint_fallback) ++n_cpl_joint_fallback;   // Card 1b: joint LLT degraded to scalar
 
         try {
-            est_index_of[i] = static_cast<int>(est.addStation(R.A_s, R.A_r, R.w, R.y));
+            // Card RF-PD-fix: hand addStation this station's own DATUM rows so the
+            // PD test judges the block the SOLVE uses.  R.prior_* is EMPTY unless
+            // network.station_prior_before_pd is armed, and the kernel then takes
+            // no copy of N_rr and folds nothing — the OFF path is byte-identical.
+            // The failure path is unchanged BY CONSTRUCTION: addStation already
+            // builds and validates the whole local block before it touches the
+            // shared border, so a rejected station still leaves N_ss_/u_s_
+            // untouched and there is nothing to roll back (which is why the prior
+            // goes INTO addStation rather than into a two-phase add + validate).
+            est_index_of[i] = static_cast<int>(
+                est.addStation(R.A_s, R.A_r, R.w, R.y,
+                               NetworkNormalEquations::StationPrior{
+                                   R.prior_cols, R.prior_dNrr, R.prior_dur}));
         } catch (const std::exception& ex) {
             // One station's rank-deficient / ill-conditioned local block must
             // not sink the whole epoch in a large heterogeneous network: drop
@@ -4594,6 +4651,13 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
         // worlds, because the gauge counter would then report folds that never
         // reached the normal equations (a telemetry channel that actively lies).
         // Both edges of the datum move together or neither does.
+        // Card RF-PD-fix: under network.station_prior_before_pd the RXCB-DATUM rows are
+        // NOT in R.carry_cols — they went to addStation above and were folded before the
+        // PD test.  They must not be folded a second time here (addStationPrior does not
+        // sum with what addStation already put in N_rr), and they are not: the routing is
+        // exclusive at the emplace.  `rx_cb_datum` stays in the gate below because on a
+        // datum-only, knob-ON run R.carry_cols is then empty and the second conjunct
+        // already suppresses the call.
         // The ORACLE PIN joins the install gate for the same reason RXCB-DATUM did:
         // its rows are coalesced into R.carry_cols above, and a gate that built them
         // and then dropped them would leave the run-end clause reporting folds that
@@ -4618,6 +4682,53 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
     if (n_pd_dropped_ep > ctx.counters.pd_drop_max_ep) {
         ctx.counters.pd_drop_max_ep     = n_pd_dropped_ep;
         ctx.counters.pd_drop_max_ep_tow = se.time.tow;
+    }
+
+    // --- Card RF-PD-fix: the TRUTHFUL in-solve count + invariant #7's RE-COUPLING edge.
+    // network_epoch_status.csv reports `n_present`, which is the roster that reached the
+    // consume loop, NOT the set that entered the arrowhead — a station dropped here is
+    // still counted present.  Record what actually went into the solve, per epoch, and
+    // mark every RETURN so a station's re-entry is never read as a first sighting (the
+    // exact failure invariant #7 names, and the DECOUPLING edge is already instrumented
+    // by RF-PD's `sta_pd_dropped`).  Counting is unconditional and free; the event rows
+    // ride network.trace_topology, the topology ledger that owns invariant #7's edges.
+    // Skipped on an ABORTED epoch (a pivot rejection breaks the loop early), where the
+    // later stations were never judged and an absence would be an artifact of the break.
+    if (epoch_ok) {
+        auto& cnt = ctx.counters;
+        int n_in_solve_ep = 0;
+        for (size_t i = 0; i < stations.size(); ++i) {
+            const bool in_solve = (est_index_of[i] >= 0);
+            if (in_solve) ++n_in_solve_ep;
+            const std::string& nm = stations[i].name;
+            auto& tr = cnt.sta_solve_track[nm];
+            if (in_solve) {
+                if (tr.ever_in_solve && tr.absent_streak > 0) {
+                    ++cnt.sta_readmit_events;
+                    if (tr.absent_streak > cnt.sta_readmit_max_gap_ep)
+                        cnt.sta_readmit_max_gap_ep = tr.absent_streak;
+                    if (nc.trace_topology)
+                        traces.emitEvent(se.time, "TOPOLOGY", "sta_readmitted", "", nm,
+                                         static_cast<double>(tr.absent_streak), std::nullopt,
+                                         "readmitted",
+                                         fmt::format("epochs_absent={};prior_rows={};"
+                                                     "pre_pd_prior={}",
+                                                     tr.absent_streak,
+                                                     asm_res[i].prior_cols.size(),
+                                                     sta_prior_pre_pd ? 1 : 0));
+                }
+                tr.ever_in_solve  = true;
+                tr.absent_streak  = 0;
+            } else {
+                ++tr.absent_streak;
+            }
+        }
+        ++cnt.sta_in_solve_epochs;
+        cnt.sta_in_solve_ep.push_back(n_in_solve_ep);
+        if (cnt.sta_in_solve_min < 0 || n_in_solve_ep < cnt.sta_in_solve_min) {
+            cnt.sta_in_solve_min     = n_in_solve_ep;
+            cnt.sta_in_solve_min_tow = se.time.tow;
+        }
     }
 
     // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): compare the pins that LANDED

@@ -163,6 +163,39 @@ public:
                        const Eigen::VectorXd& delta_rhs);
 
     /**
+     * @brief A station's DIAGONAL prior rows, offered to @ref addStation so the
+     *        positive-definiteness test judges the block the SOLVE will use
+     *        (card RF-PD-fix, @c network.station_prior_before_pd).
+     *
+     * Same triple @ref addStationPrior takes — local columns, per-column
+     * information increments @f$\Lambda_i\ge0@f$ and RHS increments
+     * @f$\eta_i@f$ — but folded into @f$N_{rr}^r@f$ / @f$u_r^r@f$ BEFORE the
+     * LDLᵀ factorization rather than as a rank-1 update of the cached factor
+     * afterwards.  The distinction is the whole card: a station whose
+     * observation-only block is rank-deficient in exactly the direction its own
+     * datum row gauges (the receiver-DCB ↔ slant-iono ↔ ambiguity confound
+     * named in @c docs/refound/RF-PD_station_rejection_2026-09-15.md) is
+     * REJECTED by the test and dropped for the epoch, then never reaches the
+     * @ref addStationPrior call that would have made it full-rank.
+     *
+     * @par Why not the rank-1 path
+     * @c Eigen::LDLT::rankUpdate divides by the existing pivot @f$d_j@f$, so
+     * updating the factor of a SINGULAR block — which is precisely the block
+     * this card admits — is numerically meaningless.  A prior that must cure a
+     * rank defect has to be inside the matrix that is factorized.
+     *
+     * Empty (the default) ⇒ @ref addStation behaves exactly as before: no copy
+     * of @p N_rr_r is taken, nothing is folded, byte-identical.
+     */
+    struct StationPrior {
+        std::vector<Eigen::Index> cols;  ///< Local columns (ASCENDING — determinism).
+        Eigen::VectorXd dNrr;            ///< Per-column information increments @f$\Lambda_i\ge0@f$.
+        Eigen::VectorXd dur;             ///< Per-column RHS increments @f$\eta_i@f$.
+        /// True when there is nothing to fold (the OFF path, and the default).
+        bool empty() const { return cols.empty(); }
+    };
+
+    /**
      * @brief Add one station from pre-formed normal-equation blocks.
      *
      * @param N_ss_r This station's contribution to the shared block
@@ -171,22 +204,37 @@ public:
      *               (@c n_shared × @c n_local).
      * @param N_rr_r Local block @f$A_r^\top W A_r@f$ (@c n_local × @c n_local).
      *               Must be symmetric positive-definite (include the station's
-     *               prior so it is full-rank); it is factorized (LDLᵀ) on entry
-     *               and the factor is cached for reduction and reconstruction.
+     *               prior so it is full-rank — either in this block, or through
+     *               @p prior, which folds it in HERE); it is factorized (LDLᵀ)
+     *               on entry and the factor is cached for reduction and
+     *               reconstruction.
      * @param u_s_r  Shared RHS contribution @f$A_s^\top W y@f$ (@c n_shared).
      * @param u_r_r  Local RHS @f$A_r^\top W y@f$ (@c n_local).
+     * @param prior  Optional diagonal prior rows (@ref StationPrior) folded into
+     *               @p N_rr_r / @p u_r_r BEFORE the factorization and its
+     *               positive-definiteness test.  Empty ⇒ the legacy path, taken
+     *               without copying @p N_rr_r.
      * @return The 0-based station index, for @ref reconstructStation.
-     * @throws std::invalid_argument on a dimension mismatch.
+     * @throws std::invalid_argument on a dimension mismatch, an out-of-range
+     *         prior column, a negative prior information weight, or a
+     *         non-finite prior RHS — validated exactly as @ref addStationPrior
+     *         validates them, and BEFORE anything is committed to the border.
      *
      * @note @c n_local may be 0 (a station with no private nuisance state);
      *       its contribution is then just @p N_ss_r / @p u_s_r added to the
-     *       border with no elimination.
+     *       border with no elimination.  A non-empty @p prior on such a station
+     *       is a caller bug and throws.
+     * @note Folding through @p prior and folding the SAME rows afterwards via
+     *       @ref addStationPrior would DOUBLE-APPLY them (the two paths do not
+     *       sum — @ref addStationPrior is unaware of what entered here).  The
+     *       driver routes each row through exactly one of the two.
      */
     std::size_t addStation(const Eigen::MatrixXd& N_ss_r,
                            const Eigen::MatrixXd& N_sr_r,
                            const Eigen::MatrixXd& N_rr_r,
                            const Eigen::VectorXd& u_s_r,
-                           const Eigen::VectorXd& u_r_r);
+                           const Eigen::VectorXd& u_r_r,
+                           const StationPrior& prior = StationPrior{});
 
     /**
      * @brief Add one station from its linearized design-matrix rows with a full
@@ -203,13 +251,17 @@ public:
      * @param W   Symmetric positive-definite weight (inverse measurement
      *            covariance), @c m × @c m.
      * @param y   Prefit residual (observed − computed), length @c m.
+     * @param prior Optional diagonal prior rows folded into @f$N_{rr}@f$ /
+     *              @f$u_r@f$ before the PD test — see @ref StationPrior and the
+     *              @p prior parameter of @ref addStation.  Empty ⇒ unchanged.
      * @return The 0-based station index.
      * @throws std::invalid_argument on a dimension mismatch.
      */
     std::size_t addStationObservations(const Eigen::MatrixXd& A_s,
                                        const Eigen::MatrixXd& A_r,
                                        const Eigen::MatrixXd& W,
-                                       const Eigen::VectorXd& y);
+                                       const Eigen::VectorXd& y,
+                                       const StationPrior& prior = StationPrior{});
 
     /**
      * @brief Overload taking a diagonal weight (per-observation variances⁻¹).
@@ -219,7 +271,8 @@ public:
     std::size_t addStationObservations(const Eigen::MatrixXd& A_s,
                                        const Eigen::MatrixXd& A_r,
                                        const Eigen::VectorXd& w_diag,
-                                       const Eigen::VectorXd& y);
+                                       const Eigen::VectorXd& y,
+                                       const StationPrior& prior = StationPrior{});
 
     /**
      * @brief Fold a DIAGONAL information increment into one station's local

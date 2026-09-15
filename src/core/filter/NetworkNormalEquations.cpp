@@ -393,7 +393,8 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
                                                const Eigen::MatrixXd& N_sr_r,
                                                const Eigen::MatrixXd& N_rr_r,
                                                const Eigen::VectorXd& u_s_r,
-                                               const Eigen::VectorXd& u_r_r) {
+                                               const Eigen::VectorXd& u_r_r,
+                                               const StationPrior& prior) {
     const Eigen::Index n_r = N_rr_r.rows();
 
     requireSquare(N_ss_r, n_shared_, "addStation: N_ss_r");
@@ -412,6 +413,34 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     // half-used by the LDLᵀ factorization / final symmetrization.
     requireSymmetric(N_ss_r, "addStation: N_ss_r");
     requireSymmetric(N_rr_r, "addStation: N_rr_r");
+
+    // --- Card RF-PD-fix (network.station_prior_before_pd) ---------------------
+    // The station's own DIAGONAL prior rows, folded into N_rr / u_r BEFORE the
+    // factorization below, so the positive-definiteness test judges the SAME
+    // matrix the solve will use.  Validate EVERYTHING here — the addStationPrior
+    // contract, verbatim — because a throw must leave the border untouched, and
+    // this runs before the first mutation of anything shared.
+    const Eigen::Index n_pri = static_cast<Eigen::Index>(prior.cols.size());
+    if (n_pri > 0) {
+        if (prior.dNrr.size() != n_pri || prior.dur.size() != n_pri) {
+            fail("addStation: prior cols / dNrr / dur size mismatch");
+        }
+        if (n_r == 0) {
+            fail("addStation: station prior supplied but the station has no local block");
+        }
+        for (Eigen::Index i = 0; i < n_pri; ++i) {
+            const Eigen::Index c = prior.cols[static_cast<std::size_t>(i)];
+            if (c < 0 || c >= n_r) {
+                fail("addStation: prior local column out of range");
+            }
+            if (!(prior.dNrr(i) >= 0.0)) {
+                fail("addStation: prior information increment must be non-negative");
+            }
+            if (!std::isfinite(prior.dur(i))) {
+                fail("addStation: prior RHS increment is not finite");
+            }
+        }
+    }
 
     // Build and VALIDATE this station's local block BEFORE committing anything to
     // the shared border.  addStation throws on a non-positive-definite local block
@@ -440,11 +469,27 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     Station& st = stations_[n_active_];
     st.n_local = n_r;
 
+    // RF-PD-fix: fold the prior into a LOCAL COPY — never into the caller's block,
+    // which the driver still owns (its `R` is reused for the epoch's diagnostics).
+    // With an EMPTY prior no copy is taken and every line below reads the caller's
+    // N_rr_r exactly as before, so the OFF path is byte-identical.
+    Eigen::MatrixXd N_rr_pre;
+    if (n_pri > 0) {
+        N_rr_pre = N_rr_r;
+        for (Eigen::Index i = 0; i < n_pri; ++i) {
+            const Eigen::Index c = prior.cols[static_cast<std::size_t>(i)];
+            N_rr_pre(c, c) += prior.dNrr(i);   // information is additive on the diagonal
+        }
+    }
+    const Eigen::MatrixXd& N_rr_use = (n_pri > 0) ? N_rr_pre : N_rr_r;
+
     if (n_r > 0) {
         // Factorize the local block once; reused by reduce() and
         // reconstructStation().  LDLᵀ is robust for the symmetric local normals;
-        // the caller folds in the station prior so the block is full-rank.
-        st.Nrr_ldlt.compute(N_rr_r);
+        // the caller folds in the station prior so the block is full-rank — either
+        // inside N_rr_r, or through `prior` (RF-PD-fix), which is already in
+        // N_rr_use here and therefore inside the PD test below.
+        st.Nrr_ldlt.compute(N_rr_use);
         if (st.Nrr_ldlt.info() != Eigen::Success) {
             fail("addStation: LDLᵀ factorization of N_rr_r failed (non-finite?)");
         }
@@ -486,7 +531,7 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
             // nothing and calls nothing, so the rejection path is byte-identical.
             last_pd_failure_.valid = false;
             if (station_pd_null_trace_) {
-                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N_rr_r);
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N_rr_use);
                 if (es.info() == Eigen::Success && es.eigenvalues().size() > 0) {
                     const Eigen::VectorXd& ev = es.eigenvalues();   // ASCENDING
                     const double ev_max = ev.cwiseAbs().maxCoeff();
@@ -519,6 +564,14 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     // contribution (kept in lock-step with the Schur term reduce() will subtract).
     st.N_sr = N_sr_r;
     st.u_r = u_r_r;
+    // RF-PD-fix: the prior's RHS half.  N_sr is untouched (a diagonal local prior
+    // is reduction-orthogonal to the border — the addStationPrior rationale), and
+    // these are the SAME additions, onto the same base, in the same ascending
+    // column order addStationPrior would have made, so u_r is bit-identical to the
+    // prior-after result for a station both orders admit.
+    for (Eigen::Index i = 0; i < n_pri; ++i) {
+        st.u_r(prior.cols[static_cast<std::size_t>(i)]) += prior.dur(i);
+    }
     N_ss_ += N_ss_r;
     u_s_ += u_s_r;
 
@@ -528,7 +581,8 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
 
 std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
-    const Eigen::MatrixXd& W, const Eigen::VectorXd& y) {
+    const Eigen::MatrixXd& W, const Eigen::VectorXd& y,
+    const StationPrior& prior) {
     ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
     if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
@@ -555,12 +609,13 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::VectorXd u_s_r = WA_s.transpose() * y;      // n_s
     const Eigen::VectorXd u_r_r = WA_r.transpose() * y;      // n_r
 
-    return addStation(N_ss_r, N_sr_r, N_rr_r, u_s_r, u_r_r);
+    return addStation(N_ss_r, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
 }
 
 std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
-    const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y) {
+    const Eigen::VectorXd& w_diag, const Eigen::VectorXd& y,
+    const StationPrior& prior) {
     ScopedAccum _perf(perf_timing_, &timers_.add_station_ms);  // D0 (assembly primitive)
     if (perf_timing_) ++timers_.add_station_calls;
     const Eigen::Index m = A_s.rows();
@@ -591,7 +646,7 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::VectorXd u_s_r = WA_s.transpose() * y;
     const Eigen::VectorXd u_r_r = WA_r.transpose() * y;
 
-    return addStation(N_ss_r, N_sr_r, N_rr_r, u_s_r, u_r_r);
+    return addStation(N_ss_r, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
 }
 
 void NetworkNormalEquations::addStationPrior(
