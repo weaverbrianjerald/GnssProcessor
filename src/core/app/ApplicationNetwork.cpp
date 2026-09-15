@@ -1091,6 +1091,10 @@ int Application::runNetwork() {
     // reference scale for the local-block rank test — the prioritized datum's
     // in-block 1e10 anchor pins otherwise eject marginal stations every epoch.
     est.setStationPdMedianScale(config_.networkStationPdPinAware());
+    // Card RF-PD (network.trace_station_pd_null): eigen-read the NULL DIRECTION of a
+    // block the PD test rejects, so the drop names a parameter instead of a pivot
+    // magnitude.  Measure-only — it runs only on an already-rejected block.
+    est.setStationPdNullTrace(config_.getNetworkConfig().trace_station_pd_null);
     // Card 4 PD-safe DD fold: the KERNEL half —
     // product-form posterior read-back, equilibrated scale-relative factorization, counted
     // eigenvalue-clamp repair.  Set once here (it survives est.reset(), like the timers).

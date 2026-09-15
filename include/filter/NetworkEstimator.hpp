@@ -263,6 +263,14 @@ public:
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
     void setStationPdMedianScale(bool on) { neq_.setStationPdMedianScale(on); }
 
+    /// Card RF-PD null-direction read passthrough
+    /// (@ref NetworkNormalEquations::setStationPdNullTrace;
+    /// @c network.trace_station_pd_null).  Configuration-level — set once before
+    /// the epoch loop; survives @ref beginEpoch / @ref reset.  The record itself
+    /// is read through @ref normals() →
+    /// @ref NetworkNormalEquations::lastStationPdFailure in the caller's @c catch.
+    void setStationPdNullTrace(bool on) { neq_.setStationPdNullTrace(on); }
+
     /**
      * @brief Solve the shared satellite parameters under the explicit @p datum.
      *

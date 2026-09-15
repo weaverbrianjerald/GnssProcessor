@@ -474,6 +474,37 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
             d_ref = v[v.size() / 2];
         }
         if (d_min <= 0.0 || d_min < 1e-12 * d_ref) {
+            // --- Card RF-PD: NAME the null direction (network.trace_station_pd_null) ---
+            // The message below reports a pivot MAGNITUDE and nothing else; the
+            // caller then drops the whole station on a number that identifies no
+            // parameter.  Armed, take one SelfAdjointEigenSolver read of the SAME
+            // block the test just rejected and stash its smallest eigenpair for the
+            // caller's catch.  Deliberately NOT the LDLᵀ pivot index: LDLᵀ permutes
+            // (transpositionsP), so pivot k is not local column k and reading it as
+            // one names the wrong parameter.  Only a REJECTED block pays the O(n³) —
+            // an accepted station never reaches here — and OFF the branch allocates
+            // nothing and calls nothing, so the rejection path is byte-identical.
+            last_pd_failure_.valid = false;
+            if (station_pd_null_trace_) {
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(N_rr_r);
+                if (es.info() == Eigen::Success && es.eigenvalues().size() > 0) {
+                    const Eigen::VectorXd& ev = es.eigenvalues();   // ASCENDING
+                    const double ev_max = ev.cwiseAbs().maxCoeff();
+                    const double cut    = 1e-12 * ev_max;
+                    int n_below = 0;
+                    for (Eigen::Index k = 0; k < ev.size(); ++k)
+                        if (std::abs(ev(k)) < cut) ++n_below;
+                    last_pd_failure_.valid       = true;
+                    last_pd_failure_.n_local     = n_r;
+                    last_pd_failure_.d_min       = d_min;
+                    last_pd_failure_.d_ref       = d_ref;
+                    last_pd_failure_.d_max       = d_max;
+                    last_pd_failure_.ev_min      = ev(0);
+                    last_pd_failure_.ev_max      = ev_max;
+                    last_pd_failure_.n_eig_below = n_below;
+                    last_pd_failure_.null_vec    = es.eigenvectors().col(0);
+                }
+            }
             std::ostringstream os;
             os << "addStation: N_rr_r is not positive-definite (min LDLᵀ pivot "
                << d_min << " vs max " << d_max

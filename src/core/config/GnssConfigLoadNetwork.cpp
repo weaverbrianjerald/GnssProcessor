@@ -2318,6 +2318,26 @@ namespace GnssProcessor {
                       "information, the reconstructed local correction, and zero-redundancy row "
                       "counts by kind) -> network_station_block.csv on the first 20 EMITTED "
                       "epochs and every 60th thereafter (trace-only, measure-only).");
+        // Card RF-PD: name the null local column behind each addStation PD rejection.
+        // Trace-only, measure-only (the eigen read runs only on a block the kernel is
+        // already throwing away) and fingerprint-SAFE — absent from NetworkRunContext's
+        // fingerprint list, like trace_station_block above.
+        network_config_.trace_station_pd_null =
+            jval<bool>(json, "network.trace_station_pd_null", "trace_station_pd_null", false);
+        if (network_config_.trace_station_pd_null) {
+            log->info("Network (card RF-PD): network.trace_station_pd_null ON — every "
+                      "addStation PD rejection now NAMES its null direction: one "
+                      "TOPOLOGY/sta_pd_dropped row in network_events.csv per dropped "
+                      "station-epoch carrying the smallest eigenvalue of the rejected local "
+                      "block, the near-zero eigenvalue COUNT, the pivot triple "
+                      "(d_min/d_ref/d_max) the decision used, and the top-5 |weight| columns "
+                      "of the null eigenvector as StateManager labels.  One symmetric "
+                      "eigen-decomposition per REJECTED block only; the rejection and the "
+                      "station drop are unchanged (measure-only, solve byte-identical).");
+        }
+        // The trace_events cross-check is NOT here: network.trace_events is parsed
+        // further down (see the sink check right after it), so testing it at this
+        // point reads a default and warns on a run that HAS the sink armed.
         if (network_config_.trace_sh_spectrum)
             log->info("Network (P1-3): network.trace_sh_spectrum ON — per-epoch reduced-shared-"
                       "normal spectrum + per-family eigenvector mass partition into "
@@ -2623,6 +2643,14 @@ namespace GnssProcessor {
         if (network_config_.trace_events)
             log->info("Network: per-event QC trace ENABLED — network_events.csv logs every "
                       "tiered QC action (T1-T6, GATE/SIGMA0/PIVOT/RETRO) in long format.");
+        // Card RF-PD sink dependency (deferred from its arming block above — this
+        // toggle is parsed only here).  Standing invariant #4: an armed instrument
+        // whose output has nowhere to go must SAY so.
+        if (network_config_.trace_station_pd_null && !network_config_.trace_events)
+            log->warn("Network (card RF-PD): network.trace_station_pd_null is armed but "
+                      "network.trace_events is OFF — network_events.csv is never opened, so "
+                      "every sta_pd_dropped row is DISCARDED and only the run-end counter "
+                      "survives.  Arm network.trace_events too.");
         // Redundancy census sink dependencies (deferred from the arming block
         // above — both toggles are parsed only here).  Standing invariant #4: an
         // armed instrument whose output has nowhere to go must SAY so, because

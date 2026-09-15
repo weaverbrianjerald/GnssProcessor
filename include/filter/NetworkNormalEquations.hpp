@@ -1159,6 +1159,58 @@ public:
      */
     void setStationPdMedianScale(bool on) { station_pd_median_scale_ = on; }
 
+    /**
+     * @brief Card RF-PD: the spectral read of the LAST @ref addStation
+     *        positive-definiteness rejection — the NULL DIRECTION the pivot
+     *        test only ever reported as a number.
+     *
+     * The rejection message names a pivot magnitude; it never names the
+     * COLUMN.  LDLᵀ pivot ORDER is permuted (@c transpositionsP), so the
+     * pivot index is not a column index and must not be read as one.  This
+     * record instead carries a @c SelfAdjointEigenSolver read of the SAME
+     * @f$N_{rr}^r@f$ the test rejected: its smallest eigenpair, the count of
+     * eigenvalues under the relative cutoff, and the pivot triple the
+     * decision itself used.  The caller maps @ref null_vec's largest-|weight|
+     * entries to StateManager labels through its own @c h2local map (the
+     * kernel has no label vocabulary) — the same mapping
+     * @c network.neq_export_epoch uses.
+     *
+     * Populated ONLY when @ref setStationPdNullTrace is armed AND the test
+     * fails; @ref valid is false otherwise.  Read it in the caller's
+     * @c catch, before the next @ref addStation overwrites it.
+     */
+    struct StationPdFailure {
+        bool          valid{false};      ///< this record describes a real rejection (armed + failed)
+        Eigen::Index  n_local{0};        ///< the rejected block's dimension
+        double        d_min{0.0};        ///< smallest LDLᵀ pivot (the test's statistic; may be < 0)
+        double        d_ref{0.0};        ///< the test's reference scale (median |pivot| when pin-aware, else max)
+        double        d_max{0.0};        ///< largest |LDLᵀ pivot|
+        double        ev_min{0.0};       ///< smallest eigenvalue of N_rr_r (the null direction's)
+        double        ev_max{0.0};       ///< largest eigenvalue (the block's spectral scale)
+        int           n_eig_below{0};    ///< #eigenvalues with |λ| < 1e-12 * ev_max (the null's MULTIPLICITY)
+        Eigen::VectorXd null_vec;        ///< unit eigenvector of ev_min, in LOCAL column order
+    };
+
+    /**
+     * @brief Arm the RF-PD null-direction read on @ref addStation's PD
+     *        rejection (@c network.trace_station_pd_null).
+     *
+     * OFF (default) the rejection path is unchanged to the byte: no
+     * eigen-decomposition, no allocation, no record.  ON it costs one
+     * symmetric eigen-decomposition of the REJECTED block only — a station
+     * that is already being thrown away, so no accepted station pays.  The
+     * rejection ITSELF is unchanged either way: this names the null, it does
+     * not admit the station.  Configuration level — set once before the epoch
+     * loop; survives @ref reset (like @ref setStationPdMedianScale).
+     */
+    void setStationPdNullTrace(bool on) { station_pd_null_trace_ = on; }
+
+    /// @return The last @ref addStation PD rejection's spectral record (see
+    ///         @ref StationPdFailure).  @c valid is false unless
+    ///         @ref setStationPdNullTrace is armed and the immediately
+    ///         preceding @ref addStation threw the PD rejection.
+    const StationPdFailure& lastStationPdFailure() const { return last_pd_failure_; }
+
 private:
     /// Per-station cached state needed for reduction and back-substitution.
     struct Station {
@@ -1258,6 +1310,8 @@ private:
     bool ddprior_folded_{false};             ///< guards double-folding the DD priors within one reduce
     std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
     bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()
+    bool station_pd_null_trace_{false};     ///< RF-PD: eigen-read the rejected local block's null direction; survives reset()
+    StationPdFailure last_pd_failure_;      ///< RF-PD: the last rejection's spectral record (valid only when armed + failed)
     bool perf_timing_{false};               ///< D0: section timers armed (survives reset(); set once by the driver)
     mutable SectionTimers timers_;          ///< D0: wall-clock accumulators (mutable — the const covariance/solve paths accumulate too)
 };

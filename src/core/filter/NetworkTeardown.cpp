@@ -360,6 +360,45 @@ int networkTeardown(
               "({} of those withheld by the observability gate, {} by the A4 σ̂0 ceiling) — "
               "of {} synced.",
               n_emitted, n_skipped, n_gate_withheld, n_sigma0_withheld, synced.size());
+    // --- Card RF-PD: the addStation PD drop, read out ------------------------
+    // Standing invariant #4: this drop is an uninstrumented amputation —
+    // `present[i]=false` while network_epoch_status.csv still reports the station in
+    // `n_present` — whose only prior record was a warn line in a ROTATING log.  The
+    // counters are always accumulated; the READOUT is armed-only so an unarmed run's
+    // log text stays byte-identical (the estimability-arm precedent above).
+    if (config_.getNetworkConfig().trace_station_pd_null) {
+        const auto& c = ctx.counters;
+        const double per_ep = c.pd_drop_epochs
+            ? static_cast<double>(c.pd_drop_total) / static_cast<double>(c.pd_drop_epochs) : 0.0;
+        std::string fam;
+        for (const auto& [k, v] : c.pd_drop_family) {
+            if (!fam.empty()) fam += ' ';
+            fam += fmt::format("{}={}", k, v);
+        }
+        std::string famm;
+        {
+            double tot = 0.0;
+            for (const auto& [k, v] : c.pd_drop_family_mass) { (void)k; tot += v; }
+            if (tot <= 0.0) tot = 1.0;
+            for (const auto& [k, v] : c.pd_drop_family_mass) {
+                if (!famm.empty()) famm += ' ';
+                famm += fmt::format("{}={:.1f}%", k, 100.0 * v / tot);
+            }
+        }
+        log->info("Network (card RF-PD): addStation PD rejections — n_sta_pd_dropped {} over "
+                  "{} consume epoch(s) = {:.1f}/epoch (max {} at TOW {:.0f}); {} named by the "
+                  "null eigenvector, {} epoch(s) SUNK by a pivot rejection.  Top-column "
+                  "family census: [{}]; null-eigenvector MASS by family: [{}].",
+                  c.pd_drop_total, c.pd_drop_epochs, per_ep, c.pd_drop_max_ep,
+                  c.pd_drop_max_ep_tow, c.pd_drop_named, c.pd_drop_pivot_abort,
+                  fam.empty() ? std::string("none") : fam,
+                  famm.empty() ? std::string("none") : famm);
+        if (c.pd_drop_total > 0 && c.pd_drop_named == 0)
+            log->warn("Network (card RF-PD): {} PD rejection(s) and ZERO named null "
+                      "directions — the eigen read is INERT (the kernel's null-trace flag "
+                      "never reached addStation, or every throw came from a non-PD guard).  "
+                      "The rows in network_events.csv carry no direction.", c.pd_drop_total);
+    }
     // RTA-10 gap fix: heartbeats buffered for a v2 writer open that never came.
     // A run that NEVER emits cannot stamp the contract header (no realized
     // datum), so no product file is fabricated — but the withheld era must not

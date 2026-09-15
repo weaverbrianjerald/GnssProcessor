@@ -1534,6 +1534,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // armed-only rule, so an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
                                           : std::string())
+               // Card RF-PD station-PD null-direction read: same armed-only rule, so
+               // an unarmed run's manifest bytes are unchanged.
+               << (nc.trace_station_pd_null
+                       ? std::string("\"trace_station_pd_null\":true,") : std::string())
                // RF-0b / RF-0c / RF-0d: the satellite code-bias DATUM is the product's
                // frame, so it belongs in the provenance record — the "zero" and
                // "broadcast_tgd" frames differ by c*T_GD on every emitted code bias, and

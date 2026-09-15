@@ -2344,6 +2344,33 @@ namespace GnssProcessor {
     /// @internal Service counters, health-window anchors, and B8 flag-rate
     /// tallies — verbatim relocation.
     struct NetworkServiceCounters {
+        /// --- Card RF-PD: the addStation POSITIVE-DEFINITENESS drop, counted.
+        /// The drop is a per-station, per-epoch amputation
+        /// (ApplicationNetworkAssembly.cpp: `present[i]=false`) that
+        /// `network_epoch_status.csv` does NOT report — `n_present` still counts
+        /// the station.  Its only prior record was a warn line in a ROTATING log.
+        /// These are ALWAYS counted (the increment is free and costs no output);
+        /// the run-end readout and the per-rejection `sta_pd_dropped` event rows
+        /// are what `network.trace_station_pd_null` arms.
+        long long pd_drop_epochs = 0;       ///< epochs whose serial consume loop ran (DENOMINATOR)
+        long long pd_drop_total = 0;        ///< station-epochs dropped by the addStation PD rejection
+        long long pd_drop_named = 0;        ///< …of those, ones whose null direction was eigen-named (armed only)
+        long long pd_drop_pivot_abort = 0;  ///< epochs SUNK because the rejected station was the legacy pivot
+        int       pd_drop_max_ep = 0;       ///< largest per-epoch drop count over the run
+        double    pd_drop_max_ep_tow = 0.0; ///< …its epoch
+        /// Top-column FAMILY census over the named rejections (label prefix:
+        /// "AMB" / "IONO" / "CBIAS" / "ZWD" / "CLK" / "RPB" / "ISB" / "other").
+        /// The read script does the per-station / persistence analysis off the
+        /// event rows; this is the run-end one-liner that says which family
+        /// dominates without opening a trace.
+        std::map<std::string, long long> pd_drop_family;
+        /// The same census done HONESTLY: Σ over rejections of the null
+        /// eigenvector's per-family mass Σw² (each rejection contributes 1.0 in
+        /// total).  The top-column count above is a function of where the top-5 cut
+        /// fell; this is not, and here it matters — the null is spread near-evenly
+        /// over a whole band of ambiguities, so the family that ends up ranked first
+        /// is close to arbitrary while the MASS split is stable.
+        std::map<std::string, double> pd_drop_family_mass;
         // --- Card Q3, the guarded temporal clock anchor.
         // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
         // mechanism is INERT no matter how clean the log reads, so every disposition is

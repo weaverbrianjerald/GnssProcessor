@@ -2297,6 +2297,41 @@ namespace GnssProcessor {
          */
         bool trace_station_block{ false };
         /**
+         * @brief Card RF-PD: NAME the null local column behind every
+         *        @c addStation PD rejection (@c network.trace_station_pd_null)
+         *        -> @c TOPOLOGY / @c sta_pd_dropped rows in
+         *        @c network_events.csv.
+         *
+         * @c NetworkNormalEquations::addStation rejects a station whose local
+         * block @f$N_{rr}^r@f$ fails the relative PD test and the driver drops
+         * it for the epoch (@c present[i]=false) — while
+         * @c network_epoch_status.csv still reports the station as present.
+         * On the RF-0g field posture that is a MEDIAN OF 31 OF 59 STATIONS PER
+         * EPOCH (23 633 drops over 720 epochs; 24 stations rejected on all
+         * 720), i.e. the 59-station golden solves as a ~28-station network —
+         * an uninstrumented drop (standing invariant #4) whose only record is a
+         * warn line in a ROTATING log that names a pivot magnitude and no
+         * parameter.
+         *
+         * Armed, each rejection additionally carries the spectral read of the
+         * rejected block (@ref NetworkNormalEquations::StationPdFailure): the
+         * smallest eigenvalue, the eigenvalue multiplicity under the relative
+         * cutoff, the pivot triple the decision used, and the top-5
+         * largest-|weight| entries of the null eigenvector resolved to
+         * StateManager LABELS (@c AMB:… / @c IONO:… / @c CBIAS:… / @c ZWD /
+         * @c CLK) through the assembly's own @c h2local map — so the drop says
+         * WHICH parameter the station cannot determine, which is what separates
+         * a standing structural null (a datum the station cannot satisfy) from
+         * a newborn-arc transient.  A per-epoch @c n_sta_pd_dropped count joins
+         * the run-end tail.
+         *
+         * MEASURE-ONLY: the rejection, the drop, and the message are unchanged;
+         * the eigen-decomposition runs ONLY on a block that is already being
+         * thrown away.  TRACE-ONLY — never folded into the warm-resume
+         * fingerprint.  Default OFF ⇒ no eigen work, no rows, byte-identical.
+         */
+        bool trace_station_pd_null{ false };
+        /**
          * @brief SPEC_day129_frame_guards Phase 2.2: SH-field health GATE
          *        (@c network.sh_health_gate) — gate emission, not just warn.
          *
