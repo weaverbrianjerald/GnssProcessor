@@ -10,6 +10,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
@@ -60,6 +61,17 @@ bool parseStateD(const std::string& s, double& v) {
     return end == s.c_str() + s.size() && errno != ERANGE;
 }
 
+/// Card JT: median of a scratch vector (sorted IN PLACE — the caller owns it and
+/// never reads the order).  Even population takes the mean of the two central
+/// values; the caller guarantees a non-empty vector.  Deterministic on any build
+/// (std::sort on doubles with no ties broken by address), which the replay
+/// emitter's byte-identity depends on.
+double medianInPlace(std::vector<double>& v) {
+    const std::size_t n = v.size();
+    std::sort(v.begin(), v.end());
+    return (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
+
 /// Strict full-consumption int parse.
 bool parseStateI(const std::string& s, int& v) {
     if (s.empty()) return false;
@@ -76,9 +88,11 @@ NetworkProductEmitter::NetworkProductEmitter(double disc_threshold_m, bool emit_
                                              double staleness_horizon_s,
                                              bool code_bias_jump_test,
                                              bool clock_disc_on_set_change,
-                                             double disc_threshold_frac_cycles)
+                                             double disc_threshold_frac_cycles,
+                                             bool disc_jump_test_decommon)
     : disc_threshold_m_(disc_threshold_m),
       disc_threshold_frac_cycles_(disc_threshold_frac_cycles),
+      disc_jump_test_decommon_(disc_jump_test_decommon),
       emit_clock_disc_(emit_clock_disc),
       staleness_horizon_s_(staleness_horizon_s),
       code_bias_jump_test_(code_bias_jump_test),
@@ -242,6 +256,43 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             const auto it = prev_clock_satset_.find(cst);
             if (it != prev_clock_satset_.end() && it->second != sats)
                 clock_set_changed.insert(cst);
+        }
+    }
+
+    // --- Card JT: the per-SIGNAL phase-bias common mode (de-commoned jump test) --
+    // Standing invariant #5: a satellite-COMMON phase-bias move is absorbed by a
+    // consumer's own receiver phase clock, so the quantity that lands in a consumer
+    // ambiguity is the step MINUS the network's median step on that signal.  The raw
+    // test is frame-blind — CST §4 measured a −1.451 m L1W frame move hiding a
+    // +1.409 m per-satellite step under a 0.0476 m bar.
+    //
+    // Population = exactly the jump test's own population, one epoch earlier: keys
+    // carrying a baseline that is not stale under the staleness horizon (a first
+    // sighting or a beyond-horizon return contributes nothing, mirroring staleKey).
+    // The median is taken WITHIN each signal — L1W and L2W phase biases do not share
+    // a common mode (the band-differential part is a different receiver state), and
+    // one median over a mixed population leaks a band-differential move into every
+    // cell.  Computed BEFORE the emit loop, i.e. against the baselines the loop is
+    // about to overwrite.  Nothing here runs (and nothing is allocated) when the knob
+    // is off, so the OFF path is byte-identical.
+    std::map<std::string, double> pb_common_by_signal;   // signal -> median ΔPB (m)
+    std::map<std::string, int>    pb_common_pop;         // signal -> population size
+    pb_jump_decommon_events_.clear();
+    if (disc_jump_test_decommon_) {
+        std::map<std::string, std::vector<double>> pool;   // signal -> ΔPB samples
+        for (const auto& s : sol.sats) {
+            if (s.sat.empty() || s.phase_bias.empty()) continue;
+            for (const auto& [signal, npb] : s.phase_bias) {
+                const std::string key = s.sat + "|" + signal;
+                const auto last_it = last_phase_bias_.find(key);
+                if (last_it == last_phase_bias_.end()) continue;          // first sighting
+                if (staleKey(phase_last_seen_s_, key)) continue;          // stale baseline
+                pool[signal].push_back(npb.bias_m - last_it->second);
+            }
+        }
+        for (auto& [signal, samples] : pool) {
+            pb_common_pop[signal] = static_cast<int>(samples.size());
+            pb_common_by_signal[signal] = medianInPlace(samples);
         }
     }
 
@@ -413,8 +464,46 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // still needs the reset signal.  The JUMP TEST, by contrast, is
                 // suppressed on a stale baseline: an hours-stale comparison would
                 // mint a spurious bump on the satellite's mere re-appearance.
-                if (have_baseline && (forced
-                        || (fresh && std::abs(npb.bias_m - last_it->second) > discThresholdM(s.sat, signal)))) {
+                //
+                // Card JT: when armed, the test screens the DE-COMMONED step; the
+                // threshold, the population and the forced/fresh structure above are
+                // untouched.  A cell already FORCED is declared regardless and is not
+                // classified — the census counts only declarations this knob decides.
+                bool value_jump = false;
+                if (fresh) {
+                    const double raw_d = npb.bias_m - last_it->second;
+                    const double bar   = discThresholdM(s.sat, signal);
+                    const bool   raw_over = std::abs(raw_d) > bar;
+                    if (!disc_jump_test_decommon_) {
+                        value_jump = raw_over;
+                    } else {
+                        const auto pop_it = pb_common_pop.find(signal);
+                        const int  pop    = (pop_it != pb_common_pop.end()) ? pop_it->second : 0;
+                        if (pop < kDiscDecommonMinSats) {
+                            // A thin signal's median is not a frame: fall back to the
+                            // RAW test, exactly as a missing baseline does, and count it.
+                            value_jump = raw_over;
+                            if (!forced) {
+                                pb_jump_decommon_events_.push_back(
+                                    {s.sat, signal, raw_d, 0.0, raw_d, bar, pop, value_jump,
+                                     PbJumpDecommonClass::FallbackRaw});
+                            }
+                        } else {
+                            const double c  = pb_common_by_signal[signal];
+                            const double dd = raw_d - c;
+                            value_jump = std::abs(dd) > bar;
+                            if (!forced && (value_jump || raw_over)) {
+                                const PbJumpDecommonClass cls =
+                                    value_jump ? (raw_over ? PbJumpDecommonClass::Both
+                                                           : PbJumpDecommonClass::DecommonOnly)
+                                               : PbJumpDecommonClass::RawOnlySuppressed;
+                                pb_jump_decommon_events_.push_back(
+                                    {s.sat, signal, raw_d, c, dd, bar, pop, value_jump, cls});
+                            }
+                        }
+                    }
+                }
+                if (have_baseline && (forced || value_jump)) {
                     ++ctr;
                 }
                 last_phase_bias_[key] = npb.bias_m;

@@ -381,6 +381,7 @@ add_executable(gnss_tests
     tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
     tests/test_pb_emit_filter.cpp
+    tests/test_pb_jump_decommon.cpp
     tests/test_clock_emit_rebase.cpp
     tests/test_clock_anchor.cpp
     tests/test_network_solprep_disc.cpp

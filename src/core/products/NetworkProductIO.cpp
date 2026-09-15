@@ -327,6 +327,8 @@ struct LineAssembler {
                             c.age_scale_k = std::stod(f[k].substr(5));      // M4: age-scaling coeff
                         } else if (f[k].rfind("discfrac=", 0) == 0) {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // H3: per-λ jump gate
+                        } else if (f[k].rfind("discdecom=", 0) == 0) {
+                            c.disc_jump_test_decommon = (std::stoi(f[k].substr(10)) != 0);  // Card JT
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // H-rider: sigma0 statistic id
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -529,6 +531,14 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // what makes this a forward-compatible addition rather than a grammar break.
     if (!contract.sat_gf_datum.empty())
         out_ << ",sat_gf_datum=" << contract.sat_gf_datum;
+    // Card JT (network.disc_jump_test_decommon): the phase jump test screened the
+    // DE-COMMONED step, not the raw one.  A replay-emitter parameter like discfrac=
+    // (not an interpretation hint): a consumer replaying with the other setting
+    // reproduces DIFFERENT discontinuity counters on exactly the cells a frame move
+    // hid or minted.  ONLY when armed, so every pre-JT producer writes the S line
+    // byte-for-byte and an unknown-field-skipping reader stays forward-compatible.
+    if (contract.disc_jump_test_decommon)
+        out_ << ",discdecom=1";
     out_ << '\n';
 }
 
@@ -615,7 +625,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
-            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>]"
+            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>][,discdecom=1]"
             "   (B6 S-basis contract)\n";
 }
 
@@ -953,6 +963,12 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_threshold_frac_cycles != expected.disc_threshold_frac_cycles)
         note(fmt::format("disc_threshold_frac_cycles: file {} vs expected {}",
                          file.disc_threshold_frac_cycles, expected.disc_threshold_frac_cycles));
+    // Card JT: the de-commoned phase jump test — a mismatch makes the consumer's
+    // replay emitter declare a different cell population (the frame-hidden steps the
+    // de-commoned test mints, and the common-mode steps it suppresses).
+    if (file.disc_jump_test_decommon != expected.disc_jump_test_decommon)
+        note(fmt::format("disc_jump_test_decommon: file {} vs expected {}",
+                         file.disc_jump_test_decommon, expected.disc_jump_test_decommon));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));
@@ -998,7 +1014,8 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
                                  contract.staleness_horizon_s,
                                  contract.code_bias_jump_test,
                                  contract.clock_disc_on_set_change,
-                                 contract.disc_threshold_frac_cycles);
+                                 contract.disc_threshold_frac_cycles,
+                                 contract.disc_jump_test_decommon);   // Card JT
 }
 
 // ===========================================================================

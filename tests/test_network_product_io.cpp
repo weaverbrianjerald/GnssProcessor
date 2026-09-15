@@ -957,6 +957,7 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     c.age_scale_k                = 1e-6;
     c.cb_pin_pair["G"]           = "C1C-C2L";
     c.gf_pin_pair["G"]           = "C1C-C2L";
+    c.disc_jump_test_decommon    = true;   // Card JT: discdecom=
     c.present                    = true;
 
     // An epoch arming every optional record / field channel.

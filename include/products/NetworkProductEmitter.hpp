@@ -212,12 +212,68 @@ public:
     ///        L5/E5a 6.37 cm.  Default 0.0 = the legacy flat @p disc_threshold_m
     ///        (byte-identical).  Travels in the S contract (@c discfrac=) for
     ///        @c makeReplayEmitter.
+    /// @param disc_jump_test_decommon Card JT (@c network.disc_jump_test_decommon):
+    ///        when true the PHASE-bias jump test screens the DE-COMMONED step —
+    ///        the raw epoch-to-epoch @f$\Delta PB@f$ minus the median @f$\Delta PB@f$
+    ///        over the satellites emitted on that SIGNAL at both epochs — instead of
+    ///        the raw one.  A satellite-common phase-bias move is absorbed by a
+    ///        consumer's own receiver phase clock, so the quantity that actually
+    ///        lands in a consumer ambiguity is the de-commoned step (standing
+    ///        invariant #5); the raw test is frame-blind and CST §4 measured a
+    ///        −1.451 m L1W frame move hiding a +1.409 m per-satellite step under a
+    ///        0.0476 m bar.  The threshold is unchanged (@ref discThresholdM).  A
+    ///        signal whose fresh-baseline population is below
+    ///        @ref kDiscDecommonMinSats falls back to the RAW test (counted).
+    ///        Default false ⇒ byte-identical.  Travels in the S contract
+    ///        (@c discdecom=) for @c makeReplayEmitter.
     explicit NetworkProductEmitter(double disc_threshold_m = kDefaultDiscThresholdM,
                                    bool emit_clock_disc = false,
                                    double staleness_horizon_s = 0.0,
                                    bool code_bias_jump_test = false,
                                    bool clock_disc_on_set_change = false,
-                                   double disc_threshold_frac_cycles = 0.0);
+                                   double disc_threshold_frac_cycles = 0.0,
+                                   bool disc_jump_test_decommon = false);
+
+    /// Card JT: minimum number of fresh-baseline satellites a SIGNAL must carry
+    /// before its de-commoned median is trusted as a frame estimate.  Below it the
+    /// (sat, signal) cells of that signal fall back to the RAW jump test and are
+    /// counted as @c fallback_raw — a thin signal's "median" is not a frame.
+    static constexpr int kDiscDecommonMinSats = 3;
+
+    /// Card JT: which way the de-commoned and the raw phase jump tests disagreed on
+    /// one (sat, signal) cell — invariant #7's identity for both edges.
+    enum class PbJumpDecommonClass {
+        DecommonOnly,       ///< De-commoned fires, raw would NOT: the previously MISSED class (a frame move hid the step).
+        Both,               ///< Both fire — a step large enough to clear the bar in either frame.
+        RawOnlySuppressed,  ///< Raw fires, de-commoned does NOT: the COMMON-MODE class (the frame moved, this satellite did not).
+        FallbackRaw         ///< The signal's population was below @ref kDiscDecommonMinSats; the RAW result stands.
+    };
+
+    /// Card JT: one classified cell of the epoch's phase jump test.  Emitted only for
+    /// cells the jump test actually decided (a cell already forced by
+    /// @ref markDatumChange / @ref markSatDiscontinuity is declared regardless and is
+    /// NOT classified — the census counts declarations this knob is responsible for).
+    struct PbJumpDecommonEvent {
+        std::string         sat;               ///< RINEX satellite id.
+        std::string         signal;            ///< RINEX obs code of the phase signal.
+        double              raw_delta_m{0.0};  ///< Raw ΔPB against this key's baseline (m, signed).
+        double              common_m{0.0};     ///< The signal's median ΔPB (m) — 0 on a @c FallbackRaw cell.
+        double              decommon_m{0.0};   ///< raw_delta_m − common_m (m) — equals raw on a @c FallbackRaw cell.
+        double              threshold_m{0.0};  ///< The bar this cell was screened against (@ref discThresholdM).
+        int                 population{0};     ///< Satellites in the signal's median population.
+        bool                declared{false};   ///< Whether the armed test declared (stepped the counter).
+        PbJumpDecommonClass cls{PbJumpDecommonClass::Both};  ///< Which class this cell fell in.
+    };
+
+    /// Card JT: the classified cells of the LAST @ref emitToStore call (cleared at the
+    /// top of every emit).  Always EMPTY when the knob is off, so an OFF run allocates
+    /// nothing and the driver's drain is a no-op.
+    const std::vector<PbJumpDecommonEvent>& pbJumpDecommonEvents() const {
+        return pb_jump_decommon_events_;
+    }
+
+    /// Card JT: whether the de-commoned phase jump test is armed on this emitter.
+    bool discJumpTestDecommon() const { return disc_jump_test_decommon_; }
 
     /// Serialize @p sol into @p store (Sink A — in-process, no wire bytes).
     void emitToStore(const NetworkSolutionEpoch& sol, SsrCorrectionStore& store);
@@ -376,6 +432,15 @@ private:
     /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
     /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.
     double discThresholdM(const std::string& sat, const std::string& signal) const;
+    /// Card JT: screen the DE-COMMONED phase step (raw minus the signal's median)
+    /// rather than the raw one.  Default false = the legacy frame-blind test
+    /// (byte-identical).  Travels in the S contract (@c discdecom=).
+    bool   disc_jump_test_decommon_{false};
+    /// Card JT: the classified cells of the last emit (empty unless armed).  Per-emit
+    /// scratch, deliberately NOT serialized: the de-commoned step is a pure function
+    /// of this epoch's emitted biases and @ref last_phase_bias_, so a replay
+    /// reproduces it with no extra stream state.
+    std::vector<PbJumpDecommonEvent> pb_jump_decommon_events_;
     bool   emit_clock_disc_{false};       ///< A2: maintain + stamp the clock disc counter.
     /// RTA-11: staleness horizon (s, PRODUCT time; 0 = off).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time; a key

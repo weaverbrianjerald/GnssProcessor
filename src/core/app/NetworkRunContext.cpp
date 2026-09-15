@@ -950,6 +950,15 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (config_.networkCodeBiasDiscJumpTest() || config_.networkClockDiscOnSetChange())
             add(fmt::format("emitchan:cbj={},cks={}", config_.networkCodeBiasDiscJumpTest(),
                             config_.networkClockDiscOnSetChange()));
+        // Card JT: the de-commoned phase jump test decides which (sat,signal) counters
+        // step, and those counters ARE snapshotted emitter state — a resume across a
+        // change of this knob would continue a counter series minted under the other
+        // test.  It adds no serialized state of its own (the de-commoned step is a
+        // pure function of the epoch and last_phase_bias_), so it is fingerprinted
+        // here rather than in the EMITTER header; appended ONLY when armed, so every
+        // pre-JT snapshot fingerprint is unchanged.
+        if (config_.getNetworkConfig().disc_jump_test_decommon)
+            add("discdecom=1");
         // The held clock signal basis defines which IF combination each carried
         // clock state is referenced to; a resume across a toggle change would carry
         // clock states in a re-selected-per-epoch frame vs a held frame.  Appended

@@ -429,6 +429,35 @@ void networkEmitStore(
         }
     }
     emitter.emitToStore(sol, network_store);
+    // --- Card JT: drain the de-commoned jump test's classified cells ----------
+    // Invariant #7 at BOTH edges with identities: the DECOUPLING edge is the
+    // declaration this test raises (decl_decommon_only / decl_both) and the
+    // RE-COUPLING edge is the declaration it withholds (raw_only_suppressed — the
+    // frame moved, this satellite did not, and the consumer's receiver phase clock
+    // absorbs it by construction).  Both are events, both are counted, and a
+    // fallback_raw row names every cell whose signal was too thin for a frame
+    // estimate.  The vector is EMPTY on an OFF run, so this loop never runs and the
+    // OFF path stays byte-identical.
+    for (const auto& e : emitter.pbJumpDecommonEvents()) {
+        const char* kind = "decl_both";
+        switch (e.cls) {
+            case NetworkProductEmitter::PbJumpDecommonClass::DecommonOnly:
+                kind = "decl_decommon_only"; ++ctx.counters.n_jt_decommon_only; break;
+            case NetworkProductEmitter::PbJumpDecommonClass::Both:
+                kind = "decl_both";          ++ctx.counters.n_jt_both;          break;
+            case NetworkProductEmitter::PbJumpDecommonClass::RawOnlySuppressed:
+                kind = "raw_only_suppressed"; ++ctx.counters.n_jt_raw_only;     break;
+            case NetworkProductEmitter::PbJumpDecommonClass::FallbackRaw:
+                kind = "fallback_raw";       ++ctx.counters.n_jt_fallback_raw;  break;
+        }
+        traces.emitEvent(se.time, "PB_JUMP", kind, e.sat, "",
+                         e.decommon_m, e.threshold_m,
+                         e.declared ? "declare" : "hold",
+                         fmt::format("sig={} raw_dpb={:.6f} c_s={:.6f} decommon_dpb={:.6f} "
+                                     "bar={:.6f} n_med={}",
+                                     e.signal, e.raw_delta_m, e.common_m, e.decommon_m,
+                                     e.threshold_m, e.population));
+    }
     // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
     // realized pivots) every N seconds of PRODUCT time, and additionally on any
     // epoch whose emit carried a datum change (markDatumChange fired above), so a

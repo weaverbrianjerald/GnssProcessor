@@ -135,6 +135,16 @@ struct SbasisContract {
     /// Serialized as an optional trailing @c discfrac= S-line field ONLY when > 0,
     /// so a legacy (flat-metre) producer writes the S line byte-for-byte.
     double            disc_threshold_frac_cycles{0.0};
+    /// Card JT (@c network.disc_jump_test_decommon): whether the producer's PHASE
+    /// jump test screened the DE-COMMONED step (raw ΔPB minus the median ΔPB over
+    /// the satellites emitted on that signal at both epochs) rather than the raw
+    /// one — the SEVENTH replay-emitter construction parameter.  A consumer
+    /// replaying with the other setting mis-counts discontinuities on exactly the
+    /// cells a frame move hid or minted, so @c makeReplayEmitter applies it and
+    /// @c checkContract compares it.  Serialized as an optional trailing
+    /// @c discdecom=1 S-line field ONLY when armed, so every pre-JT producer writes
+    /// the S line byte-for-byte.
+    bool              disc_jump_test_decommon{false};
     /// Whether the producer's emitter maintained the per-satellite CLOCK
     /// discontinuity counter (A2).  Together with @c disc_threshold_m this fully
     /// determines the @c NetworkProductEmitter construction, so a consumer can

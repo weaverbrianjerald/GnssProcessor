@@ -3054,6 +3054,17 @@ namespace GnssProcessor {
         // header; 0 rows with non-zero epochs is impossible by construction.
         long long n_cst_epochs = 0;  ///< consumer epochs that contributed >= 1 row
         long long n_cst_rows   = 0;  ///< (satellite, raw phase signal) rows written
+        // Card JT (network.disc_jump_test_decommon) — the four declaration classes of
+        // the DE-COMMONED phase jump test, invariant #7's identities counted (the
+        // per-cell PB_JUMP rows carry sat / signal / raw dPB / c_s / de-commoned dPB).
+        // All four stay 0 on an OFF run.  `decommon_only` is the class the raw test
+        // MISSED (a frame move hid a real per-satellite step); `raw_only` is the class
+        // it MINTED (the frame moved, this satellite did not).  A run with 0 in both
+        // is a knob that changed nothing, however clean the log reads.
+        long long n_jt_decommon_only = 0;  ///< de-commoned declared, raw would NOT
+        long long n_jt_both          = 0;  ///< both tests declared
+        long long n_jt_raw_only      = 0;  ///< raw would have declared, de-commoned did NOT
+        long long n_jt_fallback_raw  = 0;  ///< signal population below kDiscDecommonMinSats ⇒ raw result stands
         // Prioritized-datum drop-and-heal observability: epochs where the gate threw and the
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).

@@ -17,6 +17,7 @@
 #include "rinex/MultiRinexSync.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkEmitRebase.hpp"   // Card 4 (M1) phase D: emit-layer frame re-base
+#include "products/NetworkProductEmitter.hpp" // Card JT: kDiscDecommonMinSats for the run-end line
 #include "products/NetworkPbEmitFilter.hpp" // M5 prereq: PB emission-continuity filter
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
@@ -5649,6 +5650,21 @@ int networkTeardown(
             log->info("  per-sat consumer trace    : {} rows over {} consumer epoch(s) -> {}",
                       ctx.counters.n_cst_rows, ctx.counters.n_cst_epochs,
                       (log_dir_ / "closed_loop_sat_trace.csv").string());
+        }
+        // Card JT: the de-commoned phase jump test's four declaration classes —
+        // invariant #4's ON-path telemetry.  Printed ONLY when armed, so an OFF run's
+        // summary is byte-identical.  `decommon_only` is the population the raw test
+        // MISSED and `raw_only` the population it MINTED: 0 in BOTH means the knob is
+        // inert on this lineage no matter how clean the run reads.
+        if (config_.getNetworkConfig().disc_jump_test_decommon) {
+            const auto& k = ctx.counters;
+            log->info("  pb jump de-common (JT)    : decl_decommon_only {} (the raw test MISSED "
+                      "these) / decl_both {} / raw_only_suppressed {} (the raw test MINTED "
+                      "these) / fallback_raw {} (signal population < {}); declared by this test "
+                      "{}",
+                      k.n_jt_decommon_only, k.n_jt_both, k.n_jt_raw_only, k.n_jt_fallback_raw,
+                      NetworkProductEmitter::kDiscDecommonMinSats,
+                      k.n_jt_decommon_only + k.n_jt_both);
         }
         // Card CC (A): the declared-step carry counters — the consumer's ON-path
         // telemetry (invariant #4).  Printed only when the knob is armed, so an
