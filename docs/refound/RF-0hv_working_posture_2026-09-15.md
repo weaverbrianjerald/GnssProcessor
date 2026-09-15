@@ -173,6 +173,14 @@ Graders re-used unchanged: `scripts/rf2d_grade.py`, `scripts/rf_ign_level_read.p
    40–60 epochs.  The instrument it needs (`CLK_ANCHOR` decouple SIZE vs consumer step, with a size-matched null) does not exist yet.
    ⚠ This run adds a second reason to build it: `cta_decouple` 189 → 409 and `CLK_STEP` 0 → 9 on the refused arm say the clock anchor is
    the channel the harvest era discharges through, so the decouple instrument serves both cards.
+   ⚠ **UPDATE 2026-09-15 — the instrument was built and it REFUTES the co-incidence** ([EV6](EV6_hour6_decouple_event_2026-09-15.md),
+   `scripts/ev6_event_read.py`).  Decouple SIZE does not predict consumer damage (corr 0.135; count 0.212 over the run's 19 decouple
+   epochs), the two LARGEST decouples (23 and 21 satellites, 1.33 and 1.26 m of de-commoned wire excursion) are harmless, and at
+   TOW 279300 **none of the 8 decoupled-and-declared satellites is in the consumer's sky**.  The wire is quieter through the ramp
+   (cumulative de-commoned IF-code drift 0.044 m) than through the consumer's best hour (0.726 m).  What EV6 does close is a separate wire
+   -contract defect on the same mechanism — the withdraw-and-re-solve emits a one-epoch excursion, declares it, and reverses ~91 % of it
+   the next epoch with **0 of 130 returns declared** — and, for the 276810 step only, names the phase-bias frame at the loss of the
+   `PB:G23:L1W` column and the G23 anchor as the candidate the decouple is not.  The 279300 ramp stays unattributed.
 4. **RF-2c** — the clock LEVEL, still owed on the re-founding's own list.
 5. **RF-3** — QC on code rows and a wire contract that declares every step.
 6. **RF-PD-fix's and RF-IGN's own open items are untouched** — the 9 residual non-finite-input `addStation` rejections, the carry rows
