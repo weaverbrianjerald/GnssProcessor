@@ -685,7 +685,10 @@ NetworkSolPrepResult networkSolPrep(
     // the condition for the identical reason — its first validation arm queued the
     // mark into a run with ura_retro and mark_refsat both off, and the mark
     // silently never landed (the exact leak this comment predicts).
-    if ((ura_retro || mark_refsat || datum_detect) && !ura_retro_sats.empty()) {
+    // RF-2 item 2: a DECLARED anchor handover also queues its satellite here, so the
+    // held-basis arm needs no second drain — the knob joins the arming OR.
+    if ((ura_retro || mark_refsat || datum_detect || ctx.knobs.pd_held_basis)
+        && !ura_retro_sats.empty()) {
         // RT0-5 seam (P0-1: the R record must describe bumps that LANDED in the
         // emitted product): a flagged sat ABSENT from this epoch's emission —
         // its constellation quarantined above, or the sat itself vanished —

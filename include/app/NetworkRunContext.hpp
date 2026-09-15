@@ -154,6 +154,13 @@ namespace GnssProcessor {
         bool amb_float_declared_handover{};
         /// RF-1 §7.4: network.trace_amb_state — the per-arc carry-state trace
         /// (@c network_amb_state.csv).  Measure-only; default OFF ⇒ no file, no rows.
+        /// RF-2 item 1: network.phase_datum_held_basis, already ANDed with float_kf and
+        /// phase_datum_prioritized by the loader's interlocks.
+        bool pd_held_basis{};
+        /// RF-2 item 3: network.phase_anchor_min_age_ep (0 = no age gate).
+        int  pa_min_age_ep{};
+        /// RF-2 item 3: network.phase_anchor_flag_quiet_ep (0 = no quiet-window gate).
+        int  pa_flag_quiet_ep{};
         bool trace_amb_state{};
         /// RF-1 §7.4: network.trace_amb_state_every — epoch stride of the TRAJECTORY rows
         /// (>= 1).  EVENT rows ignore it.
@@ -1276,6 +1283,20 @@ namespace GnssProcessor {
         /// re-reference (the datum block).  Cleared by the drain, so an epoch that never
         /// reaches it cannot leak rows into the next one.  Empty on every unarmed run.
         std::vector<AmbStateRow> amb_state_rows;
+        /// RF-2 item 1 — THE HELD S-BASIS LEDGER: ambiguity key -> the FROZEN datum
+        /// (@ref PhaseBasisEntry).  Written ONCE per anchor tenure by the election and
+        /// read by it on every subsequent epoch of that tenure, so the pinned value is a
+        /// CONSTANT rather than something re-derived from a carry that moves.  Empty on
+        /// every run without network.phase_datum_held_basis.
+        std::map<std::string, PhaseBasisEntry> phase_basis;
+        /// RF-2 items 3 + 4 — (station idx, ambiguity key) -> the loop epoch of that
+        /// arc's LAST screen flag: a slip response (the latched free set), a T4 / T3
+        /// refloat, a gross-LOS declaration.  The election's quiet-window gate reads it
+        /// to refuse a recently-flagged candidate the basis, and the sticky branch reads
+        /// it to DEPOSE a basis holder that has just been flagged — which is item 4's
+        /// "the handover happens BEFORE the response acts on that column".  Only ever
+        /// written when the held basis is armed.
+        std::map<std::pair<int, std::string>, long long> amb_flag_ep;
         /// SIM-ONLY ORACLE slip response (network.cycle_slip.oracle_relevel,
         /// include/slip/NetworkSlipOracle.hpp): the run-scope truth table, the
         /// per-arc application ledger and the run-end counters.  NULL on every
@@ -2602,6 +2623,16 @@ namespace GnssProcessor {
         long long n_amb_sts_identity      = 0;  ///< …families whose Δ was exactly 0 (already in the new basis — a station re-pinning itself): the transform is the identity, and the family is still OWNED (no erase).
         long long n_amb_sts_refused_cold  = 0;  ///< handovers REFUSED by the transform because the election was COLD (no carried level for the successor ⇒ no new basis to express the family in): the ERASE stands, which is the honest limit of step 5 and RF-2's subject.
         long long n_amb_sts_refused_no_level = 0; ///< …refused because the ledger said continuous but the incoming anchor held no live carry this epoch — a ledger/carry disagreement, counted apart from a cold election.
+        // RF-2 — the HELD S-BASIS's ON-path telemetry (invariant #4).
+        long long n_pb_basis_held          = 0;  ///< family-epochs re-pinned at their FROZEN basis value (the held property in action).
+        long long n_pb_basis_elected       = 0;  ///< new basis entries written — first sightings plus handovers.
+        long long n_pb_basis_cold          = 0;  ///< …of which COLD (no level to inherit): the new basis is 0 and the emitted phase bias steps by the outgoing value.
+        long long n_pb_basis_refuse_young  = 0;  ///< candidate-family evaluations refused by the arc-AGE gate (never a newborn low arc).
+        long long n_pb_basis_refuse_flagged= 0;  ///< …refused by the screen-flag QUIET window (item 3), which is also item 4's depose trigger on the incumbent.
+        long long n_pb_basis_rank_changed  = 0;  ///< elections whose ELEVATION rank picked a different station than the coverage order would have, plus incumbents deposed by a flag.
+        long long n_pb_basis_declared      = 0;  ///< RF-2 item 2: handovers DECLARED to the consumer (markSatDiscontinuity via the retro-bump queue) — continuous and cold alike.
+        long long n_pb_basis_declared_cold = 0;  ///< …of which cold, i.e. the wire's phase bias actually stepped.
+        long long n_pb_basis_value_drift   = 0;  ///< ⚠ mid-tenure basis-value changes REFUSED — the held property's own alarm.  Must read 0.
         long long n_amb_sts_selfcheck_fail = 0; ///< transforms whose exactness self-check FAILED: the incoming anchor's carried level did not read 0 within kStsExactTolM afterwards.  A transform defect, never noise — WARNed with identities.
         long long n_amb_block_fallback    = 0;  ///< RF-1 step 3 risk #3: station-epochs whose joint block fell back to per-column rows — a VEHICLE CHANGE on one station-epoch, which is why it is counted rather than noted.  0 in this build.
         long long n_amb_state_rows        = 0;  ///< network_amb_state.csv: TRAJECTORY rows written (one per carried (station,sat,signal) per traced epoch).

@@ -81,6 +81,14 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.amb_birth_var_floor = config_.getNetworkConfig().amb_float_birth_var_m2;
     k.amb_float_q_m2s = config_.getNetworkConfig().amb_float_q_m2s;
     k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
+    // RF-2 item 1: the held S-BASIS, already interlocked at load against float_kf and
+    // phase_datum_prioritized.  The AND with the vehicle is repeated here so a future
+    // loader edit cannot arm it on the level vehicle through this path.
+    k.pd_held_basis = config_.networkPhaseDatumHeldBasis()
+                      && config_.getNetworkConfig().ambiguity_vehicle
+                             == NetworkAmbiguityVehicle::FloatKf;
+    k.pa_min_age_ep    = config_.networkPhaseAnchorMinAgeEp();
+    k.pa_flag_quiet_ep = config_.networkPhaseAnchorFlagQuietEp();
     k.trace_amb_state = config_.getNetworkConfig().trace_amb_state;
     k.trace_amb_state_every =
         std::max(1, config_.getNetworkConfig().trace_amb_state_every);

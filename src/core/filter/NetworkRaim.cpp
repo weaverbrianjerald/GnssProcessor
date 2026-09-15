@@ -1014,6 +1014,14 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             }
                         }
                         {
+                            // RF-2 items 3 + 4: a T4 attribution flag STAMPS the arc, so
+                            // the next election refuses it the S-basis for flag_quiet_ep
+                            // epochs and — when it IS the basis holder — deposes it
+                            // BEFORE any response acts on the column.  Stamped here, at
+                            // the flag, not at the response: the two are different edges.
+                            if (ctx.knobs.pd_held_basis)
+                                ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
+                                    static_cast<long long>(ctx.counters.n_loop_epochs);
                             const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
                             const auto lane_lit = local_carry.find(lane_lk);
                             if (lane_lit != local_carry.end()) {
@@ -1225,6 +1233,10 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                     // not depend on the deferred pending-reseed skip path.  The mark
                     // is also set (belt-and-suspenders / cleared by the next stash).
                     {
+                        // RF-2 items 3 + 4 — see the attribution site.
+                        if (ctx.knobs.pd_held_basis)
+                            ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
+                                static_cast<long long>(ctx.counters.n_loop_epochs);
                         const auto lane_lk =
                             std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
                         const auto lane_lit = local_carry.find(lane_lk);

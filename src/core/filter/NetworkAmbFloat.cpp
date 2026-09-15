@@ -104,6 +104,13 @@ void networkAmbFloatApplyDrops(
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
         const auto parts = StateKeys::parseAmbiguityKey(amb_key);
         if (!parts) continue;
+        // RF-2 items 3 + 4: every screen flag stamps the arc, whether or not it has a
+        // carry to drop.  The election's quiet window reads it to refuse a
+        // recently-flagged candidate the S-basis, and the sticky branch reads it to
+        // DEPOSE a flagged basis holder — which is why the stamp must land even when
+        // there is no carry here (a flagged arc with no carry is still not a datum).
+        if (ctx.knobs.pd_held_basis)
+            ctx.carry.amb_flag_ep[{sta, amb_key}] = now_ep;
         const auto it = local_carry.find(
             std::make_tuple(sta, parts->satellite, parts->signal));
         if (it == local_carry.end()) continue;      // nothing carried ⇒ nothing to drop

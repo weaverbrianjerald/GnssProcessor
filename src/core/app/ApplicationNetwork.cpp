@@ -1800,6 +1800,27 @@ int Application::runNetwork() {
                     cand_usable.slipped_ambs = &carry_slipped_ambs;
                     cand_usable.local_carry  = &ctx.carry.local_carry;
                 }
+                // RF-2 (docs/refound/RF-1_steps345_mechanism_2026-09-15.md): the phase
+                // datum as a HELD S-BASIS.  Assembled here because this scope owns the
+                // ledger, the carry, the flag map and this epoch's elevations; `on` is
+                // false on every unarmed run and the pointer below is then null.
+                PhaseHeldBasis held_basis;
+                std::vector<std::map<std::string, double>> pd_elev_of;
+                held_basis.on = ctx.knobs.pd_held_basis;
+                if (held_basis.on) {
+                    held_basis.min_age_ep    = ctx.knobs.pa_min_age_ep;
+                    held_basis.flag_quiet_ep = ctx.knobs.pa_flag_quiet_ep;
+                    held_basis.now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+                    held_basis.basis   = &ctx.carry.phase_basis;
+                    held_basis.flag_ep = &ctx.carry.amb_flag_ep;
+                    held_basis.carry   = &ctx.carry.local_carry;
+                    // This epoch's LOS elevations, the election's rank key (item 3).
+                    pd_elev_of.assign(modeled.size(), {});
+                    for (std::size_t mi = 0; mi < modeled.size(); ++mi)
+                        for (const auto& mo : modeled[mi])
+                            pd_elev_of[mi][mo.satellite] = mo.elevation;
+                    held_basis.elev = &pd_elev_of;
+                }
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent,
@@ -1822,7 +1843,22 @@ int Application::runNetwork() {
                                           && !ctx.inject.anchor_now.empty())
                                          || !ctx.inject.anchor_now_slip.empty()
                                              ? &ctx.inject : nullptr,
-                                         &cand_usable);
+                                         &cand_usable,
+                                         // RF-2: the HELD S-BASIS.  Null unless armed,
+                                         // so every branch it gates is unreachable and
+                                         // the election is byte-identical.
+                                         held_basis.on ? &held_basis : nullptr);
+                // RF-2: fold the election's write-back into the run counters.
+                if (held_basis.on) {
+                    auto& HC = ctx.counters;
+                    HC.n_pb_basis_held      += held_basis.n_held;
+                    HC.n_pb_basis_elected   += held_basis.n_elected;
+                    HC.n_pb_basis_cold      += held_basis.n_elected_cold;
+                    HC.n_pb_basis_refuse_young   += held_basis.n_refused_young;
+                    HC.n_pb_basis_refuse_flagged += held_basis.n_refused_flagged;
+                    HC.n_pb_basis_rank_changed   += held_basis.n_rank_changed;
+                    HC.n_pb_basis_value_drift    += held_basis.n_value_drift;
+                }
                 // §14.5 SPLIT-REFERENCED SATELLITE CENSUS.  ALWAYS ON and
                 // knob-independent (invariant #4): how many satellites now have
                 // their per-frequency phase-bias families anchored at DIFFERENT
@@ -1964,11 +2000,55 @@ int Application::runNetwork() {
                     // ownership of are REMOVED from the erase set below — transformed or
                     // erased, never both — and a COLD handover (no Δ) keeps its erase,
                     // which is the honest limit of this step and RF-2's subject.
+                    // ---- RF-2 item 2: EVERY HANDOVER DECLARED --------------------
+                    // A handover is a change of the S-basis value, so the emitted
+                    // satellite phase bias steps by exactly the difference — and the
+                    // consumer must be TOLD, whether the handover was continuous or
+                    // cold.  Today only the continuous half is even expressible (as
+                    // step 5's S-transform); the cold half — 55 of 81 field handovers
+                    // — steps the wire with nothing but a network-wide erase to show
+                    // for it, which is precisely why the field's D_phase churns.
+                    //
+                    // The declaration rides `ura_retro_sats`, the retro-bump queue
+                    // NetworkSolPrep drains into markSatDiscontinuity with
+                    // mark-==-land semantics: a satellite withheld this epoch stays
+                    // PENDING and is marked at its next ACTUAL emission, which is the
+                    // epoch the consumer needs the reset.
+                    if (ctx.knobs.pd_held_basis)
+                        for (const auto& h : handovers) {
+                            const auto pk = StateKeys::parseAmbiguityKey(h.amb);
+                            if (!pk) continue;
+                            const auto be = ctx.carry.phase_basis.find(h.amb);
+                            const double dlt =
+                                (be != ctx.carry.phase_basis.end())
+                                    ? (be->second.value - be->second.prev_value) : 0.0;
+                            ctx.carry.ura_retro_sats.insert(pk->satellite);
+                            ++ctx.counters.n_pb_basis_declared;
+                            if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
+                            traces.emitEvent(se.time, "STRANSFORM",
+                                             h.continuous ? "sts_applied" : "sts_cold_declared",
+                                             h.amb, h.to, dlt, std::nullopt,
+                                             h.continuous ? "s_transform" : "re_realize",
+                                             fmt::format("from={};basis={:.6f};prev={:.6f}",
+                                                         h.from.empty() ? std::string("(none)")
+                                                                        : h.from,
+                                                         be != ctx.carry.phase_basis.end()
+                                                             ? be->second.value : 0.0,
+                                                         be != ctx.carry.phase_basis.end()
+                                                             ? be->second.prev_value : 0.0));
+                        }
                     std::set<std::pair<std::string, std::string>> pa_sts_handled;
                     networkAmbFloatDeclaredHandover(ctx, log, traces, stations, handovers,
                                                     se.time.week, se.time.tow,
                                                     pa_sts_handled);
                     for (const auto& fam : pa_sts_handled) pa_reref.erase(fam);
+                    // RF-2 item 2: with every handover DECLARED and the basis HELD, the
+                    // network-wide erase is retired — the carries are not stale, they are
+                    // expressed against a datum whose move the consumer has been told
+                    // about.  The erase counter must therefore read 0 on an armed arm;
+                    // it is left in the code (not deleted) so the OFF path and every
+                    // other datum realization keep it verbatim.
+                    if (ctx.knobs.pd_held_basis) pa_reref.clear();
                 }
                 if (!pa_reref.empty()) {
                     // RF-1 §7.4 D3: on an armed trace, take the entries before they

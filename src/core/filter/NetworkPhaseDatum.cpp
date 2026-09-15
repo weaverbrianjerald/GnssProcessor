@@ -249,8 +249,54 @@ void networkElectPhaseAnchors(
         std::set<std::pair<std::string, std::string>>* reref_out,
         double max_var_ratio,
         const NetworkInjectState* inject,
-        const AnchorCandidacyUsable* cand_usable) {
+        const AnchorCandidacyUsable* cand_usable,
+        PhaseHeldBasis* held) {
     const auto& usable_keys = cnd.usable_keys;
+    // RF-2 — the HELD S-BASIS.  Null (the default) on every unarmed run, so every
+    // branch below that tests it is unreachable and the election is byte-identical.
+    const bool held_on = held && held->on && held->basis;
+    /// RF-2 item 3: this candidate's LOS elevation (deg) for @p amb, or −1 when the
+    /// elevation map is absent / has no entry — which sorts LAST, so a station whose
+    /// elevation we do not know never outranks one we do.
+    const auto elevOf = [&](std::size_t i, const std::string& amb) -> double {
+        if (!held_on || !held->elev || i >= held->elev->size()) return -1.0;
+        const auto p = StateKeys::parseAmbiguityKey(amb);
+        if (!p) return -1.0;
+        const auto it = (*held->elev)[i].find(p->satellite);
+        return it == (*held->elev)[i].end() ? -1.0 : it->second;
+    };
+    /// RF-2 item 3 / item 4: may station @p i hold the S-BASIS for @p amb?  Two gates,
+    /// both from the card: the arc must be OLDER than min_age (never a newborn low arc —
+    /// a leg born at a re-admission carries its code-level birth error, and the pin
+    /// stamps that in at the gauge weight), and it must not have been flagged by ANY
+    /// screen within flag_quiet_ep (the datum must be the quietest arc available, not
+    /// merely the oldest).  Counted, so a family with no qualifying candidate is visible
+    /// rather than silently falling back.
+    const auto basisEligible = [&](std::size_t i, const std::string& amb) -> bool {
+        if (!held_on) return true;
+        if (held->min_age_ep > 0 && held->carry) {
+            const auto p = StateKeys::parseAmbiguityKey(amb);
+            if (!p) return false;
+            const auto it = held->carry->find(
+                std::make_tuple(static_cast<int>(i), p->satellite, p->signal));
+            // No carry at all is a NEWBORN by definition — refused.  An entry with a
+            // non-positive birth stamp reads MATURE (the restored-arc convention).
+            if (it == held->carry->end()
+                || localCarryYoung(it->second, held->now_ep, held->min_age_ep)) {
+                ++held->n_refused_young;
+                return false;
+            }
+        }
+        if (held->flag_quiet_ep > 0 && held->flag_ep) {
+            const auto ft = held->flag_ep->find({static_cast<int>(i), amb});
+            if (ft != held->flag_ep->end()
+                && held->now_ep - ft->second < held->flag_quiet_ep) {
+                ++held->n_refused_flagged;
+                return false;
+            }
+        }
+        return true;
+    };
     const auto& cand_set    = cnd.cand_set;
     const auto& union_keys  = cnd.union_keys;
     const auto& cover       = cnd.cover;
@@ -497,7 +543,22 @@ void networkElectPhaseAnchors(
             if (it != anchor_incumbent.end())
                 for (size_t i = 0; i < stations.size(); ++i)
                     if (present[i] && stations[i].name == it->second
-                        && usable_keys[i].count(amb) && !banned_sta(i)) { anchor = i; break; }
+                        && usable_keys[i].count(amb) && !banned_sta(i)) {
+                        // RF-2 items 3 + 4: "an incumbent is not deposed WHILE IT
+                        // QUALIFIES" — so stickiness now asks the basis question too.
+                        // A T4 / slip / gross flag on the BASIS ambiguity therefore
+                        // deposes the holder HERE, at the election, which runs BEFORE
+                        // PASS B and before any response acts on that column: the
+                        // handover happens first and the response then applies to the
+                        // ex-anchor as an ordinary float state (item 4).  Without this
+                        // the datum is re-realized in place by whatever the response
+                        // does to it, which is the churn the card names.
+                        if (held_on && !basisEligible(i, amb)) {
+                            ++held->n_rank_changed;
+                            break;      // fall through to a fresh election
+                        }
+                        anchor = i; break;
+                    }
         }
         // INC-1: on a REATTACH prefer, in the existing coverage rank order, a
         // candidate whose arc has actually converged; only if none has does the
@@ -596,6 +657,30 @@ void networkElectPhaseAnchors(
                 first_unusable.clear();
             }
         }
+        // RF-2 item 3: THE ELECTION.  "the successor is the tracking station with the
+        // HIGHEST ELEVATION among arcs older than min_age and not flagged by any screen
+        // within flag_quiet_ep."  Runs only when stickiness did not keep an incumbent,
+        // i.e. exactly on the elections that set a new basis; the coverage-ranked sweeps
+        // below stay in place as the fallback for a family with no qualifying candidate,
+        // so a held-basis run never withholds a family it would otherwise have pinned.
+        if (held_on && anchor == static_cast<size_t>(-1)) {
+            const auto cit = cand.find(c);
+            if (cit != cand.end()) {
+                size_t best = static_cast<size_t>(-1);
+                double best_el = -2.0;
+                for (size_t i : cit->second) {
+                    if (!usable_keys[i].count(amb) || banned_sta(i)) continue;
+                    if (!basisEligible(i, amb)) continue;
+                    const double el = elevOf(i, amb);
+                    if (el > best_el) { best_el = el; best = i; }
+                }
+                if (best != static_cast<size_t>(-1)) {
+                    const auto tp = todayPick();
+                    if (tp.first != best) ++held->n_rank_changed;
+                    anchor = best;
+                }
+            }
+        }
         if (anchor == static_cast<size_t>(-1)) {
             const auto pick = todayPick();
             anchor = pick.first;
@@ -641,6 +726,33 @@ void networkElectPhaseAnchors(
             if (tgt != anchor_pin_target.end()) {
                 target = tgt->second;
                 new_target[amb] = target;
+            }
+        }
+        // ---- RF-2 item 1: THE HELD S-BASIS ------------------------------------------
+        // A RETAINED incumbent re-pins at the value FROZEN AT ITS ELECTION, read from the
+        // basis ledger rather than re-derived.  That is the whole card in one branch: on
+        // the float_kf vehicle every OTHER ambiguity is a live state, and the one that
+        // realizes the satellite phase-bias datum must not be — a datum that converges,
+        // drops and is re-flagged is a datum that re-realizes, and every re-realization
+        // is a phase-bias step the consumer re-converges through (the field measured T4
+        // hitting the anchor 454 times an hour).
+        //
+        // It supersedes R2's `anchor_pin_target` above for two reasons the counters keep
+        // honest: that map is populated ONLY by continuous handovers, so a COLD tenure
+        // silently re-derives 0.0 every epoch and has no record of what it holds; and it
+        // is re-written each epoch, so nothing can detect a mid-tenure value change.  The
+        // ledger is written ONCE per tenure, and `n_value_drift` counts any attempt to
+        // move it — which must read 0 on every armed run.
+        bool held_this_epoch = false;
+        if (held_on && !is_handover && inc != anchor_incumbent.end()) {
+            const auto be = held->basis->find(amb);
+            if (be != held->basis->end() && be->second.station == stations[anchor].name) {
+                if (target != be->second.value && new_target.count(amb))
+                    ++held->n_value_drift;   // the property's own alarm; expected 0
+                target = be->second.value;
+                new_target[amb] = target;
+                held_this_epoch = true;
+                ++held->n_held;
             }
         }
         if (is_handover && handover) {
@@ -720,6 +832,32 @@ void networkElectPhaseAnchors(
             dir->n_cand_skipped += n_cand_skipped;
             if (dir->cand_first_unusable.empty())
                 dir->cand_first_unusable = first_unusable;
+        }
+        // ---- RF-2 items 1 + 2: WRITE THE BASIS LEDGER ------------------------------
+        // Every election that did NOT re-pin a retained incumbent at its frozen value is
+        // a NEW BASIS: a first sighting, or a handover.  The entry freezes `target` for
+        // the whole of the new anchor's tenure and records what it REPLACED, which is the
+        // Δ item 2 declares to the consumer — for a CONTINUOUS handover Δ is (by
+        // construction of the continuous branch) ~0 and the family does not step, while
+        // for a COLD one the new basis is 0 against an outgoing basis of `prev_value`, so
+        // the emitted phase bias steps by exactly that difference.  Recording it for BOTH
+        // is the card's "every handover declared": today only the continuous half is
+        // expressible as an S-transform, and the cold half — 55 of 81 field handovers —
+        // steps the wire with nothing but an erase to show for it.
+        if (held_on) {
+            auto& be = (*held->basis)[amb];
+            if (!held_this_epoch) {
+                PhaseBasisEntry ne;
+                ne.station     = stations[anchor].name;
+                ne.value       = target;
+                ne.elected_ep  = held->now_ep;
+                ne.cold        = is_handover && !continuous;
+                ne.prev_value  = be.station.empty() ? 0.0 : be.value;
+                ne.prev_station= be.station;
+                be = ne;
+                ++held->n_elected;
+                if (ne.cold) ++held->n_elected_cold;
+            }
         }
         stations[anchor].pinned_amb_targets[amb] = target;
         if (is_handover && handovers_out) {
