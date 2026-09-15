@@ -226,13 +226,71 @@ public:
     ///        @ref kDiscDecommonMinSats falls back to the RAW test (counted).
     ///        Default false ⇒ byte-identical.  Travels in the S contract
     ///        (@c discdecom=) for @c makeReplayEmitter.
+    /// @param disc_mark_scope_channel Card MS (@c network.disc_mark_scope):
+    ///        when true a per-satellite discontinuity mark bumps ONLY the
+    ///        generations of the CHANNELS the marking site says moved
+    ///        (@ref markSatDiscontinuity's @c channels argument), instead of the
+    ///        clock, code-bias AND phase-bias generation of that satellite alike.
+    ///        A clock-only guard (the Q3 anchor decouple, the CLK-R step test)
+    ///        therefore stops declaring a phase-bias step that did not happen —
+    ///        measured on RF-0hv: 117 of 390 declared consumer cell-epochs were
+    ///        EMPTY (< 0.02 m of PB motion, CST §7.1).  The emitter's own
+    ///        per-(sat, signal) jump tests are untouched and remain the backstop
+    ///        for a genuine re-realization on a channel a mark did not name.
+    ///        Default false = the legacy satellite-wide scope (byte-identical).
+    ///        Travels in the S contract (@c discscope=) for @c makeReplayEmitter.
     explicit NetworkProductEmitter(double disc_threshold_m = kDefaultDiscThresholdM,
                                    bool emit_clock_disc = false,
                                    double staleness_horizon_s = 0.0,
                                    bool code_bias_jump_test = false,
                                    bool clock_disc_on_set_change = false,
                                    double disc_threshold_frac_cycles = 0.0,
-                                   bool disc_jump_test_decommon = false);
+                                   bool disc_jump_test_decommon = false,
+                                   bool disc_mark_scope_channel = false);
+
+    /// Card MS: the product CHANNELS a per-satellite discontinuity mark applies
+    /// to.  A bit mask so a marking site that genuinely moves two channels names
+    /// both, and two sites marking the same satellite in one epoch OR together.
+    enum DiscChannel : unsigned {
+        kDiscChanClock     = 1u << 0,  ///< The satellite CLOCK generation (C record).
+        kDiscChanCodeBias  = 1u << 1,  ///< The satellite CODE-BIAS generations (B records).
+        kDiscChanPhaseBias = 1u << 2,  ///< The satellite PHASE-BIAS generations (P records).
+        /// Every channel — the legacy satellite-wide scope, and what an
+        /// un-migrated caller (including a product REPLAY, whose @c R record
+        /// carries no channel set) asks for by omitting the argument.
+        kDiscChanAll = kDiscChanClock | kDiscChanCodeBias | kDiscChanPhaseBias
+    };
+
+    /// Card MS: one mark this emit did NOT apply to a channel because the mark's
+    /// scope excluded it — invariant #7's identity for the DECOUPLING edge.
+    struct MarkScopeEvent {
+        std::string sat;              ///< RINEX satellite id.
+        unsigned    marked{0};        ///< The channel mask the marking sites asked for.
+        DiscChannel suppressed{kDiscChanClock};  ///< The channel that was NOT bumped.
+    };
+
+    /// Card MS: the suppressed marks of the LAST @ref emitToStore call (cleared at
+    /// the top of every emit).  Always EMPTY under the legacy satellite scope, so an
+    /// OFF run allocates nothing and the driver's drain is a no-op.
+    const std::vector<MarkScopeEvent>& markScopeEvents() const { return mark_scope_events_; }
+
+    /// Card MS: how many marks this emit APPLIED to each channel — index with
+    /// @ref DiscChannel (clock / code-bias / phase-bias).  Cleared per emit; always
+    /// zero under the legacy satellite scope (nothing is counted there).
+    struct MarkChannelTally {
+        long long clk{0};   ///< Satellite-epochs whose CLOCK generation a mark bumped.
+        long long cb{0};    ///< (sat, signal) code-bias cells a mark bumped.
+        long long pb{0};    ///< (sat, signal) phase-bias cells a mark bumped.
+    };
+    /// Card MS: the applied-mark tally of the LAST @ref emitToStore call.
+    const MarkChannelTally& markChannelTally() const { return mark_channel_tally_; }
+
+    /// Card MS: whether the per-channel mark scope is armed on this emitter.
+    bool discMarkScopeChannel() const { return disc_mark_scope_channel_; }
+
+    /// Card MS: stable lowercase name of one channel ("clk" / "cb" / "pb"), for
+    /// trace events and tests.
+    static const char* discChannelName(DiscChannel c);
 
     /// Card JT: minimum number of fresh-baseline satellites a SIGNAL must carry
     /// before its de-commoned median is trusted as a frame estimate.  Below it the
@@ -303,7 +361,18 @@ public:
     /// whole-constellation datum re-reference) this steps ONLY the named satellites'
     /// phase, code, and clock counters — a per-satellite reset, not a
     /// constellation-wide reset storm (P1-3).  Applies to exactly the next emit.
-    void markSatDiscontinuity(const std::set<std::string>& satellites);
+    ///
+    /// @param satellites The satellites to mark.
+    /// @param channels   Card MS: which product channels this mark reports
+    ///        (a bit-or of @ref DiscChannel).  Honoured ONLY when the emitter was
+    ///        constructed with @c disc_mark_scope_channel; under the legacy
+    ///        satellite scope every mark bumps all three generations exactly as
+    ///        before, so passing a narrower mask is byte-identical there.  The
+    ///        default @ref kDiscChanAll is what an un-migrated caller — and a
+    ///        product REPLAY, whose @c R record carries no channel set — asks for.
+    ///        Two sites marking the same satellite in one epoch OR their masks.
+    void markSatDiscontinuity(const std::set<std::string>& satellites,
+                              unsigned channels = kDiscChanAll);
 
     /// RS-4 (SPEC_event_harness §21.9): one constellation's tally in a
     /// @ref pbSeamCensus — how many of its phase-bias keys the jump test WOULD
@@ -436,6 +505,11 @@ private:
     /// rather than the raw one.  Default false = the legacy frame-blind test
     /// (byte-identical).  Travels in the S contract (@c discdecom=).
     bool   disc_jump_test_decommon_{false};
+    /// Card MS: bump only the channels a mark named.  Default false = the legacy
+    /// satellite-wide scope (byte-identical).  Travels in the S contract
+    /// (@c discscope=).  Declared here so the ctor's init list stays in
+    /// declaration order.
+    bool   disc_mark_scope_channel_{false};
     /// Card JT: the classified cells of the last emit (empty unless armed).  Per-emit
     /// scratch, deliberately NOT serialized: the de-commoned step is a pure function
     /// of this epoch's emitted biases and @ref last_phase_bias_, so a replay
@@ -465,6 +539,15 @@ private:
     // from the per-constellation forced_bump_consts_ so one flagged satellite does not
     // reset a whole constellation at the consumer.  Cleared each emit.
     std::set<std::string> forced_bump_sats_;
+    /// Card MS: the CHANNEL mask each marked satellite was marked with (a bit-or
+    /// of @ref DiscChannel), kept in step with @ref forced_bump_sats_ and cleared
+    /// with it.  Populated ONLY under @ref disc_mark_scope_channel_, so the legacy
+    /// scope allocates nothing and the emit path never reads it.
+    std::map<std::string, unsigned> forced_bump_chan_;
+    /// Card MS: per-emit scratch — the marks this emit withheld from a channel,
+    /// and the marks it applied.  Both empty/zero under the legacy scope.
+    std::vector<MarkScopeEvent> mark_scope_events_;
+    MarkChannelTally            mark_channel_tally_{};
     std::map<std::string, int>    disc_counter_;    ///< "sat|signal" -> phase discontinuity counter.
     std::map<std::string, double> last_phase_bias_; ///< "sat|signal" -> last emitted phase bias (m).
 

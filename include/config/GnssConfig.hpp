@@ -612,6 +612,31 @@ namespace GnssProcessor {
         ///        See @c RealTimeEngine::carryOnPhaseBiasDisc_.
         bool ssrPhaseBiasDiscCarry() const { return ssr_phase_bias_disc_carry_; }
 
+        /// @brief Card PBT (A): translate the float ambiguity by @c −Δ on EVERY
+        ///        change in the applied SSR phase bias — declared or not — rather
+        ///        than only on a declared one (@c processing.ssr_phase_bias_step_translate,
+        ///        default false = the existing reset / card-CC carry path,
+        ///        byte-identical).  A change in the applied product carries no
+        ///        information about the receiver position, so the phase model stays
+        ///        consistent only if the (sat, signal) ambiguity absorbs it exactly;
+        ///        a move common to every tracked satellite is absorbed uniformly and
+        ///        is exactly consistent.  The closed-loop harness derives it from
+        ///        @c network.closed_loop.pb_step_translate.  When armed it REPLACES
+        ///        both the reset and the card-CC carry reactions, which is what makes
+        ///        a declared step translate exactly once.
+        ///        See @c RealTimeEngine::translatePhaseBiasStep_.
+        bool ssrPhaseBiasStepTranslate() const { return ssr_phase_bias_step_translate_; }
+
+        /// @brief Card PBT (A): the dead band of @ref ssrPhaseBiasStepTranslate — a
+        ///        step at or below this magnitude (m) is left for the filter to
+        ///        absorb as noise and nothing is written to the state
+        ///        (@c processing.ssr_phase_bias_step_translate_eps_m, default 0.005).
+        ///        An EMPTY declaration (a generation bump with no product motion)
+        ///        lands here and therefore costs nothing.
+        double getSsrPhaseBiasStepTranslateEpsM() const {
+            return ssr_phase_bias_step_translate_eps_m_;
+        }
+
         /**
          * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
          *
@@ -7666,6 +7691,8 @@ namespace GnssProcessor {
         bool   enable_ssr_bias_max_age_explicit_{ false };///< RTA-9(a): true iff the user WROTE processing.enable_ssr_bias_max_age (either key form) — lets applyNetworkConsumerProfile arm the gate under bias consumption while respecting an explicit false.
         double ssr_bias_stale_hold_factor_{ 2.0 };        ///< A5: apply-gate drop limit = factor × ssr_bias_max_age_s_ (hold the last bias over sub-limit staleness gaps → no manufactured model step / reset storm); 1.0 = drop exactly at max age.  Only meaningful when enable_ssr_bias_max_age_.
         bool   ssr_phase_bias_disc_carry_{ false };       ///< Card CC (A): carry the float ambiguity across a DECLARED phase-bias step (amb − Δ, value-only) instead of resetting it; OFF = the existing reset path (byte-identical).  Set directly (processing.ssr_phase_bias_disc_carry) or derived from network.closed_loop.pb_disc_carry.
+        bool   ssr_phase_bias_step_translate_{ false };   ///< Card PBT (A): translate the float ambiguity by −Δ on EVERY change in the APPLIED phase bias, declared or not (the 451 undeclared > 0.10 m steps of EV6 and the 117 EMPTY declarations of CST §7.1 in one rule); OFF = the existing reset / card-CC carry path (byte-identical).  Set directly (processing.ssr_phase_bias_step_translate) or derived from network.closed_loop.pb_step_translate.  When ON it REPLACES both reactions ⇒ a declared step is translated exactly once.
+        double ssr_phase_bias_step_translate_eps_m_{ 0.005 }; ///< Card PBT (A): dead band of the step translation (m) — at or below it nothing is written and the filter absorbs the move as noise.  processing.ssr_phase_bias_step_translate_eps_m / network.closed_loop.pb_step_translate_eps_m.
         double ssr_clock_stale_hold_factor_{ 0.0 };       ///< RTA-9(b): clock stale-hold rung — a clock aged in (ssr_max_age, factor × ssr_max_age] is still applied with URA-staleness R inflation; 0 (default) = off (byte-identical two-state gate); (0,1] clamps to 1.
         bool   ssr_bias_band_fallback_{ false };          ///< RTA-13 (opt-in): CODE-domain band-wise bias fallback — exact-attribute miss consumes the same-band sibling code bias; phase never falls back.  Default off = store lookups byte-identical.
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.

@@ -102,6 +102,14 @@ void RealTimeEngine::logProducerStatus(RtEpochContext& ctx) {
  * (frozen lines 1708-1751); see scripts/rt_seam_verify.py.
  */
 void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
+    // Card PBT (A): with the STEP translation armed it REPLACES the whole
+    // reaction — declared and undeclared steps alike — so it is dispatched
+    // before the card-CC carry.  That precedence IS the once-only guarantee
+    // when both knobs are on: exactly one seam reacts per epoch, it visits each
+    // (sat, signal) key exactly once, and PbStepTranslateLedger::react makes at
+    // most one shiftAmbiguity call per cell.  carryOnPhaseBiasDisc_ is then
+    // never entered, so a declared step cannot be translated twice.
+    if (config_.ssrPhaseBiasStepTranslate()) { translatePhaseBiasStep_(ctx); return; }
     // Card CC (A): with the declared-step carry armed the whole reaction is the
     // carry seam below; everything from here on is the pre-card path, verbatim.
     if (config_.ssrPhaseBiasDiscCarry()) { carryOnPhaseBiasDisc_(ctx); return; }
@@ -251,6 +259,133 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
             if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
         }
     }
+}
+
+/**
+ * @brief Card PBT (A): EVERY phase-bias product step -> ambiguity TRANSLATION,
+ *        declared or not.  Replaces resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_.
+ *
+ * New code (not a relocation).  Same per-key sweep as the reset and carry
+ * reactions — the raw phase signals of every modeled satellite, the same
+ * ungated read for the disc counter and the same gated (hold_factor × max_age)
+ * read for the A5 applied flag — with one change of subject: the reaction keys
+ * on the STEP in the applied value, not on the declaration.
+ *
+ * ⚠ THE APPLIED-VALUE GUARD.  Δ is formed from the value the measurement model
+ * ACTUALLY applies, taken here with the model's own read (MeasurementModel.cpp:
+ * 1622-1624 `ssr_bias_term`: gated ⇒ getPhaseBias(sat, code, obs.time,
+ * max_age), ungated otherwise, 0 when it yields nothing), and the previous side
+ * of the difference is this ledger's RECORD of that same read at the last
+ * epoch — never a fresh re-read of the product.  So an interpolation change, a
+ * provider update landing mid-epoch or a staleness hold cannot make the
+ * translation disagree with the step the phase row actually took.
+ *
+ * UPDATE SITE: the ledger's record() runs at the tail of each key's iteration,
+ * AFTER the reaction — so this epoch's Δ was against the value the model
+ * applied at the previous update, and the next epoch's Δ will be against the
+ * value the update below this reaction is about to apply.  The A5 flag map is
+ * refreshed at the same site with the same value the reset path would write,
+ * and the disc counter is advanced by the same noteSsrDiscontinuity call, so
+ * flipping the knob mid-lineage cannot leave either memory stale.
+ */
+void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
+    auto log = log_manager_.getLogger("rt_engine");
+    const std::string& epoch_prefix = ctx.epoch_prefix;
+    const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
+
+    const auto& ssr = ssrStore();
+    const double reset_std = config_.getAmbiguityStd();
+    const double eps_m     = config_.getSsrPhaseBiasStepTranslateEpsM();
+    const bool   bias_age_gate = config_.enableSsrBiasMaxAge();
+    const double bias_max_age  = config_.getSsrBiasMaxAge()
+                               * config_.getSsrBiasStaleHoldFactor();
+    const bool basis_nlwl = (config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl);
+    const bool bssd       = config_.enableBetweenSatelliteSd();
+    for (const auto& obs : modeled_obs) {
+        for (const auto& kv : obs.modeled) {
+            const std::string& code = kv.first;
+            if (code.empty() || code[0] != 'L') continue;       // phase only
+            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            const std::string key     = obs.satellite + "|" + code;
+            const std::string amb_key = obs.satellite + "_" + code;
+
+            // The disc-counter bump: the ungated read, exactly as the reset path.
+            bool bump = false;
+            if (auto pb = ssr.getPhaseBias(obs.satellite, code))
+                bump = state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
+
+            // The value the model APPLIES this epoch (the model's own read).
+            const auto applied = bias_age_gate
+                ? ssr.getPhaseBias(obs.satellite, code, obs.time, bias_max_age)
+                : ssr.getPhaseBias(obs.satellite, code);
+            const bool   applied_now   = static_cast<bool>(applied);
+            const double applied_now_m = applied ? applied->bias_m : 0.0;
+
+            // The A5 freshness flip, on the same flag memory the reset path keeps
+            // (and the RT snapshot restores); only tracked under the gate.
+            bool flip = false;
+            if (bias_age_gate) {
+                const auto it = ssr_phase_bias_applied_.find(key);
+                flip = (it != ssr_phase_bias_applied_.end() && it->second != applied_now);
+            }
+
+            const auto d = pb_step_translate_.react(*state_manager_, key, amb_key,
+                                                    bump || flip, applied_now, applied_now_m,
+                                                    basis_nlwl, bssd, eps_m, reset_std);
+            using A = PbStepTranslateLedger::Action;
+            switch (d.action) {
+                case A::None:
+                case A::SkippedEps:
+                    break;                                       // nothing written
+                case A::TranslateDeclared:
+                    noteConsumerSatEvent_(key, "translate_disc");   // card CST (no-op unarmed)
+                    log->info("{}SSR phase-bias DECLARED step: translated {} {} by {:+.3f} m",
+                              epoch_prefix, obs.satellite, code, -d.delta_m);
+                    break;
+                case A::TranslateUndeclared:
+                    noteConsumerSatEvent_(key, "translate_undeclared");  // card CST (no-op unarmed)
+                    log->info("{}SSR phase-bias UNDECLARED step: translated {} {} by {:+.3f} m",
+                              epoch_prefix, obs.satellite, code, -d.delta_m);
+                    break;
+                case A::RefusedUndeclared:
+                    // An undeclared step a refusal class blocked: the pre-card path
+                    // did nothing here and neither do we — but it is named, because
+                    // a silent refusal is exactly what invariant #4 forbids.
+                    noteConsumerSatEvent_(key, PbStepTranslateLedger::actionName(d.action));
+                    break;
+                default:
+                    // A DECLARED cell the translation could not reach took the
+                    // EXISTING reset; name the refusal so the CST row distinguishes
+                    // it from a plain declared reset.
+                    noteConsumerSatEvent_(key, PbStepTranslateLedger::actionName(d.action));
+                    log->info("{}SSR phase-bias declared step: reset {} {} ({} — translate "
+                              "refused)", epoch_prefix, obs.satellite, code,
+                              PbStepTranslateLedger::actionName(d.action));
+                    break;
+            }
+
+            // UPDATE SITE (after the reaction): what the update below will apply.
+            pb_step_translate_.record(key, applied_now, applied_now_m);
+            if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
+        }
+    }
+}
+
+void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
+    if (!config_.ssrPhaseBiasStepTranslate()) return;   // knob off: never printed (byte-identical)
+    const auto& c = pb_step_translate_.counters();
+    log_manager_.getLogger("rt_engine")->info(
+        "SSR phase-bias STEP translation ({}): cells {} (declared {}) -> "
+        "n_pb_translate_declared {} / n_pb_translate_undeclared {}; "
+        "sum_abs_translate_m {:.3f} (max |d| {:.3f} m); "
+        "n_pb_translate_skipped_eps {} (of which declared-but-EMPTY {}); "
+        "declared resets first_sight {} / basis {} / bssd {} / unknown_key {}; "
+        "undeclared refused {}; no_pair {}; closure {}; {} keys recorded",
+        tag, c.cells, c.declared_seen, c.translate_declared, c.translate_undeclared,
+        c.sum_abs_translate_m, c.max_abs_translate_m, c.skipped_eps,
+        c.skipped_eps_declared, c.reset_first_sight, c.reset_basis, c.reset_bssd,
+        c.reset_unknown_key, c.refused_undeclared, c.no_pair,
+        c.closureHolds() ? "HOLDS" : "BROKEN", pb_step_translate_.size());
 }
 
 void RealTimeEngine::logPbDiscCarrySummary_(const char* tag) {

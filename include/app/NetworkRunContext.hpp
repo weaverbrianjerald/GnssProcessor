@@ -3065,6 +3065,18 @@ namespace GnssProcessor {
         long long n_jt_both          = 0;  ///< both tests declared
         long long n_jt_raw_only      = 0;  ///< raw would have declared, de-commoned did NOT
         long long n_jt_fallback_raw  = 0;  ///< signal population below kDiscDecommonMinSats ⇒ raw result stands
+        // --- Card MS (network.disc_mark_scope): per-channel discontinuity marks ---
+        // Invariant #7's DECOUPLING identity for a per-satellite mark: which channel
+        // generations it actually stepped, and which it was withheld from.  All zero
+        // under the default `sat` scope (nothing is counted there), so a run that
+        // reports 0/0/0 with the scope armed has an inert wiring however clean it reads.
+        long long n_mark_clk = 0;  ///< satellite-epochs whose CLOCK generation a mark bumped
+        long long n_mark_cb  = 0;  ///< (sat, signal) CODE-BIAS cells a mark bumped
+        long long n_mark_pb  = 0;  ///< (sat, signal) PHASE-BIAS cells a mark bumped
+        long long n_mark_suppressed_by_scope     = 0;  ///< (sat, channel) marks the scope withheld — total
+        long long n_mark_suppressed_by_scope_clk = 0;  ///< …of which the CLOCK channel
+        long long n_mark_suppressed_by_scope_cb  = 0;  ///< …of which the CODE-BIAS channel
+        long long n_mark_suppressed_by_scope_pb  = 0;  ///< …of which the PHASE-BIAS channel
         // Prioritized-datum drop-and-heal observability: epochs where the gate threw and the
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).

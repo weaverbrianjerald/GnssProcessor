@@ -5666,6 +5666,18 @@ int networkTeardown(
                       NetworkProductEmitter::kDiscDecommonMinSats,
                       k.n_jt_decommon_only + k.n_jt_both);
         }
+        // Card MS: the per-channel mark scope — invariant #4's ON-path telemetry.
+        // Printed ONLY when armed, so a `sat`-scope run's summary is byte-identical.
+        // `suppressed` is the whole point of the knob: 0 there means the scope
+        // narrowed nothing, no matter how clean the run reads.
+        if (config_.getNetworkConfig().disc_mark_scope == "channel") {
+            const auto& k = ctx.counters;
+            log->info("  disc mark scope (MS)      : applied n_mark_clk {} / n_mark_cb {} / "
+                      "n_mark_pb {}; n_mark_suppressed_by_scope {} (clk {} / cb {} / pb {})",
+                      k.n_mark_clk, k.n_mark_cb, k.n_mark_pb,
+                      k.n_mark_suppressed_by_scope, k.n_mark_suppressed_by_scope_clk,
+                      k.n_mark_suppressed_by_scope_cb, k.n_mark_suppressed_by_scope_pb);
+        }
         // Card CC (A): the declared-step carry counters — the consumer's ON-path
         // telemetry (invariant #4).  Printed only when the knob is armed, so an
         // OFF run's summary is byte-identical.  Closure: carried + resets == events.
@@ -5678,6 +5690,26 @@ int networkTeardown(
                       c.events, c.disc_bumps, c.flips, c.disc_carried, c.flip_carried,
                       c.reset_first_sight, c.reset_basis, c.reset_bssd, c.reset_unknown_key,
                       c.closureHolds() ? "HOLDS" : "BROKEN");
+        }
+        // Card PBT (A): the EVERY-step translation counters — the consumer's
+        // ON-path telemetry (invariant #4), printed only when the knob is armed so
+        // an OFF run's summary is byte-identical.  BOTH edges: the DECOUPLING edge
+        // is what the ambiguity absorbed (declared + undeclared, with Sigma|delta|),
+        // the RE-COUPLING edge is every cell it refused or reset, and the
+        // declared-but-EMPTY count is the population card MS exists to remove.
+        if (consumer->pbStepTranslateArmed()) {
+            const auto& t = consumer->pbStepTranslateCounters();
+            log->info("  pb step translate (PBT)   : cells {} (declared {}) -> "
+                      "n_pb_translate_declared {} / n_pb_translate_undeclared {}; "
+                      "sum_abs_translate_m {:.3f} (max |d| {:.3f} m); "
+                      "n_pb_translate_skipped_eps {} (declared-but-EMPTY {}); "
+                      "declared resets first_sight {} / basis {} / bssd {} / unknown_key {}; "
+                      "undeclared refused {}; no_pair {}; closure {}",
+                      t.cells, t.declared_seen, t.translate_declared, t.translate_undeclared,
+                      t.sum_abs_translate_m, t.max_abs_translate_m, t.skipped_eps,
+                      t.skipped_eps_declared, t.reset_first_sight, t.reset_basis,
+                      t.reset_bssd, t.reset_unknown_key, t.refused_undeclared, t.no_pair,
+                      t.closureHolds() ? "HOLDS" : "BROKEN");
         }
         // Card CC (B): consumer snapshots written beside the network history
         // copies (0 written on an armed seed = no warm start on offer).

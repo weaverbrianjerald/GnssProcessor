@@ -732,7 +732,15 @@ NetworkSolPrepResult networkSolPrep(
             (present_sats.count(sat) ? retro_emit_sats : retro_pending).insert(sat);
         ura_retro_sats = std::move(retro_pending);   // absent sats wait for their next emit
         if (!retro_emit_sats.empty())
-            emitter.markSatDiscontinuity(retro_emit_sats);   // per-sat, not constellation-wide
+            // Card MS: the UNION drain — URA-retro QC contamination, the reference-sat
+            // mark, the datum-station slip re-reference and the RF-2 held-basis anchor
+            // handover all arrive here and their provenance is deliberately lost at the
+            // union (see the detail="union" event below).  A contaminated epoch can have
+            // moved any channel and a held-basis handover moves the phase bias, so this
+            // mark keeps the FULL satellite scope: the card narrows the sites that KNOW
+            // their channel, never a union that does not.
+            emitter.markSatDiscontinuity(retro_emit_sats,   // per-sat, not constellation-wide
+                                         NetworkProductEmitter::kDiscChanAll);
         // RETRO (V4): one row per per-sat discontinuity bump APPLIED this emit.  The QC
         // tier that flagged the sat last epoch is lost at the union, so detail=union
         // (honest — do not fabricate provenance).
@@ -766,7 +774,11 @@ NetworkSolPrepResult networkSolPrep(
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // Card MS: the prior ephemeris version was evicted before Delta_eph could be
+            // computed, so the step is UNKNOWN in magnitude and in channel — the
+            // satellite clock re-references and the bias split rides on it.  FULL scope.
+            if (!fresh.empty())
+                emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanAll);
             retro_emit_sats.insert(mark.begin(), mark.end());
             if (events_trace.is_open())
                 for (const auto& s : mark)
@@ -797,7 +809,10 @@ NetworkSolPrepResult networkSolPrep(
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // Card MS: the CODE-BIAS carry's excursion detector reinitialized, so the
+            // emitted CODE bias steps and nothing else does — code-bias channel only.
+            if (!fresh.empty())
+                emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanCodeBias);
             retro_emit_sats.insert(mark.begin(), mark.end());
             ctx.carry.cb_exc_bumps += static_cast<long long>(mark.size());
             if (events_trace.is_open())
@@ -828,7 +843,13 @@ NetworkSolPrepResult networkSolPrep(
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // Card MS: the Q3 temporal CLOCK anchor decoupled — the satellite's CLOCK
+            // changed temporal regime and, on a resolved trip, value.  Its phase and
+            // code biases did not: this is THE site CST S7.1 measured, where a
+            // 20-satellite clock decouple at TOW 279030 declared a phase-bias step of
+            // at most 0.011 m and reset five of the consumer's satellites.  CLOCK only.
+            if (!fresh.empty())
+                emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanClock);
             // …AND serialize it.  markSatDiscontinuity alone bumps only the
             // emitter's in-process counters; on a lineage without
             // network.serialize_disc_counters the per-record disc fields are not
@@ -867,7 +888,10 @@ NetworkSolPrepResult networkSolPrep(
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // Card MS: the re-latch re-splits dt^s <-> d^s, so ALL THREE channels step
+            // (the block comment above says exactly that).  FULL scope.
+            if (!fresh.empty())
+                emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanAll);
             retro_emit_sats.insert(mark.begin(), mark.end());
             if (events_trace.is_open())
                 for (const auto& s : mark)
@@ -916,7 +940,11 @@ NetworkSolPrepResult networkSolPrep(
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // Card MS: the IF-pin re-selection re-references the emitted dt^s <-> d^s
+            // split by the satellite's inter-channel bias — the same all-three-channel
+            // re-split as the re-latch above.  FULL scope.
+            if (!fresh.empty())
+                emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanAll);
             retro_emit_sats.insert(mark.begin(), mark.end());
         }
     }
@@ -948,7 +976,15 @@ NetworkSolPrepResult networkSolPrep(
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            if (!fresh.empty()) emitter.markSatDiscontinuity(fresh);
+            // Card MS: a no-veteran sum-to-zero CODE channel, or an IF-pin split forced
+            // to the 0 seed — the emitted CODE bias re-seeds, and under the IF-pin
+            // convention the satellite CLOCK is defined against that same pinned pair,
+            // so the clock is re-referenced with it.  CODE + CLOCK; the phase bias has
+            // its own datum and is left to its own jump test.
+            if (!fresh.empty())
+                emitter.markSatDiscontinuity(fresh,
+                                             NetworkProductEmitter::kDiscChanCodeBias
+                                                 | NetworkProductEmitter::kDiscChanClock);
             retro_emit_sats.insert(mark.begin(), mark.end());
             // RS-3 (SPEC_event_harness §21.7): the first post-resume epoch's landed
             // re-seed discs — 30 at the field seam against the seed's 0, and the direct

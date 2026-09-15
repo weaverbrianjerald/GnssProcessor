@@ -364,6 +364,8 @@ void RealTimeEngine::flush() {
     // closed-loop harness never calls flush(); its consumer's counters go out on
     // the closed-loop summary in NetworkTeardown instead.
     logPbDiscCarrySummary_("end of run");
+    // Card PBT (A): ditto for the every-step translation counters.
+    logPbStepTranslateSummary_("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {

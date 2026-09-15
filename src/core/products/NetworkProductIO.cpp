@@ -329,6 +329,8 @@ struct LineAssembler {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // H3: per-λ jump gate
                         } else if (f[k].rfind("discdecom=", 0) == 0) {
                             c.disc_jump_test_decommon = (std::stoi(f[k].substr(10)) != 0);  // Card JT
+                        } else if (f[k].rfind("discscope=", 0) == 0) {
+                            c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // Card MS
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // H-rider: sigma0 statistic id
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -539,6 +541,15 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // byte-for-byte and an unknown-field-skipping reader stays forward-compatible.
     if (contract.disc_jump_test_decommon)
         out_ << ",discdecom=1";
+    // Card MS (network.disc_mark_scope): a per-satellite discontinuity mark bumped
+    // only the channels the marking site reported.  A replay-emitter parameter in
+    // the same sense as discdecom= — but with a caveat this project states rather
+    // than hides: the R record carries no channel set, so a replay re-marks with
+    // the FULL satellite scope regardless.  Writing the token is what lets
+    // checkContract NAME that divergence.  ONLY when armed, so every pre-MS
+    // producer writes the S line byte-for-byte.
+    if (contract.disc_mark_scope_channel)
+        out_ << ",discscope=channel";
     out_ << '\n';
 }
 
@@ -626,6 +637,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
             "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>][,discdecom=1]"
+            "[,discscope=channel]"
             "   (B6 S-basis contract)\n";
 }
 
@@ -827,6 +839,11 @@ void NetworkProductReader::replay(const NetworkProductRecord& rec,
     if (rec.datum_changed) emitter.markDatumChange(rec.datum_consts);
     // B1: re-apply the per-satellite retro-bump (R record) so the consumer-visible
     // discontinuity counters reproduce byte-for-byte on replay.
+    // ⚠ Card MS: the R record carries satellite ids and NO channel set, so the
+    // default kDiscChanAll is the only honest reconstruction here — a replay of a
+    // channel-scoped producer re-marks WIDER than the producer did.  The scope
+    // travels in the S contract (discscope=) so checkContract names it; closing the
+    // gap needs an R-record grammar extension (open item, card MS).
     if (!rec.retro_sats.empty()) emitter.markSatDiscontinuity(rec.retro_sats);
     emitter.emitToStore(rec.epoch, store);
 
@@ -969,6 +986,14 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_jump_test_decommon != expected.disc_jump_test_decommon)
         note(fmt::format("disc_jump_test_decommon: file {} vs expected {}",
                          file.disc_jump_test_decommon, expected.disc_jump_test_decommon));
+    // Card MS: the per-channel mark scope.  A mismatch means the producer declared
+    // a different CHANNEL population than the replay will reconstruct — and note
+    // that even a MATCH is not replay-exactness here, because the R record carries
+    // no channel set (see the field's doc); this check exists so the scope is at
+    // least visible to a consumer instead of silent.
+    if (file.disc_mark_scope_channel != expected.disc_mark_scope_channel)
+        note(fmt::format("disc_mark_scope_channel: file {} vs expected {}",
+                         file.disc_mark_scope_channel, expected.disc_mark_scope_channel));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));
@@ -1015,7 +1040,8 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
                                  contract.code_bias_jump_test,
                                  contract.clock_disc_on_set_change,
                                  contract.disc_threshold_frac_cycles,
-                                 contract.disc_jump_test_decommon);   // Card JT
+                                 contract.disc_jump_test_decommon,    // Card JT
+                                 contract.disc_mark_scope_channel);   // Card MS
 }
 
 // ===========================================================================

@@ -145,6 +145,16 @@ struct SbasisContract {
     /// @c discdecom=1 S-line field ONLY when armed, so every pre-JT producer writes
     /// the S line byte-for-byte.
     bool              disc_jump_test_decommon{false};
+    /// Card MS (@c network.disc_mark_scope): whether a per-satellite discontinuity
+    /// MARK bumped only the generations of the channels the marking site reported,
+    /// rather than the satellite's clock, code-bias AND phase-bias generations
+    /// alike — the EIGHTH replay-emitter construction parameter.  Serialized as an
+    /// optional trailing @c discscope=channel S-line field ONLY when armed, so
+    /// every pre-MS producer writes the S line byte-for-byte.
+    /// ⚠ The @c R record carries satellite ids and NO channel set, so a replay
+    /// re-marks with the full satellite scope whatever this says; @c checkContract
+    /// compares it so the divergence is NAMED rather than silent.
+    bool              disc_mark_scope_channel{false};
     /// Whether the producer's emitter maintained the per-satellite CLOCK
     /// discontinuity counter (A2).  Together with @c disc_threshold_m this fully
     /// determines the @c NetworkProductEmitter construction, so a consumer can

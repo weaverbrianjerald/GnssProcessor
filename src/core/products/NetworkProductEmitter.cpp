@@ -89,14 +89,25 @@ NetworkProductEmitter::NetworkProductEmitter(double disc_threshold_m, bool emit_
                                              bool code_bias_jump_test,
                                              bool clock_disc_on_set_change,
                                              double disc_threshold_frac_cycles,
-                                             bool disc_jump_test_decommon)
+                                             bool disc_jump_test_decommon,
+                                             bool disc_mark_scope_channel)
     : disc_threshold_m_(disc_threshold_m),
       disc_threshold_frac_cycles_(disc_threshold_frac_cycles),
       disc_jump_test_decommon_(disc_jump_test_decommon),
+      disc_mark_scope_channel_(disc_mark_scope_channel),
       emit_clock_disc_(emit_clock_disc),
       staleness_horizon_s_(staleness_horizon_s),
       code_bias_jump_test_(code_bias_jump_test),
       clock_disc_on_set_change_(clock_disc_on_set_change) {}
+
+const char* NetworkProductEmitter::discChannelName(DiscChannel c) {
+    switch (c) {
+        case kDiscChanClock:     return "clk";
+        case kDiscChanCodeBias:  return "cb";
+        case kDiscChanPhaseBias: return "pb";
+        default:                 return "?";
+    }
+}
 
 double NetworkProductEmitter::discThresholdM(const std::string& sat,
                                              const std::string& signal) const {
@@ -116,8 +127,18 @@ void NetworkProductEmitter::markDatumChange(const std::set<char>& constellations
     else forced_bump_consts_.insert(constellations.begin(), constellations.end());
 }
 
-void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& satellites) {
+void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& satellites,
+                                                 unsigned channels) {
     forced_bump_sats_.insert(satellites.begin(), satellites.end());
+    // Card MS: remember WHICH channels this site says moved.  Only under the
+    // per-channel scope — the legacy scope never reads the map, so it is not
+    // built there and that path allocates and behaves exactly as before.  Two
+    // sites marking the same satellite in one epoch OR their masks, which is how
+    // a site that genuinely moves two channels (the T3c δtˢ↔dˢ re-split, an
+    // eph-cutover with an unknown Δ) declares both.
+    if (!disc_mark_scope_channel_) return;
+    const unsigned mask = (channels & kDiscChanAll) ? (channels & kDiscChanAll) : kDiscChanAll;
+    for (const auto& s : satellites) forced_bump_chan_[s] |= mask;
 }
 
 std::map<char, NetworkProductEmitter::PbSeamConstTally>
@@ -278,6 +299,10 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     std::map<std::string, double> pb_common_by_signal;   // signal -> median ΔPB (m)
     std::map<std::string, int>    pb_common_pop;         // signal -> population size
     pb_jump_decommon_events_.clear();
+    // Card MS: per-emit scratch for the mark-scope census (both stay empty/zero
+    // under the legacy satellite scope, so that path allocates nothing).
+    mark_scope_events_.clear();
+    mark_channel_tally_ = MarkChannelTally{};
     if (disc_jump_test_decommon_) {
         std::map<std::string, std::vector<double>> pool;   // signal -> ΔPB samples
         for (const auto& s : sol.sats) {
@@ -306,8 +331,37 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // Whether a specific SATELLITE was retro-bumped this emit (B1 markSatDiscontinuity):
     // a post-emit QC tier flagged its corrections as contaminated last epoch, so its
     // phase/code/clock counters step now — per-satellite, not constellation-wide.
-    auto satForced = [&](const std::string& sat) {
-        return forced_bump_sats_.count(sat) != 0;
+    // Card MS: under the per-channel scope the mark applies only to the channels
+    // the marking site named; a channel it did not name is SUPPRESSED, counted,
+    // and gets a MARK_SCOPE event row (invariant #7's decoupling identity).  The
+    // channel's own jump test is untouched and remains the backstop — a phase
+    // bias that genuinely re-realizes under a clock-only mark is still declared
+    // by the `value_jump` branch below.  Under the legacy scope the mask is never
+    // consulted and this reduces to the original set lookup exactly.
+    auto satForced = [&](const std::string& sat, DiscChannel chan) {
+        if (forced_bump_sats_.count(sat) == 0) return false;
+        if (!disc_mark_scope_channel_) return true;
+        const auto it = forced_bump_chan_.find(sat);
+        const unsigned mask = (it == forced_bump_chan_.end()) ? kDiscChanAll : it->second;
+        if (mask & chan) {
+            switch (chan) {
+                case kDiscChanClock:     ++mark_channel_tally_.clk; break;
+                case kDiscChanCodeBias:  ++mark_channel_tally_.cb;  break;
+                case kDiscChanPhaseBias: ++mark_channel_tally_.pb;  break;
+                default: break;
+            }
+            return true;
+        }
+        // One row per (satellite, suppressed channel) per emit, not per signal:
+        // the CODE and PHASE channels are visited once per signal.  The vector is
+        // at most 3 × (marked satellites) long, so the scan is free.
+        const bool already =
+            std::any_of(mark_scope_events_.begin(), mark_scope_events_.end(),
+                        [&](const MarkScopeEvent& e) {
+                            return e.suppressed == chan && e.sat == sat;
+                        });
+        if (!already) mark_scope_events_.push_back(MarkScopeEvent{ sat, mask, chan });
+        return false;
     };
 
     for (const auto& s : sol.sats) {
@@ -361,7 +415,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // gap needs the reset.  (staleKey only exists to suppress the
                 // SPURIOUS jump test on the phase/code channels.)
                 if (seen_before && !s.sat.empty()
-                    && (constForced(s.sat[0]) || satForced(s.sat)
+                    && (constForced(s.sat[0]) || satForced(s.sat, kDiscChanClock)
                         || clock_set_changed.count(s.sat[0]) != 0)) ++cctr;
                 seen_clock_sats_.insert(s.sat);
                 if (staleness_horizon_s_ > 0.0) clock_last_seen_s_[s.sat] = epoch_s;
@@ -411,7 +465,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const bool have_baseline = (cb_last_it != last_code_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(code_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
-                                           || satForced(s.sat);       // B1 retro-bump (per-sat)
+                                           || satForced(s.sat, kDiscChanCodeBias);  // B1 retro-bump (per-sat, card MS: code channel)
                 // Opt-in magnitude test (network.code_bias_disc_jump_test): the
                 // phase jump test applied to code, catching the weak-separation
                 // VALUE wander the structural triggers cannot see (they detect
@@ -457,7 +511,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const bool have_baseline = (last_it != last_phase_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(phase_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(s.sat[0]))
-                                           || satForced(s.sat);       // B1 retro-bump (per-sat)
+                                           || satForced(s.sat, kDiscChanPhaseBias); // B1 retro-bump (per-sat, card MS: phase channel)
                 // RTA-11 fix: a genuine forced datum change (clock-pivot handover /
                 // global re-declaration) steps the counter even on a beyond-horizon
                 // return — a consumer with an unbroken carrier arc across the gap
@@ -578,6 +632,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // DRIVER-side (ura_retro_sats) and is neither marked nor serialized in this
     // epoch's R record, so mark == land and replay re-marks exactly the landed sats.
     forced_bump_sats_.clear();
+    forced_bump_chan_.clear();   // card MS: the mask map is kept in step with the set
 }
 
 void NetworkProductEmitter::serializeState(std::ostream& os) const {
@@ -659,7 +714,19 @@ void NetworkProductEmitter::serializeState(std::ostream& os) const {
         for (char c : forced_bump_consts_) os << c;
         os << '\n';
     }
-    for (const auto& s : forced_bump_sats_) os << "efs," << s << '\n';
+    // Card MS: under the per-channel scope the mark's CHANNEL MASK is part of the
+    // pending state — without it a resume would land a narrow mark as a wide one.
+    // The third field is written ONLY under that scope, so a legacy (satellite-
+    // scope) snapshot is byte-identical to a pre-MS build and restores into any.
+    for (const auto& s : forced_bump_sats_) {
+        os << "efs," << s;
+        if (disc_mark_scope_channel_) {
+            const auto it = forced_bump_chan_.find(s);
+            os << ',' << (it == forced_bump_chan_.end()
+                              ? static_cast<unsigned>(kDiscChanAll) : it->second);
+        }
+        os << '\n';
+    }
     os << "EEND\n";
 }
 
@@ -699,6 +766,7 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     std::map<std::string, int>    st_disc, st_clock_disc, st_code_disc;
     std::map<std::string, double> st_last_pb, st_last_cb;
     std::set<std::string>         st_seen_clock, st_forced_sats;
+    std::map<std::string, unsigned> st_forced_chan;   // card MS: mark -> channel mask
     std::map<std::string, std::set<std::string>> st_satset;
     std::map<std::string, std::vector<char>>     st_band;
     std::map<char, std::set<std::string>>        st_clock_satset;
@@ -766,8 +834,16 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
             if (f.size() != 2 || f[1].empty()) return false;
             for (char c : f[1]) st_forced_consts.insert(c);
         } else if (tag == "efs") {
-            if (f.size() != 2 || f[1].empty()) return false;
+            // Card MS: 2 fields = a legacy (satellite-scope) mark; 3 = the mark
+            // plus its channel mask.  Both accepted so a snapshot crosses the knob.
+            if ((f.size() != 2 && f.size() != 3) || f[1].empty()) return false;
             st_forced_sats.insert(f[1]);
+            if (f.size() == 3) {
+                if (!parseStateI(f[2], iv) || iv <= 0
+                    || iv > static_cast<int>(kDiscChanAll))
+                    return false;
+                st_forced_chan[f[1]] = static_cast<unsigned>(iv);
+            }
         } else {
             return false;   // unknown tag: fail loudly, never guess
         }
@@ -789,6 +865,7 @@ bool NetworkProductEmitter::restoreState(std::istream& is) {
     force_all_bump_     = st_force_all;
     forced_bump_consts_ = std::move(st_forced_consts);
     forced_bump_sats_   = std::move(st_forced_sats);
+    forced_bump_chan_   = std::move(st_forced_chan);   // card MS (empty on a legacy snapshot)
     return true;
 }
 

@@ -2378,6 +2378,36 @@ namespace GnssProcessor {
                       "with network.closed_loop.pb_disc_carry.",
                       NetworkProductEmitter::kDiscDecommonMinSats);
         }
+        // Card MS: scope a per-satellite discontinuity MARK to the channel that
+        // moved.  EMIT-side only (no estimate, no datum), but like card JT it
+        // changes the declared population on the wire, so it is fingerprinted and
+        // travels in the S contract as discscope=.
+        network_config_.disc_mark_scope =
+            jval<std::string>(json, "network.disc_mark_scope", "disc_mark_scope",
+                              std::string("sat"));
+        if (network_config_.disc_mark_scope != "sat"
+            && network_config_.disc_mark_scope != "channel") {
+            log->warn("Network: unknown disc_mark_scope '{}' (expected 'sat' or 'channel'); "
+                      "falling back to 'sat' (the legacy satellite-wide scope).",
+                      network_config_.disc_mark_scope);
+            network_config_.disc_mark_scope = "sat";
+        }
+        if (network_config_.disc_mark_scope == "channel") {
+            log->info("Network (card MS): network.disc_mark_scope = 'channel' — a per-satellite "
+                      "discontinuity mark now bumps ONLY the generations of the channels the "
+                      "marking site reports (clock / code-bias / phase-bias), instead of all "
+                      "three.  markSatDiscontinuity drops a satellite into one forced-bump set "
+                      "that the clock, code-bias and phase-bias emit blocks all read, so a "
+                      "CLOCK-only guard (the Q3 anchor decouple, the CLK-R step test) declared a "
+                      "PHASE-BIAS step that did not happen: 117 of 390 declared consumer "
+                      "cell-epochs were EMPTY on RF-0hv (< 0.02 m of PB motion, CST S7.1).  The "
+                      "emitter's own per-(sat,signal) jump tests are untouched and remain the "
+                      "backstop for a genuine re-realization on an unnamed channel.  Per-channel "
+                      "mark counters + a MARK_SCOPE event per suppressed (sat, channel) "
+                      "(invariant #7).  WARNING: an R record carries no channel set, so a "
+                      "NetworkProductIO REPLAY re-marks with the full satellite scope — the S "
+                      "contract carries discscope= so checkContract names the divergence.");
+        }
         // Card RF-PD-fix: install the station's own DATUM rows BEFORE the PD test.
         // SOLVE-AFFECTING (it changes which stations are in the network) — the
         // rx_code_bias_datum cross-check is deferred to that knob's own block, which
@@ -11340,6 +11370,12 @@ namespace GnssProcessor {
             // false ⇒ byte-identical; neither reaches the producer's solve or its
             // resume fingerprint.
             clc.pb_disc_carry            = cl.value("pb_disc_carry", false);
+            // Card PBT (A): the EVERY-step ambiguity translation (derived into the
+            // consumer engine as processing.ssr_phase_bias_step_translate).  Same
+            // contract as pb_disc_carry — default false ⇒ byte-identical, and it
+            // never reaches the producer's solve or its resume fingerprint.
+            clc.pb_step_translate        = cl.value("pb_step_translate", false);
+            clc.pb_step_translate_eps_m  = cl.value("pb_step_translate_eps_m", 0.005);
             clc.state_snapshot           = cl.value("state_snapshot", false);
             // Q5 replay: consume an already-written product file instead of the
             // live producer.  Presence alone arms the replay driver (the enable
@@ -11619,6 +11655,14 @@ namespace GnssProcessor {
         // processing.ssr_phase_bias_disc_carry on the base config is kept.
         if (cl.pb_disc_carry)
             c.ssr_phase_bias_disc_carry_ = true;
+        // Card PBT (A): same derivation for the EVERY-step translation.  Never
+        // cleared here — an explicit processing.ssr_phase_bias_step_translate on
+        // the base config is kept.  The eps is carried alongside so the harness
+        // knob is self-contained; it is only read when the translation is armed.
+        if (cl.pb_step_translate) {
+            c.ssr_phase_bias_step_translate_     = true;
+            c.ssr_phase_bias_step_translate_eps_m_ = cl.pb_step_translate_eps_m;
+        }
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates
         // integer RECOVERY on the held-out station from the producer's products.

@@ -377,7 +377,11 @@ void networkEmitStore(
             for (const auto& e : ce)
                 if (e.marked) clk_marks.insert(e.sat);
             if (!clk_marks.empty()) {
-                emitter.markSatDiscontinuity(clk_marks);   // R record + per-sat counters (B1 retro path)
+                // Card MS: CLK-R stage 2 is a CLOCK step test — the emitted clock
+                // value moved and nothing says the biases did, so under the
+                // per-channel scope this mark reports the clock channel only.
+                emitter.markSatDiscontinuity(clk_marks,   // R record + per-sat counters (B1 retro path)
+                                             NetworkProductEmitter::kDiscChanClock);
                 clk_retro_merged = retro_emit_sats;
                 clk_retro_merged.insert(clk_marks.begin(), clk_marks.end());
                 retro_use = &clk_retro_merged;
@@ -457,6 +461,41 @@ void networkEmitStore(
                                      "bar={:.6f} n_med={}",
                                      e.signal, e.raw_delta_m, e.common_m, e.decommon_m,
                                      e.threshold_m, e.population));
+    }
+    // --- Card MS: drain the mark-scope census of this emit --------------------
+    // Invariant #7 at BOTH edges with identities.  The DECOUPLING edge is what a
+    // per-satellite mark actually stepped (n_mark_clk / n_mark_cb / n_mark_pb) and
+    // what it was WITHHELD from (n_mark_suppressed_by_scope, one MARK_SCOPE row per
+    // suppressed (sat, channel) with the mask the marking sites asked for).  The
+    // RE-COUPLING edge is not this card's: a channel the mark did not name is still
+    // declared by the emitter's own per-(sat, signal) jump test if its value
+    // genuinely re-realized — that is what the TOW 276810 population rides.  Both
+    // the tally and the vector are zero/empty under the default `sat` scope, so the
+    // OFF path stays byte-identical and this block is a no-op.
+    {
+        const auto& mt = emitter.markChannelTally();
+        ctx.counters.n_mark_clk += mt.clk;
+        ctx.counters.n_mark_cb  += mt.cb;
+        ctx.counters.n_mark_pb  += mt.pb;
+        for (const auto& e : emitter.markScopeEvents()) {
+            ++ctx.counters.n_mark_suppressed_by_scope;
+            switch (e.suppressed) {
+                case NetworkProductEmitter::kDiscChanClock:
+                    ++ctx.counters.n_mark_suppressed_by_scope_clk; break;
+                case NetworkProductEmitter::kDiscChanCodeBias:
+                    ++ctx.counters.n_mark_suppressed_by_scope_cb;  break;
+                case NetworkProductEmitter::kDiscChanPhaseBias:
+                    ++ctx.counters.n_mark_suppressed_by_scope_pb;  break;
+                default: break;
+            }
+            traces.emitEvent(se.time, "MARK_SCOPE", "suppressed", e.sat, "",
+                             std::nullopt, std::nullopt,
+                             NetworkProductEmitter::discChannelName(e.suppressed),
+                             fmt::format("marked_channels={}{}{}",
+                                         (e.marked & NetworkProductEmitter::kDiscChanClock) ? "clk " : "",
+                                         (e.marked & NetworkProductEmitter::kDiscChanCodeBias) ? "cb " : "",
+                                         (e.marked & NetworkProductEmitter::kDiscChanPhaseBias) ? "pb" : ""));
+        }
     }
     // RTA-5: periodic S-contract re-broadcast — a CURRENT S line (refreshed
     // realized pivots) every N seconds of PRODUCT time, and additionally on any

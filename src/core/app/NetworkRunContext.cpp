@@ -959,6 +959,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // pre-JT snapshot fingerprint is unchanged.
         if (config_.getNetworkConfig().disc_jump_test_decommon)
             add("discdecom=1");
+        // Card MS: same argument for the per-channel mark scope — it decides which
+        // CHANNEL's counters a landed mark steps, those counters are snapshotted
+        // emitter state, and the pending-mark section now carries a channel mask.
+        // Appended ONLY when armed, so every pre-MS snapshot fingerprint is unchanged.
+        if (config_.getNetworkConfig().disc_mark_scope == "channel")
+            add("discscope=channel");
         // The held clock signal basis defines which IF combination each carried
         // clock state is referenced to; a resume across a toggle change would carry
         // clock states in a re-selected-per-epoch frame vs a held frame.  Appended

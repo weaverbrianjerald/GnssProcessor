@@ -185,6 +185,31 @@ namespace GnssProcessor {
          */
         bool          pb_disc_carry{ false };
         /**
+         * @brief Card PBT (A): the consumer translates EVERY phase-bias product step
+         *        into its own ambiguities, declared or not
+         *        (@c network.closed_loop.pb_step_translate, default false ⇒ byte-identical).
+         *
+         * Derived into the consumer engine's config as
+         * @c processing.ssr_phase_bias_step_translate
+         * (@c GnssConfig::ssrPhaseBiasStepTranslate) by
+         * @c deriveClosedLoopConsumerConfig; a STANDALONE real-time consumer sets that
+         * @c processing key directly.  See @c RealTimeEngine::translatePhaseBiasStep_
+         * (RealTimeEngineSsrBreaks.cpp) for the mechanism, the applied-value guard and
+         * the refusal branches.  It REPLACES both the reset reaction and
+         * @ref pb_disc_carry, so a declared step is translated exactly once even with
+         * both knobs armed.
+         */
+        bool          pb_step_translate{ false };
+        /**
+         * @brief Card PBT (A): dead band of @ref pb_step_translate in metres
+         *        (@c network.closed_loop.pb_step_translate_eps_m, default 0.005).
+         *
+         * At or below it nothing is written to the ambiguity state and the filter
+         * absorbs the move as noise — which is also what makes an EMPTY declaration
+         * (a generation bump with no product motion) cost nothing.
+         */
+        double        pb_step_translate_eps_m{ 0.005 };
+        /**
          * @brief Card CC (B): the closed-loop consumer's WARM START in the event
          *        harness (@c network.closed_loop.state_snapshot, default false ⇒
          *        byte-identical — no file is written).
@@ -2410,6 +2435,36 @@ namespace GnssProcessor {
          * a file replay reproduces the counters.  Default OFF ⇒ byte-identical.
          */
         bool disc_jump_test_decommon{ false };
+        /**
+         * @brief Card MS: bump only the generation of the CHANNEL that moved
+         *        (@c network.disc_mark_scope, @c "sat" (default) | @c "channel").
+         *
+         * `NetworkProductEmitter::markSatDiscontinuity` drops a satellite into ONE
+         * `forced_bump_sats_` set, and `satForced()` is read by the CLOCK, the
+         * CODE-BIAS and the PHASE-BIAS emit blocks alike — so a clock-only guard
+         * (the Q3 anchor decouple, the CLK-R step test) declares a phase-bias
+         * discontinuity that never happened.  Measured on RF-0hv: **117 of 390
+         * declared consumer cell-epochs are EMPTY** (< 0.02 m of phase-bias
+         * motion), and the TOW 279030 hour-6 ramp is the consumer resetting five
+         * satellites for a 20-satellite clock decouple (CST §7.1 / EV6).
+         *
+         * Under @c "channel" each marking site names the channels it reports and
+         * only those generations step; a site that genuinely moves two channels
+         * names both.  The RE-COUPLING edge is unchanged: the emitter's own
+         * per-(sat, signal) phase and (opt-in) code jump tests still declare a
+         * genuine re-realization on a channel no mark named — which is what keeps
+         * the TOW 276810 population declared.
+         *
+         * ⚠ REPLAY.  The @c R record carries satellite ids and no channel set, so a
+         * @c NetworkProductIO replay re-marks with the full satellite scope.  The
+         * scope travels in the S contract (@c discscope=) so @c checkContract
+         * NAMES the divergence rather than hiding it; a channel-scoped lineage that
+         * must be replay-exact needs an R-record grammar extension (open item).
+         *
+         * Emit-side only — no estimate, no datum, no row of the normal equations.
+         * Default @c "sat" ⇒ byte-identical.
+         */
+        std::string disc_mark_scope{ "sat" };
         /**
          * @brief Card RF-PD-fix: fold the station's own DATUM rows into its local
          *        block BEFORE the @c addStation positive-definiteness test

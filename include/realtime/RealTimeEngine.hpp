@@ -43,6 +43,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
 #include "realtime/PbDiscCarryLedger.hpp"    // Card CC (A): declared-step ambiguity carry ledger
+#include "realtime/PbStepTranslateLedger.hpp"  // Card PBT (A): every-step ambiguity translation ledger
 #include "realtime/ConsumerSatTrace.hpp"     // Card CST: per-satellite consumer readout row
 #include <Eigen/Dense>
 #include <chrono>
@@ -403,6 +404,17 @@ public:
         return pb_disc_carry_.counters();
     }
 
+    // --- Card PBT (A): phase-bias STEP translation readout -------------------
+    /// True iff @c processing.ssr_phase_bias_step_translate is armed on this
+    /// engine's config (the closed-loop harness derives it from
+    /// @c network.closed_loop.pb_step_translate).
+    bool pbStepTranslateArmed() const { return config_.ssrPhaseBiasStepTranslate(); }
+    /// Run-end counters of the step translation (all zero — and never printed —
+    /// with the knob off, so the off path stays byte-identical).
+    const PbStepTranslateLedger::Counters& pbStepTranslateCounters() const {
+        return pb_step_translate_.counters();
+    }
+
     // --- Card CC (B): harness-driven snapshot write + restore readout --------
     /// Epoch time of the last epoch that ran the full estimation tail (the
     /// epoch the live filter memory is "as of"); nullopt before the first.
@@ -641,6 +653,16 @@ private:
     void carryOnPhaseBiasDisc_(RtEpochContext& ctx);
     /// Card CC (A): one INFO line with the carry counters; silent unless armed.
     void logPbDiscCarrySummary_(const char* tag);
+    /// Card PBT (A): the STEP twin of resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_,
+    /// taken INSTEAD of both when processing.ssr_phase_bias_step_translate is
+    /// armed — EVERY change in the applied phase bias (declared or not) beyond
+    /// pb_step_translate_eps_m translates the ambiguity by −Δ
+    /// (PbStepTranslateLedger::react).  Because it replaces the whole reaction,
+    /// a declared step is translated exactly ONCE even with the card-CC carry
+    /// also armed.  Its record() is the update site, per key after the reaction.
+    void translatePhaseBiasStep_(RtEpochContext& ctx);
+    /// Card PBT (A): one INFO line with the translation counters; silent unless armed.
+    void logPbStepTranslateSummary_(const char* tag);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
 
@@ -844,6 +866,12 @@ private:
     /// NOT part of the RT snapshot (v1 format unchanged — the first event per key
     /// after a restore takes the reset, see RtStateSnapshot.hpp).
     PbDiscCarryLedger pb_disc_carry_;
+    /// Card PBT (A): per-(sat|signal) applied-bias ledger + translation counters.
+    /// Only touched by translatePhaseBiasStep_ (the knob-ON replacement for the
+    /// reset / carry reactions); NOT part of the RT snapshot (v1 format
+    /// unchanged — the first cell per key after a restore has no (k−1, k) pair,
+    /// so a declared one takes the reset and an undeclared one is a no-op).
+    PbStepTranslateLedger pb_step_translate_;
     /// RTA-10: last observed network-producer epoch-status STATE from the SSR
     /// store's heartbeat surface (nullopt = never seen).  Edge-trigger for the
     /// one-shot transition log (ok→withheld_sigma0 etc.): the first sighting

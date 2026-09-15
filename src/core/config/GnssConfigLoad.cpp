@@ -577,6 +577,40 @@ namespace GnssProcessor {
                       "freshness flip translates the float ambiguity by -delta (value-only, "
                       "covariance kept) instead of resetting it; first sightings, an NL/WL "
                       "basis, a BSSD consumer and unknown keys still take the reset.");
+        // Card PBT (A): the EVERY-step ambiguity translation.  Default false =
+        // the existing reset (or, under card CC, the declared-step carry) —
+        // byte-identical; the closed-loop harness derives it from
+        // network.closed_loop.pb_step_translate (deriveClosedLoopConsumerConfig),
+        // a standalone consumer sets it here.
+        ssr_phase_bias_step_translate_ = jval<bool>(json,
+            "processing.ssr_phase_bias_step_translate", "ssr_phase_bias_step_translate", false);
+        ssr_phase_bias_step_translate_eps_m_ = jval<double>(json,
+            "processing.ssr_phase_bias_step_translate_eps_m",
+            "ssr_phase_bias_step_translate_eps_m", 0.005);
+        if (ssr_phase_bias_step_translate_eps_m_ < 0.0) {
+            log->warn("Negative ssr_phase_bias_step_translate_eps_m ({:.4f}) ignored; using 0.005 m",
+                      ssr_phase_bias_step_translate_eps_m_);
+            ssr_phase_bias_step_translate_eps_m_ = 0.005;
+        }
+        if (ssr_phase_bias_step_translate_) {
+            log->info("SSR phase-bias STEP TRANSLATION ON (card PBT): EVERY change in the "
+                      "APPLIED satellite phase bias beyond {:.4f} m — declared by an R record "
+                      "or not — translates that (sat, signal) float ambiguity by -delta "
+                      "(value-only, covariance kept).  A change in the applied product carries "
+                      "no position information, so the phase model stays consistent only if the "
+                      "ambiguity absorbs it exactly; a satellite-common move is absorbed "
+                      "uniformly and is exactly consistent.  This REPLACES the reset reaction "
+                      "AND the card-CC declared-step carry, so a declared step is translated "
+                      "exactly once.  First sightings / A5 freshness edges, an NL/WL basis, a "
+                      "BSSD consumer and unknown keys still take the reset when DECLARED and "
+                      "are a counted no-op when not.",
+                      ssr_phase_bias_step_translate_eps_m_);
+            if (ssr_phase_bias_disc_carry_)
+                log->warn("processing.ssr_phase_bias_disc_carry is also armed: the card-CC carry "
+                          "seam is NOT entered while the step translation is on (its counters "
+                          "stay 0).  The declared population is handled by the translation and "
+                          "is reported on its own summary line.");
+        }
         // RTA-9(b): CLOCK stale-hold rung.  0 (default) = off — the historic
         // two-state gate (fresh/rejected) is byte-identical.  >0 opens the
         // middle rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is
