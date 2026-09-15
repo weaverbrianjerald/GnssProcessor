@@ -148,6 +148,12 @@ ARM_KNOBS = {
              ["carry_invariant", "relevel_free_epoch", "gauge_project", "carry_coupling", "phase_datum",
               "phase-datum", "leveling", "inject", "do_amb_carry", "anchor", "EWL", "UWL", "lane",
               "(EXT-CB)", "(RXCB-DATUM)", "Frequency mode"]),
+    "a9": ("PPP posture: EXT-CB (external_sat_code_bias, estimate_sat_code_bias false, enable_code_phase_bias true) + estimate_iono_sh false",
+           ["(EXT-CB)", "(W6)", "(V1)", "GIM", "SH-iono", "sh_health_gate", "estimate_ifb", "ionosphere weighting"]),
+    "a10": ("estimation.global_vtec_sh.representation_sigma_tecu 50 (T5v2 steady-state sigma)",
+            ["representation_sigma_tecu", "T5v2", "representativeness"]),
+    "a10b": ("estimation.global_vtec_sh.representation_sigma_tecu 20", ["representation_sigma_tecu", "T5v2", "representativeness"]),
+    "a11": ("estimation.global_vtec_sh.max_degree 15 + layer2_max_degree 8", ["(SH-iono)", "Iono-2)", "degree", "coeffs"]),
 }
 
 RUN_END = [
@@ -315,6 +321,35 @@ def zwd_carried(path, t_lo, t_hi):
                 n += 1
                 c += int(r.get("carried", "0") in ("1", "1.0", "true"))
     return dict(n=n, carried=c, frac=(c / n if n else float("nan")))
+
+
+def consumer(armdir, tow0):
+    """The cold closed-loop consumer (WTZZ00DEU, logs/closed_loop_trace.csv — the s24.3 instrument):
+    p50 of the 3D error over minutes 30-60 (k 61..120) and 90-120 (k 181..240), the signed E/N/U medians
+    of the second window, n_sats, and the 3D error at k = 1, 11, 60, 120, 240."""
+    path = os.path.join(armdir, "logs", "closed_loop_trace.csv")
+    if not os.path.isfile(path):
+        return None
+    rows = []
+    with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+        for r in csv.DictReader(fh):
+            try:
+                rows.append((int(1 + round((float(r["tow"]) - tow0) / 30.0)), float(r["pos_err_3d_m"]),
+                             float(r["east_m"]), float(r["north_m"]), float(r["up_m"]), int(float(r.get("n_sats", "nan")))))
+            except (KeyError, ValueError):
+                continue
+    if not rows:
+        return None
+    A = np.array(rows, dtype=float)
+    k, d3, e, n, u, ns = (A[:, i] for i in range(6))
+
+    def win(lo, hi):
+        m = (k >= lo) & (k <= hi) & np.isfinite(d3)
+        return dict(n=int(m.sum()), p50_3d=pct(d3[m], 50), p50_e=pct(e[m], 50), p50_n=pct(n[m], 50), p50_u=pct(u[m], 50),
+                    max_3d=float(d3[m].max()) if m.any() else float("nan"), n_sats=pct(ns[m], 50))
+
+    at = {kk: float(d3[k == kk][0]) if np.any(k == kk) else float("nan") for kk in (1, 11, 60, 120, 240)}
+    return dict(n_rows=int(A.shape[0]), w30_60=win(61, 120), w90_120=win(181, 240), at=at)
 
 
 def epoch_status(path, t_lo, t_hi):
@@ -564,6 +599,7 @@ def grade_arm(arm, armdir, a, ref_cfg_lines=None, ctl="a0"):
         R["ii"] = None
 
     R["zwd_carried"] = zwd_carried(os.path.join(logs, "network_zwd.csv"), t_lo, t_hi)
+    R["consumer"] = consumer(armdir, a.tow0)
     # -- (vi) tropo-shaped fit share of the code residual; (vii) the SH a00 series
     R["vi"] = tropo_fit(armdir, t_lo, t_hi)
     R["vii"] = a00_series(armdir, t_lo, t_hi)
@@ -681,6 +717,11 @@ def print_report(results, a, ctl="a0"):
         if a0s:
             print(f"  (vii) SH a00 (TECU): epoch 1 {fmt(a0s['first'], 1)}, hour p50 {fmt(a0s['win_p50'], 1)} [min {fmt(a0s['win_min'], 1)}, max {fmt(a0s['win_max'], 1)}], last {fmt(a0s['last'], 1)}; "
                   f"in band {a0s['in_band']}/{a0s['n']} epochs (hour {a0s['in_band_win']}/{a0s['n_win']})")
+        cs = R.get("consumer")
+        if cs:
+            w1, w2, at = cs["w30_60"], cs["w90_120"], cs["at"]
+            print(f"  (viii) cold closed-loop consumer WTZZ 3D error: p50 min 30-60 {fmt(w1['p50_3d'])} m (n {w1['n']}), min 90-120 {fmt(w2['p50_3d'])} m (n {w2['n']}; E/N/U p50 {fmt(w2['p50_e'])}/{fmt(w2['p50_n'])}/{fmt(w2['p50_u'])}, max {fmt(w2['max_3d'])}, n_sats {fmt(w2['n_sats'], 0)});"
+                  f" 3D at k=1/11/60/120/240: {fmt(at[1], 2)}/{fmt(at[11], 2)}/{fmt(at[60], 2)}/{fmt(at[120], 2)}/{fmt(at[240], 2)} m  [standalone PPP reference 0.25 m]")
         c = R.get("iii")
         if c:
             print(f"  (iii) wire-vs-CODE census, hour ({c['n_epochs']} epochs): D_phase within-arc rms declared {fmt(c['phase_decl_rms'])} (tracking {fmt(c['phase_track_rms'])}; diffmedian cm {fmt(c['phase_decl_rms_diffmedian'])}) m"
@@ -709,15 +750,17 @@ def print_report(results, a, ctl="a0"):
     print("\n" + "-" * 118)
     print(f"PER-ARM TABLE (last hour, control {R0['arm']}): (i) code rms p50/p90/max m | (ii) #sta |ZWD|>0.5 (worst 3) | (iii) D_phase / D_code declared within-arc rms, clk LEVEL p50 m | (iv) LOS-mean SS share %, nested dispersive % | (v) emitted/synced, withheld")
     print("-" * 118)
-    print(f"{'arm':4s} {'knob':52s} {'(i) p50/p90/max':>19s} {'(ii) n>0.5 (worst)':>28s} {'(iii) Dph/Dcd/clk':>20s} {'(iv) lvl%/disp%':>15s} {'(v) avail':>16s}  verdict")
+    print(f"{'arm':4s} {'knob':52s} {'(i) p50/p90/max':>19s} {'(ii) n>0.5 (worst)':>28s} {'(iii) Dph/Dcd/clk':>20s} {'(iv) lvl%/disp%':>15s} {'(v) avail':>16s} {'consumer 30-60/90-120':>22s}  verdict")
     for R in results:
         i = R.get("i") or {}; ii = R.get("ii") or {}; c = R.get("iii") or {}; t = R.get("iv") or {}; av = R.get("avail") or {}
+        cs = R.get("consumer") or {}
         w3 = ", ".join(f"{s[:4]} {v:+.1f}" for s, v in (ii.get("worst") or [])[:3])
         print(f"{R['arm']:4s} {R['knob'][:52]:52s} {fmt(i.get('p50'), 2, 5)}/{fmt(i.get('p90'), 2, 5)}/{fmt(i.get('max'), 2, 6)} "
               f"{str(ii.get('n_over_0p5', '-')):>4s} ({w3})".ljust(29) + " "
               f"{fmt(c.get('phase_decl_rms'), 2, 5)}/{fmt(c.get('code_decl_rms'), 2, 5)}/{fmt(c.get('clk_level_p50'), 2, 6)} "
               f"{fmt(t.get('level_share'), 1, 6)}/{fmt(t.get('disp_nested'), 1, 6)} "
-              f"{str(av.get('emitted', '-')):>5s}/{str(av.get('synced', '-')):>5s} w{str((av.get('withheld_gate') or 0) + (av.get('withheld_a4') or 0)) if av else '-':>3s}  {R['bars']['label']}")
+              f"{str(av.get('emitted', '-')):>5s}/{str(av.get('synced', '-')):>5s} w{str((av.get('withheld_gate') or 0) + (av.get('withheld_a4') or 0)) if av else '-':>3s} "
+              f"{fmt((cs.get('w30_60') or {}).get('p50_3d'), 2, 9)}/{fmt((cs.get('w90_120') or {}).get('p50_3d'), 2, 9)} m  {R['bars']['label']}")
     # -- the extension reads
     print("\nEXTENSION READS (last hour): (vi) tropo-shaped fit share of the code residual (pooled rows / per-LOS means / per-station median) | ZWD rows carried | (vii) SH a00 epoch 1 / hour p50 [min..max] / last, in-band epochs")
     for R in results:
