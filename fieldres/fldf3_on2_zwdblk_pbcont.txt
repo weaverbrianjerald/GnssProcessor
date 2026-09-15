@@ -1,0 +1,214 @@
+====================================================================================================
+CONSUMER RESIDUAL CENSUS  —  fldf3_on2_zwdblk_pbcont
+====================================================================================================
+run dir           : C:\GnssProcessor\runs\fldf3_on2_zwdblk_pbcont
+consumer          : WTZZ00DEU  lat 49.144 lon 12.879   (roster 62 incl. held-out)
+epochs            : 1440 total, 720 settled (>= 6 h), dt 30 s, span 11.99 h
+AR                : 0 fixes in the settled window; gates {'ratio_battery': 395, 'sigma_gate': 325}
+
+----------------------------------------------------------------------------------------------------
+1. CHARACTER OF THE SETTLED RESIDUAL  (slow wander vs fast noise)
+----------------------------------------------------------------------------------------------------
+comp       mean       sd      rms   p95|.|  trend/h  ACF<0.5  ACF<1/e    ACF=0  sd(blk)   sd(in)   %slow
+            (m)      (m)      (m)      (m)      (m)    (min)    (min)    (min)      (m)      (m)        
+up       -0.904    2.319    2.488    3.985   -1.249     55.5     73.0      n/a    2.391    0.368    97.7
+east      1.142    0.985    1.508    2.473   -0.403     53.0     63.5     95.5    1.016    0.150    97.9
+north    -0.108    0.383    0.398    0.724    0.144     26.0     42.5     86.0    0.373    0.139    87.7
+d3        2.850    0.708    2.936    4.006    0.140     21.5     28.5     61.0    0.685    0.267    86.8
+
+ACF by lag (settled, about the mean):
+comp       1min     5min    10min    20min    30min    60min
+up        0.993    0.965    0.923    0.832    0.740    0.463
+east      0.995    0.975    0.944    0.864    0.767    0.409
+north     0.994    0.946    0.842    0.611    0.446    0.301
+
+  sd(blk) = std of the 30-min block MEANS (slow wander); sd(in) = pooled within-block scatter (fast noise); %slow = slow share of variance.
+
+Error-vector PCA (is the residual ONE direction in ENU?):
+    basis          frac var ax1  sd ax1 (m)       E       N       U    elev    azim
+    about_mean            0.901       2.419   0.274  -0.112   0.955    72.8   112.1
+    about_truth           0.901       2.419   0.274  -0.112   0.955    72.8   112.1
+    corr(E,N) -0.337   corr(E,U) 0.607   corr(N,U) -0.709
+    GEOMETRIC NULL from the real sky at WTZR00DEU (720 settled epochs, elev cutoff 15 deg,
+      a receiver-clock column included — that is what tilts the worst direction off vertical):
+      worst-determined axis  E +0.055  N +0.151  U +0.987   elev 80.8 deg, azim 20.1 deg
+      ANGLE between the error axis and the geometric null = 19.8 deg   (error variance projecting onto the null: 80.2 %, sd 2.281 m)
+      sky occupancy at WTZR00DEU (% of LOS-epochs; the NORTH column at high elevation is the constellation void):
+        elev        NNE    ENE    ESE    SSE    SSW    WSW    WNW    NNW
+        0-30       3.81   8.97   3.98   3.85   3.52   2.34   7.33   0.00
+        30-45      0.00   4.97   3.41   2.51   4.72   2.56   7.13   0.00
+        45-60      0.00   3.74   3.26   1.22   2.49   3.33   6.98   0.00
+        60-90      0.98   5.42   1.79   1.60   2.19   3.92   3.33   0.64
+
+----------------------------------------------------------------------------------------------------
+2. TROPO COUPLING  (producer ZWD deviation vs consumer UP)
+----------------------------------------------------------------------------------------------------
+stations with ZWD : 61   span p50 0.205 m, p95 1.088 m, max 2.256 m, n(span>10 m) 0
+fleet-median dev  : sd 0.0036 m, span 0.0156 m
+corr(UP, fleet dev)   = -0.2569      corr(3D, fleet dev) = 0.4255
+per-station |corr|: max 0.9612, median 0.7822
+ZWD 'carried' flag: 1.000 of settled rows
+
+Top 8 stations by |corr(UP, that station's ZWD deviation)|:
+station          corr    slope     span       sd   median   dist_km   n_ep
+KOKV00USA     -0.9612   -64.14    0.118    0.035    0.126     12056    720
+HOLB00CAN     -0.9516  -116.33    0.063    0.019    0.077      8316    720
+MIZU00JPN     -0.9433    -9.61    0.688    0.228   -0.008      8963    720
+URUM00CHN     -0.9271   -47.90    0.155    0.045   -0.106      5516    720
+CUSV00THA     -0.9269    -9.13    0.872    0.236    0.042      8688    711
+KIT300UZB      0.9233    33.10    0.228    0.065    0.949      4353    718
+MRC100USA     -0.9187   -32.33    0.205    0.066   -0.264      6900    720
+GOP600CZE     -0.9168   -31.34    0.217    0.068    0.054       162    720
+
+Nearest 5 stations to the consumer:
+station        dist_km     corr    slope     span
+WTZR00DEU            0  -0.8553   -31.62    0.239
+WTZS00DEU            0  -0.4617   -52.54    0.070
+GOP600CZE          162  -0.9168   -31.34    0.217
+GOPE00CZE          162   0.8917    18.98    0.341
+LEIJ00DEU          248   0.8755    46.99    0.185
+
+CO-LOCATED site proxy (WTZR00DEU, WTZS00DEU, < 5 km — the best available stand-in for the consumer's own wet tropo):
+  corr(UP, site ZWD dev) = -0.8114    slope dUP/dZWD = -48.43  (a wet-mapping-collinear vertical error sits near -3 .. -4)
+  site ZWD dev sd 0.0388 m, span 0.1379 m;  UP rms after regressing site ZWD out = 1.355 m
+
+Consumer's OWN ZWD:
+  NOT TRACED — no CSV in this run carries a wet-tropo column for the held-out station.
+  wet-tropo columns found in 1 file(s):
+    network_zwd.csv              cols=['zwd_m'] consumer_rows=False
+
+----------------------------------------------------------------------------------------------------
+3. PER-30-MIN BLOCK  (settled blocks only)
+----------------------------------------------------------------------------------------------------
+ blk    t_h   UPrms  UPmean   3Drms   Erms   Nrms  nsat   sig0  zwddev  arcRF  ambRS PBGAUG PIVOT_ T4_att detect T0_gap TOPOLO   GATE IONO_D CLK_ST READMI
+  12    6.0   3.090   3.076   3.372   1.26   0.49  50.0   1.00   0.003     77      3     14     16     77     31     36    209      0      2      0      0
+  13    6.5   2.352   2.347   2.930   1.62   0.65  51.0   1.00  -0.000     67      0     13     16     67     18     35    131      0      2      0      0
+  14    7.0   1.316   1.124   2.237   1.63   0.77  54.2   1.00  -0.004     71      2     12     13     71     14     23    204      0      0      0      0
+  15    7.5   0.150   0.106   1.579   1.54   0.33  51.9   1.00  -0.003    103      3     20     21    103     29     46    164      4      0      0      2
+  16    8.0   0.710   0.703   2.416   2.30   0.20  51.4   1.00  -0.004     93     10     14     15     93     19     52    173      0      0      0      0
+  17    8.5   0.693  -0.395   2.560   2.46   0.10  49.8   1.00  -0.001     74      7     24     26     74     33     38    146      0      2      0      0
+  18    9.0   2.302  -2.298   3.073   2.03   0.13  47.7   1.00   0.000    119      5     19     20    119     43     42    241      0      2      0      0
+  19    9.5   2.380  -2.379   2.764   1.32   0.48  48.6   1.00   0.002     84      3     18     19     84    105     68    182      0      1      0      0
+  20   10.0   2.942  -2.923   3.020   0.60   0.31  44.9   1.03   0.005    181      6     15     16    181     49     67    224      0      0      0      1
+  21   10.5   3.631  -3.628   3.643   0.10   0.27  48.8   1.00   0.005     99      3     14     16     99     67     76    186      0      2      0      0
+  22   11.0   4.189  -4.148   4.214   0.43   0.14  50.5   1.02  -0.000    175      6     14     17    175     42     73    186      0      1      0      0
+  23   11.5   2.471  -2.436   2.526   0.49   0.18  49.4   1.01   0.001     73      1     17     19     73     37     51    229      0      0      0      0
+
+Spearman rho of each block driver against the block's consumer error (n = 12 settled blocks; |rho| > ~0.58 is p<0.05 at n=12):
+driver                     mean  rho(UPrms)       p  rho(3Drms)       p  rho(|UPmean|)
+CLK_STEP                      —(constant / absent)
+CLK_ANCHOR                    —(constant / absent)
+T3_raim                       —(constant / absent)
+n_slip_refloats               —(constant / absent)
+n_refloat_sats                —(constant / absent)
+n_d5_flags                    —(constant / absent)
+n_chord_births                —(constant / absent)
+n_present                     —(constant / absent)
+zwd_fleet_dev_m            0.00       0.706   0.010       0.643   0.024          0.706
+n_dw_engaged             393.75      -0.627   0.029      -0.528   0.078         -0.627
+sigma0                     1.01       0.532   0.075       0.285   0.370          0.532
+detector_refloat          40.58       0.531   0.075       0.559   0.059          0.531
+T0_gap_resume             50.58       0.510   0.090       0.406   0.191          0.510
+GATE                       0.33      -0.480   0.114      -0.480   0.114         -0.480
+TOPOLOGY                 189.58       0.438   0.155       0.298   0.347          0.438
+n_sats_mean               49.84      -0.434   0.159      -0.524   0.080         -0.434
+ADMISSION_withhold         0.17      -0.389   0.212      -0.324   0.304         -0.389
+PBGAUGE                   16.17      -0.384   0.217      -0.185   0.565         -0.384
+PRIORRES                 937.58       0.315   0.319       0.497   0.101          0.315
+PIVOT_PHASE_ANCHOR        17.83      -0.275   0.388      -0.050   0.878         -0.275
+T4_attrib                101.33       0.273   0.391       0.406   0.191          0.273
+n_arc_refloat            101.33       0.273   0.391       0.406   0.191          0.273
+CONGRUENCE                28.58       0.243   0.446       0.000   1.000          0.243
+IONO_DW                    1.00       0.238   0.456       0.635   0.027          0.238
+READMIT                    0.25      -0.237   0.459      -0.296   0.351         -0.237
+sigma0_global              9.24       0.217   0.499       0.406   0.191          0.217
+BLOCKBAARDA              179.08       0.210   0.513       0.126   0.697          0.210
+PBGAUGE_cold               0.17       0.194   0.545       0.453   0.139          0.194
+n_amb_reset                4.08      -0.114   0.724       0.150   0.642         -0.114
+
+Worst 4 blocks by |UP block mean|, itemised:
+  blk  22 @ t+11.0 h : UPmean -4.148  UPrms 4.189  3Drms 4.214  zwd_fleet_dev -0.000  sig0 1.02  nsat 50.5
+        tiers: {'PRIORRES': 971, 'MDB': 405, 'TOPOLOGY': 186, 'T4_attrib': 175, 'BLOCKBAARDA': 162, 'T0_gap': 73, 'REDUNDANCY': 39, 'CONGRUENCE': 27, 'T1_if_slip': 22, 'T0_mw_detect': 20, 'PHASE_ANCHOR': 17, 'PBGAUGE': 14, 'RETRO': 2, 'IONO_DW': 1}
+  blk  21 @ t+10.5 h : UPmean -3.628  UPrms 3.631  3Drms 3.643  zwd_fleet_dev 0.005  sig0 1.00  nsat 48.8
+        tiers: {'PRIORRES': 931, 'MDB': 402, 'BLOCKBAARDA': 215, 'TOPOLOGY': 186, 'T4_attrib': 99, 'T0_gap': 76, 'T1_if_slip': 47, 'CONGRUENCE': 42, 'REDUNDANCY': 27, 'T0_mw_detect': 20, 'PHASE_ANCHOR': 16, 'PBGAUGE': 14, 'RETRO': 8, 'IONO_DW': 2}
+  blk  12 @ t+6.0 h : UPmean +3.076  UPrms 3.090  3Drms 3.372  zwd_fleet_dev 0.003  sig0 1.00  nsat 50.0
+        tiers: {'PRIORRES': 1245, 'MDB': 400, 'TOPOLOGY': 209, 'BLOCKBAARDA': 202, 'T4_attrib': 77, 'T0_gap': 36, 'REDUNDANCY': 29, 'T0_mw_detect': 23, 'CONGRUENCE': 23, 'PHASE_ANCHOR': 16, 'PBGAUGE': 14, 'T1_if_slip': 8, 'RETRO': 2, 'IONO_DW': 2}
+  blk  20 @ t+10.0 h : UPmean -2.923  UPrms 2.942  3Drms 3.020  zwd_fleet_dev 0.005  sig0 1.03  nsat 44.9
+        tiers: {'PRIORRES': 1360, 'MDB': 412, 'TOPOLOGY': 224, 'BLOCKBAARDA': 191, 'T4_attrib': 181, 'T0_gap': 67, 'REDUNDANCY': 38, 'T1_if_slip': 33, 'CONGRUENCE': 28, 'T0_mw_detect': 16, 'PHASE_ANCHOR': 16, 'PBGAUGE': 15, 'RETRO': 8, 'ADMISSION': 1}
+
+3b. PER-EPOCH driver correlations over the settled window (n = 720 epochs, but every series is serially correlated —
+    p is computed on the AUTOCORRELATION-CORRECTED effective n, which is what makes these honest):
+driver                       mean        sd   lag1    r(UP)   p_eff    r(3D)   p_eff  r(horiz)   p_eff   n_eff
+worst_dev_m                 1.182     0.853   0.98    0.840   0.012   -0.187   0.538     0.262   0.588     7.6
+clock_std_m                 0.296     0.125   0.98    0.807   0.005   -0.151   0.585     0.184   0.639     9.9
+clock_median_m             -0.005     0.017   0.88   -0.671   0.000    0.164   0.245    -0.194   0.200    46.5
+n_dw_engaged                6.562     1.761   1.00    0.602   0.588   -0.525   0.167     0.631   0.565     3.0
+dw_mean_w                   0.901     0.026   1.00   -0.570   0.614    0.419   0.297    -0.592   0.596     3.0
+n_dw_zero                   4.572     1.186   0.98    0.504   0.137   -0.043   0.877     0.421   0.258    10.0
+n_uncheckable_rows         25.153    11.950   0.27   -0.370   0.016    0.139   0.375    -0.299   0.056    41.8
+adm_net_worst_z         16334.674 37555.338   0.99    0.307   0.583   -0.543   0.083     0.192   0.781     5.5
+zwd_fleet_dev_m             0.000     0.004   0.97   -0.257   0.452    0.426   0.096    -0.584   0.081    10.8
+n_clock_sats               31.562     0.574   0.99    0.150   0.762   -0.523   0.080     0.570   0.272     6.5
+sigma0_pf                   1.167     0.200   0.37    0.145   0.009   -0.003   0.955     0.060   0.282   328.8
+prires_rows              1093.439    30.689   0.97    0.138   0.631   -0.410   0.073     0.687   0.008    14.4
+n_arc_refloat               1.689     3.132   0.33   -0.109   0.039    0.042   0.428    -0.084   0.112   360.5
+n_pf_rows                2044.325    59.918   0.99    0.099   0.869   -0.404   0.225     0.675   0.294     5.2
+sigma0                      1.006     0.072  -0.01   -0.069   0.064    0.016   0.665    -0.089   0.016   729.0
+n_redun_rows             2300.625    68.664   0.93    0.066   0.939   -0.433   0.482     0.631   0.471     3.8
+sigma0_pf_phase             1.040     0.467   0.26    0.064   0.186   -0.071   0.142     0.074   0.128   426.2
+prires_max_t           683261.6295612222.222   0.02   -0.028   0.456   -0.014   0.704     0.010   0.793   694.3
+prior_tension_ratio        18.546   202.515   0.00    0.021   0.566    0.034   0.366     0.053   0.159   715.8
+sigma0_global               9.235    47.154   0.06    0.011   0.783    0.020   0.607     0.005   0.905   636.2
+
+----------------------------------------------------------------------------------------------------
+4. EAST / NORTH
+----------------------------------------------------------------------------------------------------
+  hr  set    Erms    Nrms   Emean   Nmean   UPrms   nsat   UTC_h   LST_h   solar  arcRF  ambRS
+   0    .   0.575   0.340  -0.467   0.221   1.620   47.0    0.50    1.35   -0.99    112      2
+   1    .   0.773   0.286  -0.768   0.270   0.211   47.4    1.50    2.35   -1.00    158      5
+   2    .   1.067   0.160  -1.062   0.137   0.451   49.1    2.50    3.35   -0.94    315      8
+   3    .   1.311   0.265  -1.310   0.255   0.240   50.9    3.50    4.35   -0.82    244      4
+   4    .   1.134   0.972  -0.760  -0.370   1.659   50.1    4.50    5.35   -0.64    223      2
+   5    .   1.655   0.672   1.606  -0.511   4.215   49.2    5.50    6.35   -0.42    190      5
+   6    Y   1.451   0.578   1.438  -0.567   2.746   50.5    6.50    7.35   -0.17    144      3
+   7    Y   1.586   0.594   1.584  -0.360   0.937   53.1    7.50    8.35    0.09    174      5
+   8    Y   2.383   0.159   2.378  -0.130   0.701   50.6    8.50    9.35    0.35    167     17
+   9    Y   1.714   0.351   1.660   0.156   2.342   48.1    9.50   10.35    0.58    203      8
+  10    Y   0.434   0.295   0.248   0.286   3.304   46.8   10.50   11.35    0.77    280      9
+  11    Y   0.462   0.161  -0.455  -0.032   3.439   49.9   11.50   12.35    0.91    248      7
+
+hourly east_rms_m vs:
+    driver                 pearson r    spearman       p    n
+    n_sats_mean                0.444       0.543   0.266    6
+    local_solar_h             -0.638      -0.429   0.397    6
+    solar_proxy               -0.581      -0.429   0.397    6
+    hr                        -0.638      -0.429   0.397    6
+    sigma0                    -0.906      -0.778   0.069    6
+    n_amb_reset                0.439       0.257   0.623    6
+    n_arc_refloat             -0.810      -0.600   0.208    6
+    n_slip_refloats     (constant/absent)
+hourly north_rms_m vs:
+    driver                 pearson r    spearman       p    n
+    n_sats_mean                0.454       0.257   0.623    6
+    local_solar_h             -0.772      -0.600   0.208    6
+    solar_proxy               -0.785      -0.600   0.208    6
+    hr                        -0.772      -0.600   0.208    6
+    sigma0                    -0.522      -0.439   0.383    6
+    n_amb_reset               -0.741      -0.771   0.072    6
+    n_arc_refloat             -0.524      -0.257   0.623    6
+    n_slip_refloats     (constant/absent)
+
+per-epoch settled cross-correlations (n = all settled epochs):
+    corr_east_north         -0.3372
+    corr_east_up            0.6074
+    corr_north_up           -0.7092
+    corr_nsats_up_abs       -0.4318
+    corr_nsats_east_abs     0.3281
+    corr_nsats_north_abs    0.4218
+    n_sats_mean             49.8444
+    n_sats_min              43.0000
+
+----------------------------------------------------------------------------------------------------
+MISSING / UNAVAILABLE TRACES
+----------------------------------------------------------------------------------------------------
+  (none)

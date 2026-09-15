@@ -1,0 +1,205 @@
+================================================================================================
+FIELD WIRE PHASE-CLOCK CENSUS — fldf3_on2_zwdblk_logctl
+================================================================================================
+  wire            : C:\GnssProcessor\runs\fldf3_on2_zwdblk_logctl\products.txt
+  epochs          : 1440 emitted, dt 30 s, TOW 259200..302370 (week 2313, 2024-129), 12.0 h
+  H rows with no emitted epoch (withheld) : 0
+  satellites      : 32 (G01..G32)
+  S contract      : ref_rx=MBAR00UGA bias_sign=1 windup=nominal-wu93 emit_cb=0 disc_thresh=0.05 m
+  a-priori id     : COD0MGXFIN_20241280000_01D_05M_ORB.SP3+COD0MGXFIN_20241280000_01D_30S_CLK.CLK
+  consumer        : WTZZ00DEU  ECEF [4075579.122, 931853.4443, 4801569.233]
+  elevation mask  : 15.0 deg   (from C:/GnssProcessor/.claude/worktrees/agent-a7e2586003a605548/config/test_suite/_fldf3_on2_zwdblk_logctl.json)
+  error axis      : measured from the consumer trace (PC1 of the settled ENU error)
+  settle          : first 6 h discarded -> 720 epochs = 6.0 h analysed
+  local-linear win: 30 min sliding, tenure-clipped
+  external CLK    : data\2024-129\products\COD0MGXFIN_20241290000_01D_30S_CLK.CLK
+  external SP3    : data\2024-129\products\COD0MGXFIN_20241290000_01D_05M_ORB.SP3
+  datum changes   : 1 epoch(s); R (retro) bumps: 68 on 17 sat(s); PBGAUGE 349, PHASE_ANCHOR 382, PIVOT 1
+
+------------------------------------------------------------------------------------------------
+[2] TRUTH-FREE SMOOTHNESS — deviation from a local linear fit, 30-min sliding window
+    (per-epoch TRIM over satellites removed = datum; tenure-clipped at PBGAUGE / PHASE_ANCHOR /
+     retro bump / pivot / datum change / absence)
+------------------------------------------------------------------------------------------------
+    channel    nsat   rms p50   rms p90   rms max    pooled   |d| p50   |d| p90   |d| p99   ACF<.5
+                          (m)       (m)       (m)       (m)       (m)       (m)       (m)    (min)
+    clk          32    0.0248    0.0592    0.0821    0.0369    0.0046    0.0197    0.1130      0.5
+    pb_L1C       32    0.1523    0.3374    0.5023    0.2249    0.0289    0.2269    1.1296      3.0
+    pb_L2W       32    0.3296    0.7673    2.8716    0.6897    0.0583    0.4984    2.2637      1.5
+    pb_MEAN      32    0.2346    0.5678    1.4353    0.4047    0.0413    0.3465    1.5916      1.5
+    pb_IF        32    0.2378    0.9076    4.4672    0.9890    0.0378    0.4758    2.8268      1.0
+    pc_L1C       32    0.1543    0.3453    0.5113    0.2304    0.0315    0.2314    1.1578      2.5
+    pc_L2W       32    0.3322    0.7657    2.8713    0.6923    0.0609    0.5071    2.2777      1.5
+    pc_MEAN      32    0.2344    0.5748    1.4351    0.4085    0.0453    0.3526    1.6227      1.5
+    pc_IF        32    0.2300    0.9050    4.4677    0.9892    0.0423    0.4749    2.8490      1.0
+    sum_L1C      32    0.1618    0.3350    0.5027    0.2253    0.0314    0.2337    1.1112      2.5
+    sum_IF       32    0.2411    0.9097    4.4664    0.9898    0.0422    0.4781    2.8591      1.0
+
+    |deviation| histogram, pc_IF (m):  <.01  <.02  <.05  <.1   <.2   <.5   <1    <2    >=2
+                                       5404   2709   3878   2960   2663   2782   1197    537    394
+
+    pc_IF worst satellites:  G06=4.468  G05=2.141  G12=1.656  G19=0.911  G22=0.853  G13=0.716  G11=0.664  G28=0.635
+    pc_IF best  satellites:  G24=0.121  G26=0.125  G15=0.126  G01=0.137  G08=0.154
+
+------------------------------------------------------------------------------------------------
+[2b] UNMARKED WITHIN-TENURE STEPS (invariant #7: an event with no edge)
+     one-epoch |dX| INSIDE a tenure, i.e. NOT explained by PBGAUGE / PHASE_ANCHOR / retro bump /
+     pivot / datum change / absence.  The one-epoch differences are re-centred on their own MEDIAN
+     across satellites first, so a step COMMON to the constellation is invisible by construction and
+     no level-datum choice can stamp one satellite's jump onto the others (it did: see --datum).
+------------------------------------------------------------------------------------------------
+     settled population: 22725 sat-epochs
+     channel      >0.05 m   >0.10 m   >0.25 m   >0.50 m   >1.00 m   rate/sat/h(>0.25)
+     clk              470       234        72        19         7               0.380
+     pb_L1C           591       296       127        67        31               0.671
+     pb_L2W           720       453       223       140        75               1.178
+     pb_MEAN          575       349       175       100        53               0.924
+     pb_IF            849       455       211       104        65               1.114
+     pc_L1C           959       470       191        87        39               1.009
+     pc_L2W          1091       638       288       163        83               1.521
+     pc_MEAN          949       532       235       118        63               1.241
+     pc_IF           1263       682       280       125        74               1.479
+     sum_L1C          990       496       193        85        40               1.019
+     sum_IF          1247       661       277       123        70               1.463
+
+     epochs with the most SIMULTANEOUS cross-satellite pc_IF steps > 0.25 m:
+       tow 287400  ep 940  26 sats (G01,G02,G05,G06,G08,G10,G11,G12...)   events: T4_attribx19, PBGAUGEx1, PHASE_ANCHORx1
+       tow 282150  ep 765  26 sats (G02,G03,G04,G05,G06,G07,G08,G09...)   events: T4_attribx5, PBGAUGEx1, PHASE_ANCHORx1, IONO_DWx1
+       tow 283770  ep 819  16 sats (G01,G02,G04,G05,G06,G09,G11,G12...)   events: T4_attribx1, PBGAUGEx1, PHASE_ANCHORx1
+       tow 295890  ep 1223  15 sats (G01,G03,G04,G05,G06,G08,G09,G11...)   events: T4_attribx32, PBGAUGEx2, PHASE_ANCHORx2
+       tow 282810  ep 787  12 sats (G02,G05,G06,G17,G19,G20,G21,G22...)   events: NONE
+       tow 296820  ep 1254  10 sats (G01,G12,G16,G18,G22,G24,G25,G26...)   events: T4_attribx17, T1_if_slipx2
+
+     wander DECOMPOSITION — same statistic with every >0.50 m within-tenure step also cut:
+     channel      rms p50 all   rms p50 step-cut  step share of var
+     clk               0.0248             0.0222              19.7 %
+     pb_L1C            0.1523             0.0709              78.4 %
+     pc_L2W            0.3322             0.0969              91.5 %
+     pc_IF             0.2300             0.1495              57.8 %
+
+------------------------------------------------------------------------------------------------
+[3] EXTERNAL (COD/IGS final) CLOCK COMPARISON — DIAGNOSTIC ONLY
+------------------------------------------------------------------------------------------------
+    NOTE — the a-priori the C records are a correction ABOUT is itself a
+    final SP3+CLK ('COD0MGXFIN_20241280000_01D_05M_ORB.SP3+COD0MGXFIN_20241280000_01D_30S_CLK.CLK').  The emitted C0 is therefore ALREADY
+    (estimator clock - final clock), up to the per-constellation per-epoch
+    scalar the CLK-R emit re-base subtracts (NetworkClockEmitRebase.cpp:
+    `held = c0 - acc`; between-sat differences preserved exactly), which the
+    per-epoch mean removal above kills.  So channel `clk` IS the
+    truth-graded clock error e_s(t); no independent .CLK is needed for it.
+    A genuinely INDEPENDENT check would need a different AC's final clock
+    (e.g. IGS0OPSFIN); only COD is on disk, so that is NOT done here.
+    parsing COD0MGXFIN_20241290000_01D_30S_CLK.CLK ...
+    COD final clock: 32/32 GPS satellites, 92160 AS records
+    NOISE FLOOR of the identical statistic on the COD final clock itself:
+      rms p50 0.0066 m   p90 0.0474 m   pooled 0.0301 m   |d| p99 0.1140 m
+      clk     / floor  =      3.7 x   (0.0248 m vs 0.0066 m)
+      pc_IF   / floor  =     34.8 x   (0.2300 m vs 0.0066 m)
+      pb_L1C  / floor  =     23.0 x   (0.1523 m vs 0.0066 m)
+    COD phase biases are DAILY constants (…_01D_01D_OSB.BIA), so every
+    time-variation seen in the P channels above is wire-side by construction.
+
+------------------------------------------------------------------------------------------------
+[4] GEOMETRY CLOSURE — does the wire's per-sat wander reproduce the consumer's?
+------------------------------------------------------------------------------------------------
+    consumer trace: 1440 epochs, n_sats(rows) med 50, total AR fixes 0
+    consumer settled error: sd E/N/U = 1.092/1.288/1.991 m, mean U +0.240 m; PC1 0.684 of variance at (+0.405,+0.096,+0.909) = el 65.4 az 76.6
+    SP3: 32 GPS arcs, 289 nodes, 9-pt Neville, Sagnac-rotated to the receive-time frame
+    visible sats above 15 deg at the consumer: median 8
+    consumer passes: 64 over 32 sats (median 1/sat; broken at loss of visibility and at the wire's own R discontinuity bumps)
+    delta = -dev(<driver>), G = [-e_ENU, 1], W = diag(sin^2 el).
+    prep 'hp30'   = the step-2 local-linear residual (what a 30-min high-pass leaves)
+    prep 'tenure' = within-PRODUCER-tenure mean removed ONLY
+    prep 'pass'   = within-CONSUMER-pass mean removed (one constant float ambiguity per arc)
+    prep 'passlin'= within-pass mean AND trend removed (clock/ZWD soak a ramp)
+    corr is quoted with a Bartlett EFFECTIVE sample size (both series are autocorrelated at ~13 min); |z| is the Fisher-z two-sided normal score, so
+    |z| < 2 is NOT a detection no matter how many epochs the nominal n is.
+
+    driver   prep      trim   corr E   corr N   corr U  corr AX  n_eff  |z|AX  sd_pred AX  sd_act AX   ratio
+    clk      hp30         0   -0.036   +0.012   -0.237   -0.200    260   3.25       0.069      2.159    0.03
+    clk      hp30         2   -0.014   -0.106   -0.204   -0.167    294   2.88       0.133      2.159    0.06
+    clk      tenure       0   -0.008   -0.489   -0.409   -0.392     20   1.69       0.161      2.159    0.07
+    clk      tenure       2   -0.088   -0.450   -0.379   -0.375     34   2.18       0.194      2.159    0.09
+    clk      pass         0   +0.549   -0.217   +0.045   +0.141     22   0.62       0.181      2.159    0.08
+    clk      pass         2   +0.198   -0.491   -0.470   -0.459     21   2.08       0.109      2.159    0.05
+    clk      passlin      0   +0.065   -0.423   -0.650   -0.627     19   2.93       0.139      2.159    0.06
+    clk      passlin      2   +0.006   -0.464   -0.653   -0.640     15   2.64       0.119      2.159    0.06
+    pc_L1C   hp30         0   +0.124   -0.060   +0.138   +0.142    157   1.77       0.838      2.159    0.39
+    pc_L1C   hp30         2   +0.205   -0.158   +0.201   +0.197    156   2.46       0.644      2.159    0.30
+    pc_L1C   tenure       0   -0.144   +0.072   +0.644   +0.627     15   2.52       6.447      2.159    2.99
+    pc_L1C   tenure       2   -0.316   -0.203   +0.041   +0.003     27   0.01       4.549      2.159    2.11
+    pc_L1C   pass         0   -0.397   -0.096   +0.426   +0.354     22   1.61       4.167      2.159    1.93
+    pc_L1C   pass         2   +0.227   +0.076   +0.630   +0.632     15   2.56       7.016      2.159    3.25
+    pc_L1C   passlin      0   -0.078   +0.353   +0.668   +0.697     14   2.91       4.555      2.159    2.11
+    pc_L1C   passlin      2   +0.387   +0.415   +0.634   +0.671     17   3.00       4.933      2.159    2.28
+    pc_L2W   hp30         0   +0.188   +0.056   +0.123   +0.150    137   1.75       1.342      2.159    0.62
+    pc_L2W   hp30         2   +0.179   +0.058   +0.126   +0.152    139   1.79       1.418      2.159    0.66
+    pc_L2W   tenure       0   -0.474   +0.234   +0.607   +0.575     15   2.22       5.988      2.159    2.77
+    pc_L2W   tenure       2   -0.398   +0.283   +0.015   -0.009     18   0.03       6.686      2.159    3.10
+    pc_L2W   pass         0   -0.444   +0.458   +0.522   +0.513     15   1.98       8.536      2.159    3.95
+    pc_L2W   pass         2   +0.031   -0.464   +0.587   +0.603     15   2.38      10.573      2.159    4.90
+    pc_L2W   passlin      0   -0.252   -0.540   +0.387   +0.328     17   1.25       4.950      2.159    2.29
+    pc_L2W   passlin      2   +0.230   -0.617   -0.411   -0.387     18   1.57       5.889      2.159    2.73
+    pc_MEAN  hp30         0   +0.193   +0.021   +0.136   +0.153    143   1.83       1.064      2.159    0.49
+    pc_MEAN  hp30         2   +0.211   +0.027   +0.131   +0.148    142   1.76       1.088      2.159    0.50
+    pc_MEAN  tenure       0   -0.474   +0.202   +0.657   +0.645     14   2.54       5.788      2.159    2.68
+    pc_MEAN  tenure       2   -0.373   +0.273   +0.505   +0.475     15   1.80       4.128      2.159    1.91
+    pc_MEAN  pass         0   -0.460   +0.378   +0.590   +0.561     17   2.36       5.155      2.159    2.39
+    pc_MEAN  pass         2   -0.123   +0.413   +0.094   +0.098     17   0.37       4.810      2.159    2.23
+    pc_MEAN  passlin      0   -0.236   -0.389   +0.576   +0.564     15   2.17       4.253      2.159    1.97
+    pc_MEAN  passlin      2   +0.123   -0.303   +0.158   +0.203     17   0.76       2.477      2.159    1.15
+    pc_IF    hp30         0   -0.042   -0.178   +0.002   -0.034    157   0.42       0.747      2.159    0.35
+    pc_IF    hp30         2   -0.007   -0.166   -0.048   -0.087    197   1.22       0.920      2.159    0.43
+    pc_IF    tenure       0   +0.449   -0.160   +0.469   +0.458     18   1.90      11.309      2.159    5.24
+    pc_IF    tenure       2   +0.218   +0.130   +0.438   +0.444     19   1.88       3.999      2.159    1.85
+    pc_IF    pass         0   +0.291   -0.400   -0.162   -0.203     16   0.75      14.680      2.159    6.80
+    pc_IF    pass         2   -0.249   +0.479   +0.208   +0.208     30   1.09       3.302      2.159    1.53
+    pc_IF    passlin      0   +0.182   +0.613   +0.552   +0.622     17   2.77       9.454      2.159    4.38
+    pc_IF    passlin      2   -0.268   -0.040   +0.436   +0.401     18   1.65       3.115      2.159    1.44
+
+    --- detail, pc_IF/hp30/trim0 ---
+      E: corr -0.042  slope(act~pred) -0.052  sd_pred 0.890 m  sd_act 1.092 m  ratio 0.81
+      N: corr -0.178  slope(act~pred) -0.458  sd_pred 0.499 m  sd_act 1.288 m  ratio 0.39
+      U: corr +0.002  slope(act~pred) +0.004  sd_pred 0.966 m  sd_act 1.991 m  ratio 0.49
+      predicted-error OWN axis: PC1 0.683 of var, (-0.654,-0.084,+0.752)  el 48.7  az 262.7   [measured: el 65.4 az 76.6]
+      |cos| predicted-PC1 vs measured axis: 0.410
+      per-satellite contribution to the AXIS projection (rms of w_s * delta_s):
+        G12  contrib   0.8196 m   med elev  42.7 deg   visible   40 %   own wander   1.6560 m
+        G25  contrib   0.4022 m   med elev  59.3 deg   visible   59 %   own wander   0.3812 m
+        G28  contrib   0.2031 m   med elev  44.3 deg   visible   65 %   own wander   0.6352 m
+        G18  contrib   0.1569 m   med elev  54.6 deg   visible   71 %   own wander   0.1970 m
+        G06  contrib   0.1342 m   med elev  21.6 deg   visible   14 %   own wander   4.4677 m
+        G11  contrib   0.1207 m   med elev  32.7 deg   visible   38 %   own wander   0.6642 m
+
+    --- detail, clk/hp30/trim0 ---
+      E: corr -0.036  slope(act~pred) -1.729  sd_pred 0.023 m  sd_act 1.092 m  ratio 0.02
+      N: corr +0.012  slope(act~pred) +0.992  sd_pred 0.016 m  sd_act 1.288 m  ratio 0.01
+      U: corr -0.237  slope(act~pred) -6.611  sd_pred 0.071 m  sd_act 1.991 m  ratio 0.04
+      predicted-error OWN axis: PC1 0.882 of var, (+0.123,+0.028,+0.992)  el 82.8  az 77.1   [measured: el 65.4 az 76.6]
+      |cos| predicted-PC1 vs measured axis: 0.954
+      per-satellite contribution to the AXIS projection (rms of w_s * delta_s):
+        G10  contrib   0.0462 m   med elev  30.3 deg   visible   19 %   own wander   0.0598 m
+        G27  contrib   0.0258 m   med elev  39.7 deg   visible   35 %   own wander   0.0725 m
+        G16  contrib   0.0214 m   med elev  52.9 deg   visible   49 %   own wander   0.0262 m
+        G18  contrib   0.0188 m   med elev  54.6 deg   visible   71 %   own wander   0.0237 m
+        G23  contrib   0.0181 m   med elev  40.5 deg   visible   34 %   own wander   0.0258 m
+        G29  contrib   0.0175 m   med elev  54.5 deg   visible   83 %   own wander   0.0228 m
+
+    amplitude concentration — sd_pred on the AXIS as the k worst-wander satellites are dropped:
+      trim0=0.75 m   trim1=0.93 m   trim2=0.92 m   trim3=0.47 m   trim5=0.47 m   (measured consumer: 2.16 m)
+    magnitude link (geometry-free): corr( rms_visible|delta| , |consumer error on the axis| ) = +0.044 (log-log -0.114), n_eff 34, |z| 0.25
+    ZWD column added (G=[-e,1,1/sin el]), pc_IF/hp30: corr AX -0.091, sd_pred AX 3.334 m (vs 0.747 m without)
+    control — same per-sat rms but WHITE in time: axis sd_pred 3.927 m, corr -0.031  (real wander: 0.747 m, -0.034)
+
+------------------------------------------------------------------------------------------------
+[5] EVENT OVERLAY — |deviation| in the 5 min after an event vs elsewhere
+------------------------------------------------------------------------------------------------
+    tier             events   sat-ep   rms after  rms elsewhere   ratio
+    PBGAUGE             349     1505      2.9955         0.6573    4.56
+    PHASE_ANCHOR        382     1685      2.8274         0.6591    4.29
+    RETRO                68      346      1.4581         0.9839    1.48
+    PIVOT                 1        0         nan         0.9892     nan
+    ADMISSION            37      112      3.8788         0.9530    4.07
+    T0_gap              863     2677      0.8267         1.0090    0.82
+    ANY                         4455      1.9345         0.5788    3.34
+
