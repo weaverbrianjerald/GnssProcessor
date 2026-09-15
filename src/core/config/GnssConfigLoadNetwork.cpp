@@ -2938,6 +2938,17 @@ namespace GnssProcessor {
         const NetworkSatGfDatum sat_gf_mode = network_config_.sat_gf_datum;
         const bool sat_gf_on = sat_gf_mode != NetworkSatGfDatum::NoneMode;
 
+        // --- RF-0e: the two arms that answer RF-0d's consumer regression ----------
+        // e1 restores an ABSOLUTE level datum the geometry-free pins do not provide;
+        // e2 instead makes the geometry-free rows carry like every other datum row on a
+        // time-linked lineage.  Both default OFF (byte-identical) and both are INERT
+        // without the geometry-free datum itself.
+        network_config_.sat_if_level_datum =
+            jval<bool>(json, "network.sat_if_level_datum", "sat_if_level_datum", false);
+        network_config_.sat_gf_datum_time_linked =
+            jval<bool>(json, "network.sat_gf_datum_time_linked",
+                       "sat_gf_datum_time_linked", false);
+
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
             promote_sat_code_bias_ = true;   // estimate it on every raw code row (not fallback-only)
@@ -3270,6 +3281,61 @@ namespace GnssProcessor {
                           "geometry-free lump moves into the slant ionosphere (their "
                           "Table 8), so a consumer must apply the emitted ionosphere and "
                           "code biases AS A PAIR.");
+        }
+
+        // --- RF-0e validation: the two level-datum arms -------------------------
+        if (network_config_.sat_if_level_datum || network_config_.sat_gf_datum_time_linked) {
+            if (!sat_gf_on) {
+                log->warn("Network (RF-0e): network.sat_if_level_datum / "
+                          "network.sat_gf_datum_time_linked are INERT without "
+                          "network.sat_gf_datum — the first replaces the per-signal "
+                          "sum-to-zero rows that ONLY the geometry-free datum suppresses, "
+                          "and the second re-targets rows that only it builds.  Arm "
+                          "sat_gf_datum, or drop these.");
+            }
+            if (network_config_.sat_if_level_datum
+                && network_config_.sat_gf_datum_time_linked) {
+                // They are the two arms of one A/B on the same regression.  Arming both
+                // does not measure either, and the result would be attributed to
+                // whichever the reader happened to believe in.
+                log->error("Network (RF-0e): network.sat_if_level_datum and "
+                           "network.sat_gf_datum_time_linked are the TWO ARMS of one A/B "
+                           "on the same defect (RF-0d's consumer regression: an absolute "
+                           "geometry-free RHS against time-linked IF pins).  Arming both "
+                           "measures neither — the outcome would be attributable to "
+                           "whichever mechanism the reader already believed.  Pick one.");
+                return false;
+            }
+            if (network_config_.sat_if_level_datum && sat_gf_on)
+                log->info("Network producer (RF-0e e1): ABSOLUTE IF-LEVEL datum ARMED — one "
+                          "row per constellation pinning Sum_s (a1*d1 + a2*d2) = 0 over the "
+                          "satellites with a valid ionosphere-free pin pair, folded at the "
+                          "gauge weight beside the per-satellite pins.  It constrains ONLY "
+                          "the ionosphere-free part, which the geometry-free pins leave "
+                          "free (they fix differences within a satellite, never the level), "
+                          "so the two are consistent by construction — and under "
+                          "broadcast_tgd the target is EXACTLY true, because the broadcast "
+                          "clock is L1/L2 ionosphere-free and every satellite's "
+                          "ionosphere-free code bias is zero in that frame.  This is the "
+                          "level anchor network.sat_gf_datum's sum-to-zero suppression "
+                          "removed: with code_datum_time_linked the per-satellite IF pins "
+                          "are CHANGE pins, so each level is anchored once at first "
+                          "sighting and carried, and nothing holds the SET.  NOTE the row is "
+                          "STRONG, not gentle: its Jacobian carries one entry per satellite, so "
+                          "at equal gauge weight it beats the n single-entry change pins and "
+                          "re-zeroes the LEVEL each epoch (realized level = carried/(n+1)); the "
+                          "per-satellite DIFFERENCES stay carried.");
+            if (network_config_.sat_gf_datum_time_linked && sat_gf_on)
+                log->info("Network producer (RF-0e e2): geometry-free datum rows TIME-LINKED "
+                          "— each row's RHS is that satellite's PREVIOUS kept-epoch solved "
+                          "geometry-free combination when both pinned signals carry a "
+                          "veteran value, and the absolute target ({}) only at FIRST "
+                          "SIGHTING.  The alternative reading of RF-0d's regression: rather "
+                          "than add a level row, stop the absolute geometry-free family "
+                          "pulling against the time-linked IF pins.  The first-sighting "
+                          "anchor stays in force, so the frame is still the broadcast one; "
+                          "what changes is that it is carried rather than re-asserted.",
+                          sat_gf_mode == NetworkSatGfDatum::BroadcastTgd ? "c*T_GD" : "0");
         }
 
         // --- FAMILY-GF: the rd-3b pin, per partitioned secondary channel family ---

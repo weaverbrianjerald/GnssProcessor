@@ -1553,6 +1553,53 @@ namespace GnssProcessor {
         /// weight, so @c Plan::declared_dimension is untouched.  Requires
         /// @c w6_iono_constraint = @c None.  SOLVE-AFFECTING when armed.
         NetworkSatGfDatum sat_gf_datum{ NetworkSatGfDatum::NoneMode };
+        /// RF-0e arm e1: ONE ABSOLUTE sum-to-zero row per constellation on the
+        /// IONOSPHERE-FREE combination of the satellite code biases,
+        /// @f$\sum_s (a_1 d^s_1 + a_2 d^s_2) = 0@f$, folded at the gauge weight in place
+        /// of the per-signal sum-to-zero rows @ref sat_gf_datum suppresses.
+        ///
+        /// WHY THIS ROW AND NOT THOSE.  A per-signal sum-to-zero is inconsistent with
+        /// per-satellite geometry-free pins — the pins fix each satellite's code biases
+        /// absolutely, so the channel sums are then `mu_j*c*Sum_s T_GD^s`, not zero, and
+        /// the two families fight (RF-0d closed that).  This row constrains only the
+        /// IONOSPHERE-FREE part, which the geometry-free pins leave completely free:
+        /// they fix DIFFERENCES within a satellite, never the level.  Under the
+        /// broadcast convention it is also exactly TRUE — the broadcast clock is
+        /// referenced to the L1/L2 ionosphere-free combination, so every satellite's
+        /// ionosphere-free code bias is zero there and the sum is zero — which is why
+        /// the residual against a `broadcast_tgd`-pinned roster is identically 0.
+        ///
+        /// WHAT IT FIXES.  With `code_datum_time_linked` armed the per-satellite IF pins
+        /// are CHANGE pins (`NetworkSbasis.cpp:722-735`: the RHS is the previous kept
+        /// epoch's solved IF combination whenever both signals have a veteran value and
+        /// the pair is unchanged; otherwise it stays 0, an absolute first-sighting
+        /// anchor, and the satellite is marked for a re-seed bump).  So each satellite's
+        /// level is anchored once, at first sighting, and carried by a finite-weight row
+        /// thereafter — nothing holds the SET's level, and over a 6 h run the clock /
+        /// IF-bias split walks.  This row is the absolute anchor, and it is a STRONG one:
+        /// its Jacobian carries one entry per satellite, so its leverage on the level
+        /// scales with n and it BEATS the n individual single-entry change pins.  At equal
+        /// gauge weight the realized level lands at `carried/(n+1)` — the LEVEL is
+        /// re-zeroed each epoch while the per-satellite DIFFERENCES stay carried.
+        /// Measured, not assumed: the unit test computes it (L = 0.75, n = 32 → 0.0227).
+        ///
+        /// Default OFF ⇒ no row ⇒ byte-identical.  INERT (and warned) without
+        /// @ref sat_gf_datum, whose suppression it exists to replace.
+        bool sat_if_level_datum{ false };
+        /// RF-0e arm e2: TIME-LINK the geometry-free rows' RHS — a change pin on the
+        /// geometry-free combination, carrying the previous kept epoch's solved value,
+        /// with the absolute `c*T_GD` (or 0 under @c Zero) used only at FIRST SIGHTING.
+        ///
+        /// The alternative reading of the same RF-0d regression: rather than add a level
+        /// row, make the geometry-free rows behave like every other datum row on a
+        /// `code_datum_time_linked` lineage, so the absolute and the carried families
+        /// stop pulling against each other.  Mutually exclusive with
+        /// @ref sat_if_level_datum by configuration discipline, not by construction —
+        /// they are the two arms of one A/B and arming both measures neither.
+        ///
+        /// Default OFF ⇒ the RF-0c/RF-0d absolute RHS ⇒ byte-identical.  INERT (and
+        /// warned) without @ref sat_gf_datum.
+        bool sat_gf_datum_time_linked{ false };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

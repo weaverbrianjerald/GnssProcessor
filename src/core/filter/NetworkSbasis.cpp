@@ -538,6 +538,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     bool gf_datum,
     NetworkSatGfDatum sat_gf_datum,
     const std::map<std::string, double>& sat_gf_target_m,
+    bool sat_if_level_datum, bool sat_gf_datum_time_linked,
     const std::set<std::string>& gf_family_constellations,
     const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
     const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
@@ -607,6 +608,14 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     // datum pinned this epoch.  Used below to SUPPRESS the sum-to-zero row of any
     // channel the datum already fixes completely — see the suppression block.
     std::map<std::string, std::set<std::string>> sat_gf_pinned;
+
+    // RF-0e e1: the ABSOLUTE ionosphere-free LEVEL row, accumulated per constellation
+    // as the satellite loop discovers each one's IF pin weights.  Built here rather
+    // than in a second pass because a1/a2 are the pin's OWN post-hold weights — deriving
+    // them again from the frequencies would silently disagree with the pin on any
+    // satellite whose pair was held or re-selected.
+    std::map<std::string, Eigen::VectorXd> if_level_row;
+    std::map<std::string, int>             if_level_n;
 
     // (1) Per-satellite ionosphere-free pin (clock-common gauge).
     for (const std::string& sat : sat_order) {
@@ -719,6 +728,21 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             // resumed), bump its disc so the value step coincides with a
             // signalled discontinuity.  Record this epoch's pair for the next
             // epoch's comparison (persisted at the harvest, kept epochs only).
+            // RF-0e e1: accumulate this satellite into its constellation's ABSOLUTE
+            // ionosphere-free level row, using the pin's own a1/a2.  Gated on
+            // row_ok so a satellite whose columns could not be resolved is not summed
+            // into a row that would then span a column it never contributed.
+            if (row_ok && sat_if_level_datum) {
+                const std::string cst = NetworkSbasis::constellationOf(sat);
+                auto it = if_level_row.find(cst);
+                if (it == if_level_row.end())
+                    it = if_level_row.emplace(cst, Eigen::VectorXd::Zero(nshared)).first;
+                try {
+                    it->second(est.codeBiasColumn(sat, sig1)) += a1;
+                    it->second(est.codeBiasColumn(sat, sig2)) += a2;
+                    ++if_level_n[cst];
+                } catch (...) { /* resolved above; defensive only */ }
+            }
             if (row_ok && cb_time_linked) {
                 double v1 = 0.0, v2 = 0.0;
                 const bool h1 = prevCb(sat, sig1, v1);
@@ -818,6 +842,23 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             ++out.n_sat_gf_tgd_hits;
                         }
                     }
+                    // RF-0e e2: TIME-LINK the geometry-free row.  RF-0c/RF-0d re-assert
+                    // the absolute target every epoch while the IF pins beside them are
+                    // CHANGE pins under code_datum_time_linked (:722-735) — two families
+                    // pulling on the same satellite's columns with different notions of
+                    // where "now" is.  Carrying the previous kept epoch's solved
+                    // geometry-free combination makes them agree; the absolute target
+                    // survives as the FIRST-SIGHTING anchor, which is the only place the
+                    // broadcast frame needs asserting at all.
+                    if (sat_gf_datum_time_linked) {
+                        double p1 = 0.0, p2 = 0.0;
+                        if (prevCb(sat, sig1, p1) && prevCb(sat, sig2, p2)) {
+                            target = (p2 - p1) / mu2_minus_mu1;
+                            ++out.n_sat_gf_carried;
+                        } else {
+                            ++out.n_sat_gf_anchored;   // first sighting: absolute
+                        }
+                    }
                     rows.push_back(std::move(srow));
                     zs.push_back(target);
                     ++out.n_sat_gf_rows;
@@ -875,8 +916,26 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             k_ok = true;
                         } catch (...) { krow.setZero(); k_ok = false; }
                         if (k_ok && krow.cwiseAbs().sum() > 0.0) {
+                            // The same c*T_GD by the identity above — EXCEPT under e2,
+                            // where this row carries its OWN previous geometry-free
+                            // combination (d_k - d_ref)/(mu_k - 1).  Reusing the pair's
+                            // carried value here would time-link the extra column to a
+                            // combination it is not part of.
+                            double k_target = target;
+                            if (sat_gf_datum_time_linked) {
+                                double q1 = 0.0, qk = 0.0;
+                                if (prevCb(sat, sig1, q1) && prevCb(sat, sk, qk)) {
+                                    k_target = (qk - q1) / (mu_k - 1.0);
+                                    ++out.n_sat_gf_carried;
+                                } else {
+                                    k_target = (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd
+                                                && sat_gf_target_m.count(sat))
+                                                   ? sat_gf_target_m.at(sat) : 0.0;
+                                    ++out.n_sat_gf_anchored;
+                                }
+                            }
                             rows.push_back(std::move(krow));
-                            zs.push_back(target);      // the same c*T_GD, by the identity above
+                            zs.push_back(k_target);
                             ++out.n_sat_gf_extra_rows;
                             if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd)
                                 ++out.n_sat_gf_isc_zero;
@@ -1021,6 +1080,41 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                     }
                 }
             }
+        }
+    }
+    // (1c-RF0e) The ABSOLUTE ionosphere-free LEVEL row, one per constellation.
+    //
+    // Pushed after the per-satellite loop and before the sum-to-zero rows, so the row
+    // order stays IF pins (+ their GF companions) → level → sum-to-zero and a reader of
+    // the stacked H can still say which family a row came from by position.
+    //
+    // WHAT IT CONSTRAINS, and what it deliberately does not.  The geometry-free pins fix
+    // each satellite's code-bias DIFFERENCES; nothing in this builder fixes the
+    // ionosphere-free LEVEL absolutely once code_datum_time_linked turns the IF pins into
+    // change pins (:722-735) — each satellite is anchored at its own first sighting and
+    // carried thereafter at a finite weight, so the SET's level is free to walk and takes
+    // the clock / code-bias split with it.  This row is the restoring force.  It is
+    // deliberately ONE row per constellation, not one per satellite: per-satellite
+    // absolute pins would overwrite the carry the time-link exists to provide, which is
+    // the mistake in the other direction.  It is NOT a weak nudge, though: its Jacobian
+    // carries one entry per satellite, so at equal gauge weight its leverage on the level
+    // beats the n single-entry change pins and the realized level lands at carried/(n+1).
+    // The LEVEL is re-zeroed each epoch; only the DIFFERENCES carry.
+    //
+    // TARGET 0 IS EXACT UNDER broadcast_tgd, not conventional.  IS-GPS-200's broadcast
+    // clock is referenced to the L1/L2 ionosphere-free combination, so a satellite whose
+    // code biases are the broadcast ones has d_IF = a1*c*T_GD + a2*c*gamma*T_GD = 0
+    // identically (a1 + a2*gamma = 0 IS the definition of the weights).  A pinned roster
+    // therefore satisfies this row with ZERO residual — the two datum families are
+    // consistent by construction, which is exactly what the per-signal sum-to-zero rows
+    // were not.
+    if (sat_if_level_datum) {
+        for (auto& [cst, lrow] : if_level_row) {
+            if (lrow.cwiseAbs().sum() <= 0.0) continue;
+            rows.push_back(std::move(lrow));
+            zs.push_back(0.0);                 // absolute: the level, not its change
+            ++out.n_if_level_rows;
+            out.n_if_level_sats += if_level_n[cst];
         }
     }
     // (2) Build the sum-to-zero rows now (after the IF pins, preserving row

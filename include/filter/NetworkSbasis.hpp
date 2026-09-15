@@ -302,6 +302,10 @@ public:
         int n_sat_gf_sameband_free{0};///< RF-0d: registered columns DELIBERATELY left unpinned — a channel in the SAME band as the reference has no geometry-free combination against it (the divisor is zero) and its difference is a pure ISC, observable without any ionosphere at any coverage.  Pinning it would discard estimable content.
         int n_sat_gf_extra_nofreq{0}; ///< RF-0d: extra columns skipped because no carrier frequency was available from any present station's model this epoch.
         int n_s2z_suppressed{0};      ///< RF-0d: per-(constellation, signal) sum-to-zero rows SUPPRESSED because the geometry-free datum already pins every satellite column of that channel.  Under `broadcast_tgd` the two are not merely redundant but INCONSISTENT (the pinned values sum to mu_j*c*Sum_s T_GD^s, not to zero), and both fold at the same weight — see the suppression block.
+        int n_if_level_rows{0};       ///< RF-0e e1: ABSOLUTE ionosphere-free level rows folded — one per constellation with at least one satellite carrying a valid IF pin pair.  0 with the knob armed means no satellite presented a dual-frequency pair, i.e. the set level ran unanchored (standing invariant #4).
+        int n_if_level_sats{0};       ///< RF-0e e1: satellites summed into those rows.
+        int n_sat_gf_carried{0};      ///< RF-0e e2: geometry-free rows whose RHS came from the satellite's PREVIOUS kept-epoch solved value (a change pin).
+        int n_sat_gf_anchored{0};     ///< RF-0e e2: geometry-free rows that fell back to the ABSOLUTE target because the satellite had no veteran value — the first-sighting anchor, and the only place the broadcast frame is re-asserted.
     };
 
     /// FAMILY-GF (docs/SPEC_family_gf_datum.md §3.1): a receiver channel FAMILY tag.
@@ -456,6 +460,12 @@ public:
      *                                  @c NetworkSatGfDatum::BroadcastTgd (@c c*T_GD,
      *                                  run-latched at setup).  A satellite absent from
      *                                  the map is pinned at 0 and counted.
+     * @param sat_if_level_datum        RF-0e e1: fold one ABSOLUTE per-constellation
+     *                                  sum-to-zero row on the ionosphere-free
+     *                                  combination.  Inert without @p sat_gf_datum.
+     * @param sat_gf_datum_time_linked  RF-0e e2: carry each geometry-free row's RHS
+     *                                  from the previous kept epoch, using the
+     *                                  absolute target only at first sighting.
      * @param basis_relatch_disc_pending  [in/out] pending per-sat disc bumps.
      * @param emitEvent                 L2 event-row callback (tier, event, sat,
      *                                  station, statistic, threshold, action, detail).
@@ -468,6 +478,7 @@ public:
         bool gf_datum,
         NetworkSatGfDatum sat_gf_datum,
         const std::map<std::string, double>& sat_gf_target_m,
+        bool sat_if_level_datum, bool sat_gf_datum_time_linked,
         const std::set<std::string>& gf_family_constellations,
         const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
         const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,

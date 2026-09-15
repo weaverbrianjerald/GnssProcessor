@@ -4053,6 +4053,7 @@ struct CbDatumRowsHarness {
             est, registered_code_keys, gpsCodeFreq, cb_time_linked,
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
             NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
+            /*sat_if_level_datum=*/false, /*sat_gf_datum_time_linked=*/false,
             gf_family_constellations, code_bias_prev,
             code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
             held_clock_ref, this_epoch_if_pin_sel, this_epoch_if_pin_real,

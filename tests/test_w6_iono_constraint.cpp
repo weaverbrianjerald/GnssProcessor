@@ -127,6 +127,10 @@ struct DatumRowsHarness {
     /// keeps measuring the un-datumed posture it was written for.
     NetworkSatGfDatum sat_gf_datum{NetworkSatGfDatum::NoneMode};
     std::map<std::string, double> sat_gf_target_m;
+    /// RF-0e: the two arms of the level-datum A/B.  Off by default so every case
+    /// above keeps measuring the posture it was written for.
+    bool sat_if_level_datum{false};
+    bool sat_gf_datum_time_linked{false};
     std::set<std::string> gf_family_constellations;
 
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
@@ -155,6 +159,7 @@ struct DatumRowsHarness {
             est, registered_code_keys, gpsCodeFreq, cb_time_linked,
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
             sat_gf_datum, sat_gf_target_m,
+            sat_if_level_datum, sat_gf_datum_time_linked,
             gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
             code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
             this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,
@@ -811,4 +816,169 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
     ASSERT_TRUE(ok);
     EXPECT_EQ(parsed.sat_gf_datum, "zero");
     fs::remove(with_p, ec); fs::remove(without_p, ec);
+}
+
+// ===========================================================================
+// Card RF-0e - the level datum.  e1: an absolute per-constellation ionosphere-free
+// sum-to-zero row.  e2: time-linked geometry-free rows.
+// ===========================================================================
+
+// e1's FIRST bar: the row is CONSISTENT with the geometry-free pins.  Build the
+// broadcast-pinned solution the datum asserts -- d_j = c*T_GD*mu_j on every column --
+// and push it through the level row: the residual must be identically zero, because
+// a1 + a2*gamma = 0 IS the definition of the ionosphere-free weights.  This is what
+// makes the row a companion of the pins rather than a competitor, which the per-signal
+// sum-to-zero rows RF-0d suppressed were not (their residual is mu_j*c*Sum_s T_GD^s).
+TEST(W6IonoConstraintTest, IfLevelDatumRowHasZeroResidualOnAPinnedRoster) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(32);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_if_level_datum = true;
+    // A spread of realistic group delays, in metres of c*T_GD.
+    for (std::size_t k = 0; k < sats.size(); ++k)
+        h.sat_gf_target_m[sats[k]] = -3.5 + 0.21 * static_cast<double>(k);
+    const auto rows = h.build(est, keys);
+
+    ASSERT_EQ(rows.n_if_level_rows, 1);          // GPS only
+    EXPECT_EQ(rows.n_if_level_sats, 32);
+
+    // The solution the datum asserts: d_j = c*T_GD * mu_j, mu_1 = 1, mu_2 = (f1/f2)^2.
+    const double mu2 = muRel("C1C", "C2W");
+    Eigen::VectorXd x = Eigen::VectorXd::Zero(est.numShared());
+    for (const auto& s : sats) {
+        const double t = h.sat_gf_target_m.at(s);
+        x(est.codeBiasColumn(s, "C1C")) = t;
+        x(est.codeBiasColumn(s, "C2W")) = t * mu2;
+    }
+    // Every row of the stack must be satisfied by it -- the geometry-free rows by
+    // construction, and the level row because the broadcast frame IS ionosphere-free.
+    const Eigen::VectorXd resid = rows.H * x - rows.z;
+    EXPECT_LT(resid.cwiseAbs().maxCoeff(), 1e-9)
+        << "the level row and the geometry-free pins disagree on the broadcast frame";
+}
+
+// e1's SECOND bar: the row ANCHORS the ionosphere-free level.
+//
+// ONE CORRECTION TO THE OBVIOUS FRAMING, and it is the point of the card.  The level is
+// NOT a rank hole: the per-satellite IF pin rows span it, and `code_datum_time_linked`
+// changes only their RHS (NetworkSbasis.cpp:722-735 -- the target becomes the previous
+// kept epoch's solved IF combination whenever both signals have a veteran and the pair is
+// unchanged, and stays 0 otherwise).  So the stack says "do not CHANGE the level", never
+// "the level is zero", and once the per-signal sum-to-zero rows are suppressed nothing
+// says the latter at all.  This measures that directly: give every satellite a carried
+// level of L and solve the stacked rows.  Without e1 the solution sits at L -- the carry
+// is reproduced exactly, however far it has walked.  With e1 it is pulled essentially to
+// ZERO: the level row's Jacobian carries n entries, so its leverage on the level
+// coordinate scales with n and it BEATS the n pins that each carry one -- equal-weight
+// least squares lands at L/(n+1), not L*n/(n+1).  Worth pinning precisely, because it
+// makes e1 a HARD level pin, not the gentle restoring force it was first described as.
+TEST(W6IonoConstraintTest, IfLevelDatumAnchorsTheCarriedLevel) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(32);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    const double f1 = gpsCodeFreq("", "C1C"), f2 = gpsCodeFreq("", "C2W");
+    const double den = f1 * f1 - f2 * f2;
+    const double a1 = f1 * f1 / den, a2 = -f2 * f2 / den;
+    const double mu2 = muRel("C1C", "C2W");
+
+    // A carried level of L on every satellite: previous solved values whose IF
+    // combination is L and whose geometry-free combination is the broadcast target.
+    // d_1 = L + t, d_2 = L + t*mu2 has a1*d1 + a2*d2 = L (since a1 + a2 = 1 and
+    // a1 + a2*mu2 = 0) and (d_2 - d_1)/(mu2 - 1) = t.
+    const double L = 0.75;
+    DatumRowsHarness base;
+    base.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    base.cb_time_linked = true;
+    for (std::size_t k = 0; k < sats.size(); ++k) {
+        const double t = -3.5 + 0.21 * static_cast<double>(k);
+        base.sat_gf_target_m[sats[k]] = t;
+        base.code_bias_prev["G|C1C"][sats[k]] = L + t;
+        base.code_bias_prev["G|C2W"][sats[k]] = L + t * mu2;
+        base.code_bias_ifpin_pair[sats[k]] = {"C1C", "C2W"};   // pair unchanged => carry
+        base.code_bias_sat_seen.insert(sats[k]);
+    }
+
+    // Least-squares solution of the stacked datum rows, then the realized mean level.
+    const auto realizedLevel = [&](const NetworkSbasis::CodeBiasDatumRows& r) {
+        const Eigen::VectorXd x =
+            r.H.colPivHouseholderQr().solve(r.z);   // 64 or 65 rows, 64 unknowns
+        double acc = 0.0;
+        for (const auto& s : sats)
+            acc += a1 * x(est.codeBiasColumn(s, "C1C")) + a2 * x(est.codeBiasColumn(s, "C2W"));
+        return acc / static_cast<double>(sats.size());
+    };
+
+    DatumRowsHarness off = base;
+    const auto rows_off = off.build(est, keys);
+    EXPECT_EQ(rows_off.n_if_level_rows, 0);
+    EXPECT_NEAR(realizedLevel(rows_off), L, 1e-9)
+        << "without e1 the stack reproduces the carried level exactly -- that is the defect";
+
+    DatumRowsHarness on = base;
+    on.sat_if_level_datum = true;
+    const auto rows_on = on.build(est, keys);
+    ASSERT_EQ(rows_on.n_if_level_rows, 1);
+    const double lvl = realizedLevel(rows_on);
+    EXPECT_LT(std::abs(lvl), std::abs(L))
+        << "e1 must pull the level toward zero";
+    // The compromise is L/(n+1), not L*n/(n+1): minimising sum_s (IF_s - L)^2 +
+    // (sum_s IF_s)^2 gives (m - L) + n*m = 0.  The level row WINS.
+    EXPECT_NEAR(lvl, L / 33.0, 1e-6);
+}
+
+// e2's bar: the change pin leaves the FIRST-SIGHTING anchor in force.  A satellite with
+// no veteran value must still be pinned at the absolute broadcast target -- that is the
+// only place the frame is asserted at all under this arm -- while a satellite with
+// veterans carries its own previous geometry-free combination instead.
+TEST(W6IonoConstraintTest, SatGfTimeLinkKeepsTheFirstSightingAnchor) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(3);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_gf_datum_time_linked = true;
+    h.sat_gf_target_m = {{"G01", -3.1}, {"G02", 1.7}, {"G03", 2.2}};
+    // G01 and G02 have veterans; G03 is a first sighting.
+    h.code_bias_prev["G|C1C"] = {{"G01", 0.40}, {"G02", -0.20}};
+    h.code_bias_prev["G|C2W"] = {{"G01", 1.00}, {"G02", 0.30}};
+
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.n_sat_gf_carried, 2);     // G01, G02
+    EXPECT_EQ(rows.n_sat_gf_anchored, 1);    // G03 -- the anchor survives
+
+    // Row order per satellite is IF pin then geometry-free row, so the GF rows are 1,3,5.
+    const double mu = muRel("C1C", "C2W") - 1.0;
+    EXPECT_NEAR(rows.z(1), (1.00 - 0.40) / mu, 1e-12);    // carried, not -3.1
+    EXPECT_NEAR(rows.z(3), (0.30 + 0.20) / mu, 1e-12);    // carried, not  1.7
+    EXPECT_DOUBLE_EQ(rows.z(5), 2.2);                     // ANCHORED at c*T_GD
+}
+
+// And unarmed, e2 changes nothing: every row keeps the absolute target, so the RF-0d
+// stack is reproduced exactly (standing invariant #6).
+TEST(W6IonoConstraintTest, SatGfTimeLinkUnarmedKeepsTheAbsoluteTarget) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(3);
+    const std::vector<std::string> sigs{"C1C", "C2W"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_gf_target_m = {{"G01", -3.1}, {"G02", 1.7}, {"G03", 2.2}};
+    h.code_bias_prev["G|C1C"] = {{"G01", 0.40}, {"G02", -0.20}};
+    h.code_bias_prev["G|C2W"] = {{"G01", 1.00}, {"G02", 0.30}};
+
+    const auto rows = h.build(est, keys);
+    EXPECT_EQ(rows.n_sat_gf_carried, 0);
+    EXPECT_EQ(rows.n_sat_gf_anchored, 0);   // the counters are e2-only
+    EXPECT_DOUBLE_EQ(rows.z(1), -3.1);
+    EXPECT_DOUBLE_EQ(rows.z(3), 1.7);
+    EXPECT_DOUBLE_EQ(rows.z(5), 2.2);
 }

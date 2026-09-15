@@ -4268,6 +4268,51 @@ int networkTeardown(
                                         ctx.counters.n_sat_gf_sameband,
                                         ctx.counters.n_sat_gf_s2z_suppressed));
     }
+    // RF-0e: armed-only run-end lines for the two level-datum arms.  Both exist to fix
+    // a measured CONSUMER regression, so "did it fold at all" is the first thing any
+    // reading of that consumer has to be able to answer (standing invariant #4).
+    if (config_.getNetworkConfig().sat_if_level_datum) {
+        if (ctx.counters.n_if_level_rows == 0)
+            log->warn("Network (IF-LEVEL-DATUM, RF-0e e1): ARMED but folded ZERO row(s) — no "
+                      "satellite ever presented a valid ionosphere-free pin pair, so the "
+                      "constellation's ionosphere-free code-bias LEVEL ran UNANCHORED and "
+                      "this run did not test the arm it claims to (standing invariant #4).");
+        else
+            log->info("Network (IF-LEVEL-DATUM, RF-0e e1): {} absolute row(s) folded over the "
+                      "run, summing {} satellite-epoch(s) (mean {:.2f} satellites per row) — "
+                      "each pinning Sum_s (a1*d1 + a2*d2) = 0 for its constellation at the "
+                      "gauge weight.  It constrains the ionosphere-free LEVEL only, which "
+                      "the geometry-free pins leave free; under broadcast_tgd the target is "
+                      "EXACTLY satisfied by a pinned roster, so the two datum families are "
+                      "consistent rather than competing.  The row is STRONG, not gentle: it "
+                      "carries one entry per satellite, so at equal gauge weight it beats the "
+                      "n single-entry change pins and the realized level lands at "
+                      "carried/(n+1) - the LEVEL is re-zeroed each epoch while the "
+                      "per-satellite DIFFERENCES stay carried.",
+                      ctx.counters.n_if_level_rows, ctx.counters.n_if_level_sats,
+                      ctx.counters.n_if_level_rows
+                          ? static_cast<double>(ctx.counters.n_if_level_sats)
+                                / static_cast<double>(ctx.counters.n_if_level_rows)
+                          : 0.0);
+    }
+    if (config_.getNetworkConfig().sat_gf_datum_time_linked) {
+        const std::size_t tot = ctx.counters.n_sat_gf_carried + ctx.counters.n_sat_gf_anchored;
+        if (tot == 0)
+            log->warn("Network (SAT-GF TIME-LINK, RF-0e e2): ARMED but no geometry-free row "
+                      "was ever targeted — the datum folded nothing, so this run did not "
+                      "test the arm it claims to (standing invariant #4).");
+        else
+            log->info("Network (SAT-GF TIME-LINK, RF-0e e2): {} geometry-free row(s) CARRIED "
+                      "the previous kept epoch's solved combination and {} were ANCHORED at "
+                      "the absolute target ({:.1f} % anchored — first sightings).  The "
+                      "anchored rows are the ONLY place the broadcast frame is re-asserted; "
+                      "a run with very few of them has carried its frame from ignition and "
+                      "never re-checked it, which is the cost of this arm and the thing to "
+                      "weigh against the level row e1 folds instead.",
+                      ctx.counters.n_sat_gf_carried, ctx.counters.n_sat_gf_anchored,
+                      100.0 * static_cast<double>(ctx.counters.n_sat_gf_anchored)
+                          / static_cast<double>(tot));
+    }
     // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
     // tell a live gauge from an armed-but-inert one is the fold count, so print it
     // even (especially) when it is zero.
