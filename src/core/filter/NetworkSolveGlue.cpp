@@ -656,19 +656,39 @@ ctx.carry.last_datum_changed = datum_changed;
 // DG5: the returned struct is the SAME numbers the WARN lines print,
 // mirrored into network_estimability.csv so the storm analyzer reads a
 // CSV instead of re-parsing log text.  The log text itself is unchanged.
+// RF-NS: the latch is RE-ARMABLE.  network.trace_estimability_budget sets how
+// many evaluations it may spend (default 6 = the constant this replaced) and
+// network.trace_estimability_deficit_only spends them only on epochs whose
+// census actually shows a deficit.  Why it was needed: with the fixed 6 every
+// field run's census lands inside ignition, so the RF-2d hour-4/5 withhold
+// stretches had NO spectrum at all and the withhold was diagnosable only from
+// the sbc_skip attribution.  Budget is spent AFTER the dump (not before) so a
+// skipped clean epoch does not consume it; with deficit_only false the spend is
+// unconditional, i.e. bit-for-bit the previous order (nothing between the two
+// points reads the counter).
 if (spectrum_diag_budget > 0) {
-    --spectrum_diag_budget;
+    bool spend = true;
     if (nc.trace_estimability) {
         const auto dump = est.dumpEstimabilitySpectrum(
             se.time.tow, plan.declared_dimension, col_desc, log);
         if (dump.valid) {
-            traces.writeEstimabilityEpochRow(se.time, dump.tow, dump.n_shared,
-                                             dump.declared_dim, dump.ev_max,
-                                             dump.cutoff, dump.n_below);
-            for (const auto& d : dump.dirs)
-                traces.writeEstimabilityDirRow(se.time, d.ev, d.top);
+            // The census has to RUN to know whether this epoch is in deficit —
+            // there is no cheaper predicate for "n_below > declared" — so the
+            // eigen-decomposition cost is paid on every budgeted epoch either
+            // way; what deficit_only saves is the budget and the rows.
+            if (nc.trace_estimability_deficit_only
+                && dump.n_below <= dump.declared_dim) {
+                spend = false;
+            } else {
+                traces.writeEstimabilityEpochRow(se.time, dump.tow, dump.n_shared,
+                                                 dump.declared_dim, dump.ev_max,
+                                                 dump.cutoff, dump.n_below);
+                for (const auto& d : dump.dirs)
+                    traces.writeEstimabilityDirRow(se.time, d.ev, d.top);
+            }
         }
     }
+    if (spend) --spectrum_diag_budget;
 }
 
 bool gate_ok = true;

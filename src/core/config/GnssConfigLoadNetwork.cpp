@@ -1458,6 +1458,12 @@ namespace GnssProcessor {
             jval<bool>(json, "network.trace_ionosphere", "trace_ionosphere", false);
         network_config_.trace_estimability =
             jval<bool>(json, "network.trace_estimability", "trace_estimability", false);
+        network_config_.trace_estimability_budget =
+            jval<int>(json, "network.trace_estimability_budget",
+                      "trace_estimability_budget", 6);
+        network_config_.trace_estimability_deficit_only =
+            jval<bool>(json, "network.trace_estimability_deficit_only",
+                       "trace_estimability_deficit_only", false);
         network_config_.trace_slip_events =
             jval<bool>(json, "network.trace_slip_events", "trace_slip_events", false);
         network_config_.trace_slip_raw =

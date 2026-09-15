@@ -1496,6 +1496,9 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"trace_stations\":" << (nc.trace_stations ? "true" : "false") << ','
                << "\"trace_ionosphere\":" << (nc.trace_ionosphere ? "true" : "false") << ','
                << "\"trace_estimability\":" << (nc.trace_estimability ? "true" : "false") << ','
+               << "\"trace_estimability_budget\":" << nc.trace_estimability_budget << ','
+               << "\"trace_estimability_deficit_only\":"
+               << (nc.trace_estimability_deficit_only ? "true" : "false") << ','
                << "\"trace_slip_events\":" << (nc.trace_slip_events ? "true" : "false") << ','
                << "\"trace_anchor_info\":" << (nc.trace_anchor_info ? "true" : "false") << ','
                << "\"trace_dd_fractional\":" << (nc.trace_dd_fractional ? "true" : "false") << ','

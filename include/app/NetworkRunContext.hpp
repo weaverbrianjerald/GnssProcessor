@@ -3272,7 +3272,7 @@ namespace GnssProcessor {
         FlagRate fr_clk_mon;    // T6 per sat clock-monitor abs/jump (own, !ext) absolute bounds
         double max_dur_anchor_s = 0.0;
         bool   max_dur_anchored = false;
-        int    spectrum_diag_budget = 6;    // estimability spectrum dump: first N gate evaluations (was one-shot; a rows-epoch needs a later firing than epoch 1)
+        int    spectrum_diag_budget = 6;    // estimability spectrum dump: first N gate evaluations (was one-shot; a rows-epoch needs a later firing than epoch 1).  RF-NS: seeded from network.trace_estimability_budget by the NetworkRunContext ctor (default 6 = this constant); under network.trace_estimability_deficit_only a clean epoch does NOT spend it.
 
         // [TIMING] processed-epoch count + T2e decimation counter (relocated
         // from the loop-timing cluster; t_loop_begin stays a run-TU local).
@@ -3580,7 +3580,13 @@ namespace GnssProcessor {
     /// (owns move-only lazily-built helpers).
     struct NetworkRunContext {
         NetworkRunContext(const GnssConfig& config, const NetworkConfig& nc)
-            : knobs(NetworkKnobs::snapshot(config, nc)) {}
+            : knobs(NetworkKnobs::snapshot(config, nc)) {
+            // RF-NS: the estimability census latch is a COUNTER, so it is seeded
+            // here (the one place the context is built) rather than snapshotted
+            // into knobs — the dump site decrements it.  Default 6 == the
+            // historical hard-coded constant, so an unset key is trace-identical.
+            counters.spectrum_diag_budget = nc.trace_estimability_budget;
+        }
         NetworkRunContext(const NetworkRunContext&) = delete;
         NetworkRunContext& operator=(const NetworkRunContext&) = delete;
 
