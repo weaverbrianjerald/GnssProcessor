@@ -4926,6 +4926,21 @@ namespace GnssProcessor {
         bool networkPhaseDatumHandoverContinuous() const {
             return network_phase_datum_handover_continuous_;
         }
+        /// @brief RF-2 item 1: is the phase datum held as a constant S-basis?
+        /// @return network.phase_datum_held_basis (requires the float_kf vehicle).
+        bool networkPhaseDatumHeldBasis() const {
+            return network_phase_datum_held_basis_;
+        }
+        /// @brief RF-2 item 3: minimum arc age (loop epochs) to hold the S-basis.
+        /// @return network.phase_anchor_min_age_ep; 0 disables the gate.
+        int networkPhaseAnchorMinAgeEp() const {
+            return network_phase_anchor_min_age_ep_;
+        }
+        /// @brief RF-2 item 3: screen-flag quiet window (loop epochs) for the S-basis.
+        /// @return network.phase_anchor_flag_quiet_ep; 0 disables the gate.
+        int networkPhaseAnchorFlagQuietEp() const {
+            return network_phase_anchor_flag_quiet_ep_;
+        }
 
         /**
          * @brief Conditional-variance CEILING (m²) on a handover ledger value
@@ -7958,6 +7973,28 @@ namespace GnssProcessor {
         double network_phase_datum_handover_max_var_ratio_{0.0}; ///< Honest-σ-scale handover ceiling: a ledger value is usable only if var <= ratio × the arc's first-stash conditional variance (unknown ⇒ refused); the absolute ceiling stays a rail.  0 = OFF.  INERT unless network_phase_datum_handover_continuous_.
         double network_phase_datum_handover_max_var_m2_{1.0}; ///< Conditional-variance ceiling (m^2) a handover ledger value must beat to be pinned; above it the handover falls through to the COLD path. INERT unless network_phase_datum_handover_continuous_.
         bool   network_phase_datum_handover_continuous_{false}; ///< Hand an anchor handover over at the successor's own outgoing-frame ambiguity value instead of re-pinning at 0, so the gauge change is an S-transform and the emitted family does not step. Both edges counted + traced. INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (no ledger allocated).
+        /// RF-2 item 1 (docs/refound/RF-1_steps345_mechanism_2026-09-15.md): the phase
+        /// datum as a HELD S-BASIS.  The anchor station's ambiguity for each pinned
+        /// (satellite, signal) is the S-basis — FROZEN at its value at election for the
+        /// whole of that anchor's tenure and never re-derived mid-tenure, so the
+        /// satellite phase bias is estimable as (PB + that constant) rather than against
+        /// a datum that converges, drops and is re-flagged like any other float state.
+        /// RF-1 removed the accident that used to supply this: the level vehicle's
+        /// zero-q anchor was, unintentionally, a held basis, and `float_kf` made the
+        /// datum a live state (the field's T4 hit the anchor 454 times an hour).
+        /// Requires network.ambiguity_vehicle = "float_kf".  OFF = byte-identical.
+        bool   network_phase_datum_held_basis_{false};
+        /// RF-2 item 3: minimum arc AGE (loop epochs since first stash) a candidate must
+        /// have before it may hold the S-basis.  "Never a newborn low arc": a leg born at
+        /// a satellite's re-admission carries its code-level birth error, and stamping
+        /// that in at the gauge weight makes it the network's datum.  INERT unless
+        /// network_phase_datum_held_basis_.
+        int    network_phase_anchor_min_age_ep_{10};
+        /// RF-2 item 3: a candidate flagged by ANY screen (a slip response, a T4 / T3
+        /// refloat, a gross-LOS declaration) within this many loop epochs is refused the
+        /// basis.  The datum must be the quietest arc available, not merely an old one.
+        /// INERT unless network_phase_datum_held_basis_.
+        int    network_phase_anchor_flag_quiet_ep_{5};
         bool   network_phase_datum_candidacy_usable_{false}; ///< COLD ANCHOR-FALLBACK (SPEC_event_harness §15): when a handover is about to happen, sweep the coverage-ranked candidates for one whose carried value is USABLE by the continuous branch's OWN predicate (finite, 0 < var <= ceiling, ratio gate, not freed this epoch, arc age >= network_phase_datum_candidacy_min_age_ep_) BEFORE falling through to today's take-the-first-tracker sweeps.  A family with no usable candidate keeps today's honest cold path.  INERT unless network_phase_datum_handover_continuous_ (no ledger to screen against).  OFF = byte-identical (the pass is never entered).
         bool   network_phase_datum_candidacy_satellite_{true}; ///< COLD ANCHOR-FALLBACK iteration 2 (SPEC_event_harness §15.8): resolve a satellite's handover JOINTLY — every family of the satellite moving this epoch takes ONE successor (the first coverage-ranked candidate usable for the most of them; a family it is not usable for is pinned THERE through the cold path, which is a frame step, not a split), and a PARTIAL handover prefers the station already anchoring the satellite's other families.  Iteration 1's per-family screen bought producer quality with split references (0.0 → 0.9/3) and cost the consumer 49 %.  Default TRUE; INERT unless network_phase_datum_candidacy_usable_; OFF = iteration 1 exactly (the single-knob A/B).
         int    network_phase_datum_candidacy_min_age_ep_{60}; ///< COLD ANCHOR-FALLBACK maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention — a warm-resume-restored entry carries LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  INERT unless network_phase_datum_candidacy_usable_.

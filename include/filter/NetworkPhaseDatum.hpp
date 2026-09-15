@@ -198,6 +198,50 @@ void networkElectEnsembleDatum(
  *     the maturity bar the §15 census separated the cold and continuous
  *     populations with.
  */
+/// RF-2 — the HELD S-BASIS bundle the election needs, and the record it writes back.
+///
+/// Passed as a POINTER, null on every unarmed run, so the OFF path is byte-identical:
+/// the election's existing branches are untouched and nothing below is allocated.
+///
+/// The four items of the card, in the order they act inside one election:
+///  1. **held basis** — a RETAINED incumbent re-pins at the FROZEN @c basis value rather
+///     than re-deriving it, so the datum is a constant for the whole tenure;
+///  2. **every handover declared** — a new election records @c prev_value / @c prev_station
+///     in its entry, which is the Δ item 2 declares to the consumer;
+///  3. **election** — the candidate order becomes ELEVATION-descending, gated by arc age
+///     (@c min_age_ep) and by a screen-flag quiet window (@c flag_quiet_ep);
+///  4. **T4 on the anchor** — @c flag_ep carries the last epoch each arc was flagged by any
+///     screen, which is both the quiet-window input and the trigger that deposes a basis
+///     holder BEFORE the response acts on its column.
+struct PhaseHeldBasis {
+    bool      on = false;             ///< network.phase_datum_held_basis, already ANDed with float_kf.
+    int       min_age_ep = 0;         ///< network.phase_anchor_min_age_ep (0 = no age gate).
+    int       flag_quiet_ep = 0;      ///< network.phase_anchor_flag_quiet_ep (0 = no quiet gate).
+    long long now_ep = 0;             ///< ctx.counters.n_loop_epochs — the tenure and age clock.
+    /// THE LEDGER, in/out: ambiguity key -> the frozen basis.  Owned by
+    /// @c NetworkCarryState so it survives the epoch; the election reads it to hold a
+    /// retained incumbent's value and writes a new entry on every election.
+    std::map<std::string, PhaseBasisEntry>* basis = nullptr;
+    /// Per station, this epoch's LOS elevation by satellite (degrees) — the election's
+    /// rank key.  Empty / null ⇒ the pre-card coverage order is kept.
+    const std::vector<std::map<std::string, double>>* elev = nullptr;
+    /// (station idx, ambiguity key) -> the loop epoch of its last screen flag (slip
+    /// response, T4 / T3 refloat, gross-LOS declaration).  Null ⇒ no quiet-window gate.
+    const std::map<std::pair<int, std::string>, long long>* flag_ep = nullptr;
+    /// The phase-leveling carry — the arc-age gate reads @c LocalCarry::birth_ep, on the
+    /// RESTORED-ARC convention (@ref localCarryYoung), so a warm-resume-restored entry
+    /// reads mature rather than being refused for min_age epochs after every resume.
+    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* carry = nullptr;
+    // ---- write-back --------------------------------------------------------------
+    long long n_held = 0;             ///< families re-pinned at their FROZEN basis value this epoch.
+    long long n_elected = 0;          ///< new basis entries written (first sightings + handovers).
+    long long n_elected_cold = 0;     ///< …of which could not inherit a level (value 0; the family stepped).
+    long long n_refused_young = 0;    ///< candidates refused by the arc-age gate.
+    long long n_refused_flagged = 0;  ///< candidates refused by the screen-flag quiet window.
+    long long n_rank_changed = 0;     ///< elections whose elevation rank picked a DIFFERENT station than the coverage order would have.
+    long long n_value_drift = 0;      ///< ⚠ mid-tenure basis-value changes REFUSED — the held property's own evidence; any nonzero value is a defect.
+};
+
 struct AnchorCandidacyUsable {
     /// network.phase_datum_candidacy_usable, already ANDed with the handover
     /// mechanism being armed — false ⇒ the pass is not entered at all.
@@ -371,7 +415,8 @@ void networkElectPhaseAnchors(
         std::set<std::pair<std::string, std::string>>* reref_out = nullptr,
         double max_var_ratio = 0.0,
         const NetworkInjectState* inject = nullptr,
-        const AnchorCandidacyUsable* cand_usable = nullptr);
+        const AnchorCandidacyUsable* cand_usable = nullptr,
+        PhaseHeldBasis* held = nullptr);
 
 /**
  * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover):

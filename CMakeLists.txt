@@ -465,6 +465,7 @@ add_executable(gnss_tests
     tests/test_resume_signal_canon_restore.cpp
     tests/test_resume_rxcb_lin_restore.cpp
     tests/test_amb_float_vehicle.cpp
+    tests/test_phase_held_basis.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

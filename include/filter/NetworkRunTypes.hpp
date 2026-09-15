@@ -883,6 +883,30 @@ struct AnchorHandoverLedger {
 /// station is elected or what target is pinned.  Both EDGES are in one record on
 /// purpose: a handover with only its incoming half logged is exactly the silent
 /// re-referencing invariant #7 exists to forbid.
+/// RF-2 item 1 — ONE entry of the HELD S-BASIS: which station's ambiguity realizes a
+/// (satellite, signal) phase-bias datum, at what CONSTANT value, and since when.
+///
+/// The card's sentence: "the anchor station's ambiguity for each pinned (satellite,
+/// signal) is the S-basis — HELD at its value at election, not carried as a float
+/// state".  RF-1 made every ambiguity a live state and, with it, the one that IS the
+/// datum: on the field it converged, dropped, and was re-flagged by T4 454 times an
+/// hour, and every one of those moves is a phase-bias re-realization the consumer has
+/// to re-converge through.  The level vehicle's frozen zero-q anchor had been supplying
+/// this property by accident; this makes it deliberate.
+///
+/// @c value is FROZEN at election — for a CONTINUOUS handover it is the successor's
+/// carried level in the outgoing frame (so the family does not step), for a COLD one it
+/// is 0 (so the family DOES step, by exactly @c value_prev, which item 2 declares).  It
+/// is never re-derived mid-tenure: that re-derivation is precisely the churn.
+struct PhaseBasisEntry {
+    std::string station;        ///< The station whose ambiguity holds the datum.
+    double      value{0.0};     ///< The CONSTANT the column is pinned at (m), frozen at election.
+    long long   elected_ep{0};  ///< Loop epoch of the election that set it (tenure clock).
+    bool        cold{false};    ///< True when the election could not inherit a level (value = 0 and the family stepped).
+    double      prev_value{0.0};///< The OUTGOING basis value this one replaced (m) — item 2's Δ.
+    std::string prev_station;   ///< …and the station that held it ("" = first sighting).
+};
+
 struct AnchorHandoverEvent {
     std::string amb;            ///< "sat_signal" (the ambiguity key).
     std::string from;           ///< Outgoing anchor station; empty = first pin (no prior frame).

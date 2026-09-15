@@ -4789,6 +4789,32 @@ int networkTeardown(
                       ctx.counters.n_pl_blk_fallback, 100.0 * rate);
         }
     }
+    // RF-2 — the HELD S-BASIS's run-end readout (invariant #4: the counters ARE the
+    // ON-path telemetry).  Four things a reader must be able to check at a glance:
+    // the basis was actually HELD (n_held ≫ n_elected); every handover was DECLARED;
+    // the network-wide erase is RETIRED (pa_reref_erase_total must read 0); and the
+    // held property itself never slipped (value_drift must read 0).
+    if (ctx.knobs.pd_held_basis) {
+        const auto& C = ctx.counters;
+        const bool clean = C.n_pb_basis_value_drift == 0
+                           && ctx.carry.pa_reref_erase_total == 0;
+        log->log(clean ? spdlog::level::info : spdlog::level::err,
+                 "Network (RF-2 held S-basis): {} family-epoch(s) re-pinned at their "
+                 "FROZEN basis value; {} new basis value(s) elected, {} of them COLD (the "
+                 "emitted phase bias stepped).  DECLARED to the consumer: {} handover(s), "
+                 "{} cold.  Election gates refused {} candidate(s) as too young (< {} "
+                 "epochs) and {} as recently flagged (< {} epochs); {} election(s) moved "
+                 "off the coverage rank (elevation order, plus incumbents deposed by a "
+                 "flag).  ⚠ Network-wide anchor-reref ERASES: {} (RETIRED — must be 0).  "
+                 "⚠ Mid-tenure basis-value drift REFUSED: {} (must be 0 — the held "
+                 "property's own alarm).",
+                 C.n_pb_basis_held, C.n_pb_basis_elected, C.n_pb_basis_cold,
+                 C.n_pb_basis_declared, C.n_pb_basis_declared_cold,
+                 C.n_pb_basis_refuse_young, ctx.knobs.pa_min_age_ep,
+                 C.n_pb_basis_refuse_flagged, ctx.knobs.pa_flag_quiet_ep,
+                 C.n_pb_basis_rank_changed,
+                 ctx.carry.pa_reref_erase_total, C.n_pb_basis_value_drift);
+    }
     if (config_.getNetworkConfig().trace_amb_state)
         // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line —
         // on this vehicle the trace rides the leveling HARVEST, so 0 rows means the

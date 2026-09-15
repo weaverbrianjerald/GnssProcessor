@@ -8155,6 +8155,25 @@ namespace GnssProcessor {
         network_phase_datum_handover_continuous_ =
             jval<bool>(json, "network.phase_datum_handover_continuous",
                        "network_phase_datum_handover_continuous", false);
+        // ---- RF-2 (docs/refound/RF-1_steps345_mechanism_2026-09-15.md): the phase datum
+        //      as a HELD S-BASIS.  RF-1 made every ambiguity a float state — including,
+        //      accidentally, the one that IS the satellite phase bias's datum.  The
+        //      textbook makes the S-basis ambiguities CONSTANTS, not states.
+        network_phase_datum_held_basis_ =
+            jval<bool>(json, "network.phase_datum_held_basis",
+                       "network_phase_datum_held_basis", false);
+        network_phase_anchor_min_age_ep_ =
+            jval<int>(json, "network.phase_anchor_min_age_ep",
+                      "network_phase_anchor_min_age_ep", 10);
+        network_phase_anchor_flag_quiet_ep_ =
+            jval<int>(json, "network.phase_anchor_flag_quiet_ep",
+                      "network_phase_anchor_flag_quiet_ep", 5);
+        if (network_phase_anchor_min_age_ep_ < 0)
+            throw std::runtime_error("network.phase_anchor_min_age_ep must be >= 0 "
+                                     "(0 = no age gate)");
+        if (network_phase_anchor_flag_quiet_ep_ < 0)
+            throw std::runtime_error("network.phase_anchor_flag_quiet_ep must be >= 0 "
+                                     "(0 = no quiet-window gate)");
         network_phase_datum_handover_max_var_m2_ =
             jval<double>(json, "network.phase_datum_handover_max_var_m2",
                          "network_phase_datum_handover_max_var_m2", 1.0);
@@ -10180,6 +10199,43 @@ namespace GnssProcessor {
                           "Two mechanisms acting on the same young-arc variance make the birth "
                           "floor's calibration un-attributable — arm it only as a deliberate "
                           "contrast.", network_phase_leveling_young_inflate_var_m2_);
+        }
+        // ---- RF-2: the HELD S-BASIS's own interlocks.  It is a statement about the
+        //      ambiguity that IS the phase datum, so it is meaningless on a vehicle where
+        //      the other ambiguities are not float states — the accident it replaces (the
+        //      level vehicle's frozen zero-q anchor) is still in force there.
+        if (network_phase_datum_held_basis_) {
+            if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf) {
+                log->error("Network (RF-2): network.phase_datum_held_basis requires "
+                           "network.ambiguity_vehicle = \"float_kf\".  The held basis "
+                           "exists because RF-1 made every ambiguity a live state "
+                           "INCLUDING the one that realizes the satellite phase-bias "
+                           "datum; on the \"level\" vehicle the zero-q anchor is already "
+                           "an (accidental) held basis, so arming this would change "
+                           "nothing it claims to change.");
+                return false;
+            }
+            if (!network_phase_datum_prioritized_) {
+                log->error("Network (RF-2): network.phase_datum_held_basis requires "
+                           "network.phase_datum_prioritized — the per-(satellite, signal) "
+                           "anchor election is the thing whose datum is being held.  "
+                           "Under the legacy single-pivot datum every freedom is pinned "
+                           "at the pivot and there is no election to hold.");
+                return false;
+            }
+            log->info("Network (RF-2): network.phase_datum_held_basis ON — each pinned "
+                      "(satellite, signal) ambiguity is the S-BASIS, FROZEN at its value "
+                      "at election for the whole of that anchor's tenure and never "
+                      "re-derived mid-tenure; the satellite phase bias is then estimable "
+                      "as (PB + that constant).  Election gates: arc age >= {} loop "
+                      "epoch(s), no screen flag within {} epoch(s).  Solve-affecting.",
+                      network_phase_anchor_min_age_ep_,
+                      network_phase_anchor_flag_quiet_ep_);
+        } else if (network_phase_anchor_min_age_ep_ != 10
+                   || network_phase_anchor_flag_quiet_ep_ != 5) {
+            log->warn("Network (RF-2): phase_anchor_min_age_ep / _flag_quiet_ep are set "
+                      "but network.phase_datum_held_basis is OFF — they gate the HELD "
+                      "basis election and are INERT this run (standing invariant #4).");
         }
         // ⚠ The vehicle is SOLVE-AFFECTING from step 3 on.  The line enumerates what is
         // actually live on THIS posture rather than naming a build number, so a reader of
