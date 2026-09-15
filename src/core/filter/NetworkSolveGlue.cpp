@@ -310,6 +310,9 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         // mode but broadcast_tgd, which is what makes the builder fall back to a
         // zero target rather than guess).
         config_.getNetworkConfig().sat_gf_datum, setup.sat_gf_target_m,
+        // RF-0e: the two arms of the level-datum A/B (loader refuses both at once).
+        config_.getNetworkConfig().sat_if_level_datum,
+        config_.getNetworkConfig().sat_gf_datum_time_linked,
         gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
@@ -351,6 +354,10 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_sat_gf_sameband += static_cast<std::size_t>(cbd.n_sat_gf_sameband_free);
             ctx.counters.n_sat_gf_s2z_suppressed +=
                 static_cast<std::size_t>(cbd.n_s2z_suppressed);
+            ctx.counters.n_if_level_rows  += static_cast<std::size_t>(cbd.n_if_level_rows);
+            ctx.counters.n_if_level_sats  += static_cast<std::size_t>(cbd.n_if_level_sats);
+            ctx.counters.n_sat_gf_carried += static_cast<std::size_t>(cbd.n_sat_gf_carried);
+            ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
         }
         if (within_epoch_armed) {
             cap_H = cbd.H; cap_z = cbd.z;

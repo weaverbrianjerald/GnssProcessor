@@ -3029,6 +3029,14 @@ namespace GnssProcessor {
         // because the datum already pins every column of that channel.
         size_t n_sat_gf_extra = 0, n_sat_gf_isc0 = 0;
         size_t n_sat_gf_sameband = 0, n_sat_gf_s2z_suppressed = 0;
+        // RF-0e: e1's absolute IF-level rows (and the satellites they sum), and
+        // e2's split of geometry-free rows into CARRIED (a change pin on the
+        // previous solved value) vs ANCHORED (first sighting, the absolute
+        // broadcast target).  The anchored count is the only place the broadcast
+        // frame is re-asserted under e2, so a run with 0 of them has carried its
+        // frame from epoch 1 and never re-checked it.
+        size_t n_if_level_rows = 0, n_if_level_sats = 0;
+        size_t n_sat_gf_carried = 0, n_sat_gf_anchored = 0;
         // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.
