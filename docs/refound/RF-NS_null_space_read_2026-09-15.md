@@ -1,5 +1,9 @@
 # RF-NS — the S-basis null-space read: what the rank gate is actually withholding on (2026-09-15)
 
+⚠ **See §6 (2026-09-15, appended): fix (a) as pre-registered in §4.1 is REJECTED at its own re-coupling gate, and the
+"satellite absence" framing of the G07 / G30 / G04 stretches is corrected — those satellites are TRACKED throughout; what
+is absent is their tracking STATIONS, rejected by the per-station PD test.  §1–§5 stand as written.**
+
 **STATUS:** closed — **the frozen reading is HALF right, and the half it gets wrong is the one that matters.**  Every mid-run withhold in
 both runs — the vehicle's 49-epoch hour-4 and 18-epoch hour-5 stretches AND the golden's own 5-epoch hour-1 cluster — is **ONE satellite's
 `C1W` code-bias column sitting in the shared border with EXACTLY zero information** (eigenvector weight 1.00 on that single column, every
@@ -187,3 +191,73 @@ float vehicle back in contention; it removes one of the two reasons its emitted 
   attribution, co-incident events in (t − 2 ep, t], phase-datum coverage across each stretch, and arc births / deaths.
 - Unit suite after the change: **2217 tests from 292 suites, 2216 passed, 1 skipped** (`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`,
   the fixture gate).
+
+## 6. 2026-09-15 — fix (a) as pre-registered is REJECTED at the re-coupling gate; the G07/G30 stretches are vehicle-only observation loss
+
+§4.1(a) was taken to build.  The build stopped at its own pre-registered re-coupling gate and the fix as written is
+**rejected**.  Four findings, all from the existing traces and the source; §1–§5 above stand unchanged.
+
+### 6.1 (F1) The pin lands in the same normals as the readmission seed, and loses to it
+
+Gauge rows are folded at `src/core/filter/NetworkSolveGlue.cpp:336` (`buildCodeBiasDatumRows`); the pin's site is the
+sum-to-zero block `src/core/filter/NetworkSbasis.cpp:1181-1210` at the gauge weight `kCodeBiasGaugeWeight = 1.0e3`
+(`include/filter/NetworkSbasis.hpp:260`).  The null-space gate is at `NetworkSolveGlue.cpp:925` / `:971` →
+`:1048` (`gate_withheld`) → `:1125` (`EpochAction::SkipEpoch`); `networkInjectD2CarryPrior` is at `:1159`, **after** the
+gate; the parked entry seeds the returned column at `src/core/app/NetworkRunContext.cpp:3527-3531`
+(`if (cp.t_park_s > 0.0) { if (!readmitColumnPresent(est, cp)) continue; seed_gap = now_s - cp.t_park_s; … }`,
+`var_eff = cp.var + q·seed_gap`); the solve is at `NetworkSolveGlue.cpp:1243`.  A target-0 pin at 1e3 in the same normals
+as a seed at `1/var_eff` takes share `1000 / (1000 + 1/var_eff)`:
+
+| instance | seed value (m) | `var_eff` | pin share | realized | error |
+|---|---|---|---|---|---|
+| G04, golden | −4.2219 | 8.103e-03 | 89.0 % | −0.464 | **+3.76 m** |
+| G04, vehicle | −3.7526 | 1.221e-02 | 92.4 % | — | **+3.47 m** |
+| G30, vehicle | +3.7694 | 1.559e-04 | 13.5 % | — | −0.51 m |
+| G07, vehicle | −0.0508 | 2.620e-04 | 20.8 % | — | +0.011 m |
+
+(values verbatim from each run's `READMIT seed_code_bias` events).  The pin does not politely yield to the seed; on the
+G04 class it *wins*, and the returning code bias is realized metres from its own carried value.
+
+### 6.2 (F2) It is permanent, not one epoch — the pinned value becomes the carry
+
+`src/core/app/ApplicationNetwork.cpp:2481` returns before `networkStashCarry` on a withheld epoch, so nothing is stashed
+while the gate throws.  The moment the pin lets an epoch be KEPT, `src/core/app/NetworkRunContext.cpp:6402-6417` stashes
+the column unconditionally (its only guards are `plan.shared_datum` pins and `var > 0`) and refreshes `code_bias_prev_`
+from `x_s(col)`.  The pinned value therefore (a) becomes the live D2 carry, (b) makes the satellite a channel VETERAN
+(`src/core/filter/NetworkSbasis.cpp:1193-1197` puts it in `jac_sats`, and the s2z RHS `Σ b̂_prev` carries it forward), and
+(c) RETIRES the park (`NetworkRunContext.cpp:6512-6520`, `live.count(...) ⇒ continue`), so the genuine
+`seed_code_bias` at the real return never fires.  The invariant-#7 re-coupling edge MOVES (G07 `gap_ep` 50 → ~20) and
+`seed_held` then re-validates against a data-free solve.  Consequence: the pin would fire on ONE epoch per absence
+(3 column-epochs across the two runs), not 72 — the gate would clear every other epoch through a corrupted s2z RHS.
+
+### 6.3 (F3) The census predicate is not implementable from what the seam sees
+
+§4.1(a) specifies "any column that no built row spans", with "(a) any observation row touches the column" as half of it.
+The column registers because ≥ 2 PRESENT stations hold the `getSatBiasStates()` entry
+(`src/core/app/ApplicationNetworkAssembly.cpp:2113-2129`) — a fact about station STATE, independent of whether a code row
+ever entered the normals.  `NetworkEstimator` (`include/filter/NetworkEstimator.hpp`) exposes no column-occupancy and no
+pre-datum diagonal accessor, so the seam cannot ask "did any row touch this column this epoch".  That accessor is a
+prerequisite, not an implementation detail.
+
+### 6.4 (F4) The framing "the satellite leaves the network entirely" is FALSE
+
+Measured in `network_pf_keyed.csv`: in `runs/_rf0g_field6` G07 carries 12–14 post-fit CODE rows on EVERY epoch of
+274800–276400 and G30 likewise through 279900–280600, and the golden does not withhold there; in the vehicle G07 has 2
+rows over 274260–274830 (against the golden's 12) and then none.  So the 49- and 18-epoch stretches are an OBSERVATION-LOSS
+pathology that only the vehicle has; only G04 is a coverage dip common to both arms (4 rows golden / 2 vehicle up to
+264360 and from 264540).
+
+⚠ **Sharpened the same day — the loss is STATION-level and it is in BOTH arms.**  See
+[RF-NS-b](RF-NS-b_vehicle_obs_loss_2026-09-15.md): G07 is TRACKED by 10–13 stations on every epoch of its "absence"
+(`network_if_slip.csv`, which is **sha256-identical** between the two runs — the observation stream is bit-identical).
+What differs is how many of those stations survive `NetworkNormalEquations::addStation`'s per-station PD test
+(`src/core/filter/NetworkNormalEquations.cpp:476-484`): a median of **29 of 59 stations per settled epoch are dropped in
+the GOLDEN and 42 in the vehicle**.  G07 reaches the solve at 6–7 stations in the golden and at exactly ONE
+(DARW00AUS) in the vehicle.  The post-fit row count is therefore an in-solve-station count, not a coverage count.
+
+### 6.5 What replaces fix (a)
+
+Fix (a) is re-pre-registered as **(b2)** in RF-NS-b — same target-0 pin, but with the pinned column EXCLUDED from the
+stash, from veteran promotion and from park retirement, behind the occupancy accessor F3 names, so the park stays parked
+and the genuine seed fires unchanged at the real return.  The larger item is **(b1)**, the station-level PD rejection
+itself, which is what actually empties these columns.  §4.1(b) (the ignition class) is untouched by this section.
