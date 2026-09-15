@@ -2335,6 +2335,26 @@ namespace GnssProcessor {
                       "eigen-decomposition per REJECTED block only; the rejection and the "
                       "station drop are unchanged (measure-only, solve byte-identical).");
         }
+        // Card CST: per-satellite readout of the CLOSED-LOOP CONSUMER.  Trace-only,
+        // measure-only (the harvest reads state the consumer's epoch has already
+        // committed) and fingerprint-SAFE.  The closed-loop SINK check is NOT here:
+        // network.closed_loop.enable is parsed in loadNetworkClosedLoop_, which runs
+        // AFTER this helper, so testing it at this point would read a default and warn
+        // on a run that HAS the harness armed (the trace_events precedent above).
+        network_config_.trace_consumer_sat =
+            jval<bool>(json, "network.trace_consumer_sat", "trace_consumer_sat", false);
+        if (network_config_.trace_consumer_sat) {
+            log->info("Network (card CST): network.trace_consumer_sat ON — the held-out "
+                      "closed-loop consumer now writes logs/closed_loop_sat_trace.csv, one row "
+                      "per (satellite, raw phase signal) per consumer epoch: the APPLIED "
+                      "clock/code-bias/phase-bias corrections as the consumer's own gated reads "
+                      "return them, the producer's discontinuity COUNTERS as the store presents "
+                      "them, WHAT THE CONSUMER DID with each declaration (reset / carry / "
+                      "re-inflate / none), the pre-fit innovations, the post-fit residuals, and "
+                      "the ambiguity + slant-iono STATE values with their variances.  "
+                      "EV6 §9 item 1's owed instrument; measure-only, consumer solve "
+                      "byte-identical.");
+        }
         // Card RF-PD-fix: install the station's own DATUM rows BEFORE the PD test.
         // SOLVE-AFFECTING (it changes which stations are in the network) — the
         // rx_code_bias_datum cross-check is deferred to that knob's own block, which
@@ -11325,6 +11345,16 @@ namespace GnssProcessor {
                               clc.ar_wl_only ? "on" : "off");
                 }
             }
+        }
+        // Card CST sink dependency (deferred from the observability helper, which runs
+        // BEFORE this one and so cannot see clc.enable).  Standing invariant #4: an
+        // armed instrument whose subject does not exist must SAY so rather than write
+        // an empty file that reads as "nothing happened".
+        if (network_config_.trace_consumer_sat && !network_config_.closed_loop.enable) {
+            log->warn("Network (card CST): network.trace_consumer_sat is ON but the "
+                      "closed-loop harness is NOT enabled (network.closed_loop.enable) — "
+                      "there is no consumer to read, so no closed_loop_sat_trace.csv will be "
+                      "opened and the knob is INERT on this run.");
         }
     }
 

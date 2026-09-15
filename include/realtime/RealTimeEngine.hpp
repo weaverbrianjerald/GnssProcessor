@@ -43,10 +43,12 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
 #include "realtime/PbDiscCarryLedger.hpp"    // Card CC (A): declared-step ambiguity carry ledger
+#include "realtime/ConsumerSatTrace.hpp"     // Card CST: per-satellite consumer readout row
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -335,6 +337,40 @@ public:
      */
     void notifyProductsAdvanced() { drainHeldObs(); }
 
+    // --- Card CST: per-satellite consumer readout -----------------------------
+    /**
+     * @brief Arm the per-satellite readout of this engine's own epoch
+     *        (@c network.trace_consumer_sat, set by the closed-loop harness).
+     *
+     * Armed, every @c processEpoch that reaches the estimation tail leaves one
+     * @ref ConsumerSatRow per (satellite, raw phase signal) in
+     * @ref consumerSatRows, and the SSR datum-break reactions additionally
+     * RECORD what they did per key so the row can report it.  The harness reads
+     * the buffer right after @c processEpoch returns and writes it through
+     * @c NetworkRunTraces (which owns the stream, exactly as for
+     * @c closed_loop_trace.csv).
+     *
+     * MEASURE-ONLY.  Nothing here feeds back into the filter: the harvest reads
+     * state the epoch has already committed, so the consumer's solve is
+     * byte-identical with this armed.  Default false ⇒ no buffer is filled, no
+     * event is recorded, and an epoch costs exactly what it did before.
+     *
+     * @param on Arm (true) or disarm (false) the readout.
+     */
+    void setConsumerSatTrace(bool on) { consumer_sat_trace_ = on; }
+
+    /**
+     * @brief The rows harvested at the most recently PROCESSED epoch.
+     *
+     * Cleared at the top of every @c processEpoch, so an epoch the admission
+     * gates ended early leaves it EMPTY — which is the honest reading (that
+     * epoch produced no consumer solution), never a stale repeat of the
+     * previous one.  Empty whenever @ref setConsumerSatTrace is off.
+     *
+     * @return Const reference to the engine-owned row buffer.
+     */
+    const std::vector<ConsumerSatRow>& consumerSatRows() const { return consumer_sat_rows_; }
+
     /// Get the current receiver position (ECEF, meters).
     Eigen::Vector3d getPosition() const;
 
@@ -568,6 +604,16 @@ private:
     // --- Observability (RealTimeEngineSsrDiag.cpp) ------------------------
     void logSsrCoverage(RtEpochContext& ctx);    ///< Per-epoch SSR coverage summary line.
     void traceSsrConsumer(RtEpochContext& ctx);  ///< L10 consumer-side SSR-application CSV.
+    /// Card CST: harvest this epoch's per-(sat, raw phase signal) rows into
+    /// @ref consumer_sat_rows_.  Runs at the processEpoch TAIL (post-update,
+    /// post-AR) so the states and residuals it reads are the committed ones;
+    /// no-op unless @ref consumer_sat_trace_.
+    void traceConsumerSat_(RtEpochContext& ctx);
+    /// Card CST: record what an SSR datum-break reaction did to one key, for
+    /// this epoch's rows.  @p key is "<sat>|<signal>" for the phase/code-bias
+    /// reactions and "<sat>|CLK" for the clock one; repeated actions on one key
+    /// in one epoch are joined with ';'.  No-op unless armed.
+    void noteConsumerSatEvent_(const std::string& key, const char* action);
 
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
     void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
@@ -720,6 +766,19 @@ private:
     /// Most recent epoch's AR result + whether AR ran (closed-loop metrics).
     AmbiguityResolution last_ar_result_{};
     bool last_ar_ran_{ false };
+
+    // --- Card CST: per-satellite consumer readout (network.trace_consumer_sat) ---
+    /// Armed by @ref setConsumerSatTrace.  Gates BOTH the tail harvest and the
+    /// per-key event recording in the SSR datum-break seams, so an unarmed
+    /// engine does no allocation and no map write anywhere on the epoch path.
+    bool consumer_sat_trace_{ false };
+    /// This epoch's harvested rows (cleared at the top of every processEpoch).
+    std::vector<ConsumerSatRow> consumer_sat_rows_;
+    /// This epoch's consumer reactions, "<sat>|<signal>" or "<sat>|CLK" -> the
+    /// action name(s).  Filled by @ref noteConsumerSatEvent_ from the datum-break
+    /// seams (which run BEFORE the measurement update) and drained by
+    /// @ref traceConsumerSat_ at the tail; cleared with the row buffer.
+    std::map<std::string, std::string> consumer_sat_events_;
 
     /// When true, AR ignores the MW WL feed and runs pure MLAMBDA on the KF float
     /// (closed-loop network-phase-bias validation; see setArIgnoreMwWl).

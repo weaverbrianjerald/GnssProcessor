@@ -752,6 +752,19 @@ void networkEmitStore(
                          << ar_gate << ','
                          << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
             }
+            // Card CST: the per-SATELLITE twin of the row above.  The engine
+            // harvested its own epoch at the processEpoch tail (traceConsumerSat_);
+            // this seam only moves the buffer to the stream NetworkRunTraces owns,
+            // stamped with the SAME (week, tow) closed_loop_trace.csv just used, so
+            // the two files join with no tolerance.  Both counters are invariant
+            // #4's ON-path telemetry: rows == 0 on an armed run means the consumer
+            // deferred every epoch, which no absence-of-crash reading would show.
+            if (nc.trace_consumer_sat) {
+                const std::size_t n_cst =
+                    traces.writeConsumerSatRows(se.time, consumer->consumerSatRows());
+                if (n_cst > 0) ++ctx.counters.n_cst_epochs;
+                ctx.counters.n_cst_rows += static_cast<long long>(n_cst);
+            }
         }
     }
 

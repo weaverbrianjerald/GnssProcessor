@@ -3048,6 +3048,12 @@ namespace GnssProcessor {
         // subset of n_skipped — the solve/carry/QC all ran (emission-only gate),
         // so these epochs are counted nowhere else.
         size_t n_sh_gate_withheld = 0;
+        // Card CST (network.trace_consumer_sat) — invariant #4 counters for the
+        // per-satellite consumer readout.  0 epochs on an ARMED run means the
+        // consumer deferred every epoch (admission gates) and the file is a bare
+        // header; 0 rows with non-zero epochs is impossible by construction.
+        long long n_cst_epochs = 0;  ///< consumer epochs that contributed >= 1 row
+        long long n_cst_rows   = 0;  ///< (satellite, raw phase signal) rows written
         // Prioritized-datum drop-and-heal observability: epochs where the gate threw and the
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).

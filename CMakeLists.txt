@@ -170,6 +170,7 @@ add_library(gnss_core STATIC
     src/core/realtime/RealTimeEngineStateSnap.cpp
     src/core/realtime/RtStateSnapshot.cpp
     src/core/realtime/PbDiscCarryLedger.cpp
+    src/core/realtime/ConsumerSatTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
@@ -406,6 +407,7 @@ add_executable(gnss_tests
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
+    tests/test_consumer_sat_trace.cpp
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp

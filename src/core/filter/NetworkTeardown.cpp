@@ -5641,6 +5641,15 @@ int networkTeardown(
         log->info("  VERDICT                   : {}", verdict);
         log->info("  closed-loop trace         : {}",
                   (log_dir_ / "closed_loop_trace.csv").string());
+        // Card CST: the per-satellite readout's ON-path telemetry (invariant #4).
+        // Printed ONLY when armed, so an OFF run's summary is byte-identical.  A
+        // run that reports 0 epochs has an instrument that never fired — the
+        // consumer deferred every epoch — however clean the log reads.
+        if (config_.getNetworkConfig().trace_consumer_sat) {
+            log->info("  per-sat consumer trace    : {} rows over {} consumer epoch(s) -> {}",
+                      ctx.counters.n_cst_rows, ctx.counters.n_cst_epochs,
+                      (log_dir_ / "closed_loop_sat_trace.csv").string());
+        }
         // Card CC (A): the declared-step carry counters — the consumer's ON-path
         // telemetry (invariant #4).  Printed only when the knob is armed, so an
         // OFF run's summary is byte-identical.  Closure: carried + resets == events.

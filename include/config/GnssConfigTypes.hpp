@@ -2332,6 +2332,42 @@ namespace GnssProcessor {
          */
         bool trace_station_pd_null{ false };
         /**
+         * @brief Card CST: per-satellite readout of the CLOSED-LOOP CONSUMER
+         *        (@c network.trace_consumer_sat) -> @c logs/closed_loop_sat_trace.csv.
+         *
+         * @c closed_loop_trace.csv carries week, tow, @c n_sats, the AR columns
+         * and the position error — and nothing per-satellite.  EV6
+         * (@c docs/refound/EV6_hour6_decouple_event_2026-09-15.md §9 item 1)
+         * named that as the BLOCKER for the hour-6 consumer events on the
+         * RF-0hv field posture: with no per-satellite consumer content a float
+         * re-convergence cannot be separated from the slant-iono half of the
+         * RF-0b applied pair, and an UNDECLARED wire step (451 of 545 steps
+         * > 0.10 m on that run) cannot be seen landing.
+         *
+         * Armed, the consumer engine harvests one row per (satellite, raw phase
+         * signal) at the tail of every @c processEpoch that runs the estimation
+         * tail, and the producer's emit/store seam writes them beside
+         * @c closed_loop_trace.csv: the APPLIED clock / code-bias / phase-bias
+         * corrections (the consumer's OWN gated reads, not a re-derivation),
+         * the producer's discontinuity COUNTERS as the store presents them,
+         * WHAT THE CONSUMER DID with each declaration that epoch (reset /
+         * carry / re-inflate / none — invariant #7's re-coupling edge, on the
+         * consumer side), the pre-fit innovations and post-fit residuals, and
+         * the ambiguity + slant-iono STATE values with their variances (a
+         * declared reset shows as variance re-inflation; a silent float
+         * re-convergence shows as the ambiguity moving with large residuals and
+         * NO variance step).
+         *
+         * MEASURE-ONLY: the harvest reads state the epoch has already committed
+         * and writes nothing back; the consumer's solve is byte-identical with
+         * the knob ON.  TRACE-ONLY — never folded into the warm-resume
+         * fingerprint.  Requires the closed-loop harness
+         * (@c network.closed_loop.enable); without a consumer there is nothing
+         * to read and the loader says so.  Default OFF ⇒ no buffer, no event
+         * recording, no file.
+         */
+        bool trace_consumer_sat{ false };
+        /**
          * @brief Card RF-PD-fix: fold the station's own DATUM rows into its local
          *        block BEFORE the @c addStation positive-definiteness test
          *        (@c network.station_prior_before_pd).

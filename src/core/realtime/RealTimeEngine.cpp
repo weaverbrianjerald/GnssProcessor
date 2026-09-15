@@ -391,6 +391,15 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     state_manager_->setStateEpochTime(ctx.current_time);
     LogManager::setCurrentEpochTime(ctx.current_time);
 
+    // Card CST: drop the previous epoch's per-satellite readout HERE, before any
+    // gate can end the epoch — so an epoch the admission gates defer leaves the
+    // buffer EMPTY (the honest reading: that epoch produced no consumer
+    // solution) instead of handing the harness a stale repeat.  No-op unarmed.
+    if (consumer_sat_trace_) {
+        consumer_sat_rows_.clear();
+        consumer_sat_events_.clear();
+    }
+
     // Mode tag only — the spdlog %E field already carries the GPS time.
     // "[RT] " distinguishes realtime-engine output from post-processing
     // when both modes share a console.
@@ -520,6 +529,12 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);
+
+    // Card CST: harvest the per-satellite readout LAST — after the update, the
+    // pseudo-observation constraints and AR — so the ambiguity / slant-iono
+    // values and variances it reports are the epoch's COMMITTED ones.
+    // Measure-only; no-op unless network.trace_consumer_sat armed the engine.
+    traceConsumerSat_(ctx);
 
     // Card CC (B): the live filter memory is now "as of" this epoch — the
     // stamp writeStateSnapshotTo uses (and checks against the network copy).

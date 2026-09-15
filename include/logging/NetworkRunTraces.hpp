@@ -52,6 +52,7 @@ namespace GnssProcessor {
     struct EpochStatusRow;          // filter/NetworkRunTypes.hpp (INC-4 hoist)
     struct NetworkKnobs;            // app/NetworkRunContext.hpp (INC-4)
     struct NetworkServiceCounters;  // app/NetworkRunContext.hpp (INC-4)
+    struct ConsumerSatRow;          // realtime/ConsumerSatTrace.hpp (card CST)
     class  NetworkCarryVceApply;    // filter/NetworkCarryVceApply.hpp (M2 v2)
 
     /// B8: pure observation counter — {opportunities, flags} for one QC tier,
@@ -361,6 +362,14 @@ namespace GnssProcessor {
         /// Closed-loop consumer metrics trace (closed_loop_trace.csv; opened
         /// only when the held-out consumer is armed — path is openAll-local).
         std::ofstream cl_trace;
+
+        /// Card CST: per-satellite closed-loop consumer trace
+        /// (closed_loop_sat_trace.csv; opened only when the held-out consumer is
+        /// armed AND @c network.trace_consumer_sat — path is openAll-local).
+        /// Same ownership split as @ref cl_trace: the stream lives here, the rows
+        /// are harvested by the consumer engine and written from the emit/store
+        /// seam via @ref writeConsumerSatRows.
+        std::ofstream cl_sat_trace;
 
         /// Always-on per-epoch estimability/service trace (P1-rotated).
         std::ofstream trace;
@@ -853,6 +862,25 @@ namespace GnssProcessor {
         /// L1: one network_epoch_status.csv row (no-op when the trace is OFF).
         void emitEpochStatus(const GnssTime& t, const char* disposition,
                              const EpochStatusRow& r);
+
+        /**
+         * @brief Card CST: write one consumer epoch's per-satellite rows to
+         *        @ref cl_sat_trace (no-op when the stream is not open).
+         *
+         * Called from the emit/store seam immediately after
+         * @c consumer->processEpoch, with the engine's own harvested buffer
+         * (@c RealTimeEngine::consumerSatRows).  The epoch stamp is the
+         * PRODUCER's @c se.time — the same stamp @c closed_loop_trace.csv uses
+         * for that consumer epoch, so the two files join on (week, tow) with no
+         * tolerance.
+         *
+         * @param t    Epoch time stamped on every row.
+         * @param rows The consumer's rows for this epoch (may be empty).
+         * @return Rows actually written (0 when the stream is closed) — the
+         *         caller folds it into the run-end counters (invariant #4).
+         */
+        std::size_t writeConsumerSatRows(const GnssTime& t,
+                                         const std::vector<ConsumerSatRow>& rows);
 
         /// L2: one network_events.csv row for a discrete QC action (no-op OFF).
         /// Commas in @p detail are sanitized to semicolons (single CSV field).

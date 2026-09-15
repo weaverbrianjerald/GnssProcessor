@@ -1306,6 +1306,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // the MW WL (it is in the .BIA frame; see setArIgnoreMwWl).  wl_only AR
             // keeps the MW WL by definition.
             consumer->setArIgnoreMwWl(!consumer_config.getArWlOnly());
+            // Card CST: arm the per-satellite readout BEFORE the product-routing
+            // branch below, so the instrument exists on the BASELINE arm
+            // (consume_network_products=false) too — a consumer that consumes no
+            // products still has ambiguities, iono states and residuals, and the
+            // A/B between the two arms is one of the reads this trace is for.
+            consumer->setConsumerSatTrace(nc.trace_consumer_sat);
             const bool undiff = cl.consumer_undifferenced;
             if (undiff)
                 log->info("Network closed-loop: UNDIFFERENCED user model — direct per-band "

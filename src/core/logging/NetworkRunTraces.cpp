@@ -14,6 +14,7 @@
 #include "logging/CsvRotator.hpp"       // maybeRotateCsv (P1 rotation, INC-4)
 #include "filter/NetworkPivotHandover.hpp" // formatPivotMap (health heartbeat, INC-4)
 #include "filter/NetworkAmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
+#include "realtime/ConsumerSatTrace.hpp"    // card CST: ConsumerSatRow + kConsumerSatTraceHeader
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
@@ -149,6 +150,19 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                         "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";  // T2c: +ar_gate; §8.11: +p_succ — the WL-only paths' ONLY confidence number (their `ratio` is the "+inf = no LAMBDA ran" sentinel, which reads as a perfect ratio and is how a 35 m wrong fix passed review)
         else
             log->warn("Network: failed to open closed-loop trace {}", cl_path.string());
+        // Card CST (network.trace_consumer_sat): the per-SATELLITE twin of the
+        // trace above — EV6 §9 item 1's owed instrument.  Same ownership split and
+        // the same arming gate plus the knob, so it can only exist where there is
+        // a consumer to read; unarmed, nothing is opened (byte-identical).
+        if (nc.trace_consumer_sat) {
+            const std::filesystem::path cls_path = log_dir_ / "closed_loop_sat_trace.csv";
+            cl_sat_trace.open(cls_path);
+            if (cl_sat_trace)
+                cl_sat_trace << kConsumerSatTraceHeader;
+            else
+                log->warn("Network: failed to open closed-loop per-satellite trace {}",
+                          cls_path.string());
+        }
     }
 
     if (nc.trace_slip_events) {
@@ -965,6 +979,17 @@ void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
 
 // L1: write one network_epoch_status.csv row for this epoch (guarded; no-op when
 // OFF).  Relocated VERBATIM from the runNetwork() lambda (decomposition INC-4).
+std::size_t NetworkRunTraces::writeConsumerSatRows(const GnssTime& t,
+                                                   const std::vector<ConsumerSatRow>& rows) {
+    // Card CST.  The stream exists only when the harness AND network.trace_consumer_sat
+    // are both armed, so an unarmed run never reaches the loop and an armed run with a
+    // deferred consumer epoch writes nothing (the engine hands back an empty buffer —
+    // invariant #4's "0 rows" is a real reading, not a missing file).
+    if (!cl_sat_trace.is_open()) return 0;
+    for (const auto& r : rows) cl_sat_trace << formatConsumerSatRow(t.week, t.tow, r);
+    return rows.size();
+}
+
 void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* disposition,
                                        const EpochStatusRow& r) {
     // Config echoes captured at openAll (single-sourced with the L15 manifest).
@@ -1538,6 +1563,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_pd_null
                        ? std::string("\"trace_station_pd_null\":true,") : std::string())
+               // Card CST per-satellite consumer readout: same armed-only rule, so an
+               // unarmed run's manifest bytes are unchanged.
+               << (nc.trace_consumer_sat
+                       ? std::string("\"trace_consumer_sat\":true,") : std::string())
                // Card RF-PD-fix: SOLVE-AFFECTING (it decides which stations are in the
                // network), so an archived logs/ folder has to be able to say which side
                // of it produced the products.  Emitted ONLY when armed (the
@@ -2162,6 +2191,7 @@ void NetworkRunTraces::closeAll() {
     if (iono_trace.is_open()) iono_trace.close();
     if (vtec_sh_trace.is_open()) vtec_sh_trace.close();
     if (cl_trace) cl_trace.close();
+    if (cl_sat_trace.is_open()) cl_sat_trace.close();   // card CST
     if (if_slip_trace.is_open()) if_slip_trace.close();
     if (raim_trace.is_open()) raim_trace.close();
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();

@@ -44,6 +44,16 @@ void RealTimeEngine::reactToGenerationChange(RtEpochContext& ctx) {
             keys.reserve(state_manager_->getAmbiguities().size());
             for (const auto& kv : state_manager_->getAmbiguities()) keys.push_back(kv.first);
             for (const auto& k : keys) state_manager_->resetAmbiguity(k, reset_std);
+            // Card CST: a GLOBAL reset — record it per ambiguity key so the rows
+            // of that epoch carry it too (an undeclared-looking mass reset is
+            // exactly what this instrument must not hide).  No-op unarmed.
+            if (consumer_sat_trace_)
+                for (const auto& k : keys) {
+                    const auto sep = k.find('_');
+                    if (sep == std::string::npos || sep == 0 || sep + 1 >= k.size()) continue;
+                    noteConsumerSatEvent_(k.substr(0, sep) + "|" + k.substr(sep + 1),
+                                          "reset_gen");
+                }
             const double cb_var =
                 config_.codeBiasReinflateStd() * config_.codeBiasReinflateStd();
             std::vector<std::string> cb_keys;
@@ -119,6 +129,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                 if (state_manager_->noteSsrDiscontinuity(
                         key, pb->discontinuity_counter)) {
                     state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                    noteConsumerSatEvent_(key, "reset_disc");   // card CST (no-op unarmed)
                     log->info("{}SSR phase-bias discontinuity: reset {} {}",
                               epoch_prefix, obs.satellite, code);
                 }
@@ -136,6 +147,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                 const auto it = ssr_phase_bias_applied_.find(key);
                 if (it != ssr_phase_bias_applied_.end() && it->second != applied_now) {
                     state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                    noteConsumerSatEvent_(key, "reset_flip");   // card CST (no-op unarmed)
                     log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
                               epoch_prefix, it->second ? "fresh" : "stale",
                               applied_now ? "fresh" : "stale", obs.satellite, code);
@@ -213,16 +225,21 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
             switch (d.action) {
                 case A::None: break;
                 case A::CarriedDisc:
+                    noteConsumerSatEvent_(key, "carry_disc");   // card CST (no-op unarmed)
                     log->info("{}SSR phase-bias discontinuity: carried {} {} by {:+.3f} m",
                               epoch_prefix, obs.satellite, code, -d.delta_m);
                     break;
                 case A::CarriedFlip:
+                    noteConsumerSatEvent_(key, "carry_flip");   // card CST (no-op unarmed)
                     log->info("{}SSR phase-bias freshness flip ({} -> {}): carried {} {} by "
                               "{:+.3f} m", epoch_prefix, applied_now ? "stale" : "fresh",
                               applied_now ? "fresh" : "stale", obs.satellite, code,
                               -d.delta_m);
                     break;
                 default:
+                    // Card CST: a REFUSED carry took the reset; name the refusal so
+                    // the row distinguishes it from a plain declared reset.
+                    noteConsumerSatEvent_(key, PbDiscCarryLedger::actionName(d.action));
                     log->info("{}SSR phase-bias {}: reset {} {} ({} — carry refused)",
                               epoch_prefix, bump ? "discontinuity" : "freshness flip",
                               obs.satellite, code, PbDiscCarryLedger::actionName(d.action));
@@ -277,6 +294,10 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                     if (state_manager_->noteSsrDiscontinuity(
                             "CB|" + obs.satellite + "|" + code, *c)) {
                         reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        // Card CST: the rx code-bias re-inflation is CONSTELLATION-
+                        // scoped, but the DECLARATION that triggered it is this
+                        // (sat, signal) — record it there (no-op unarmed).
+                        noteConsumerSatEvent_(obs.satellite + "|" + code, "reinflate_disc");
                         log->info("{}SSR code-bias discontinuity: {} {} (datum re-reference)",
                                   epoch_prefix, obs.satellite, code);
                     }
@@ -296,6 +317,8 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                     const auto it = ssr_code_bias_applied_.find(fkey);
                     if (it != ssr_code_bias_applied_.end() && it->second != applied_now) {
                         reref_systems.insert(PppUtils::getSystemString(obs.system));
+                        noteConsumerSatEvent_(obs.satellite + "|" + code,
+                                              "reinflate_flip");   // card CST (no-op unarmed)
                         log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
                                   "(re-inflating rx code-bias states)",
                                   epoch_prefix, it->second ? "applied" : "absent",
@@ -388,6 +411,12 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
         }
         if (auto c = ssr.getClockDiscontinuity(obs.satellite)) {
             if (state_manager_->noteSsrDiscontinuity("SC|" + obs.satellite, *c)) {
+                // Card CST: the clock declaration landed for THIS satellite.  The
+                // reaction below is necessarily constellation-scoped (one receiver
+                // clock, one ISB per constellation — see the T3g finding), so the
+                // row says "declared, and the consumer's only possible response
+                // fired", which is the distinction the trace has to preserve.
+                noteConsumerSatEvent_(obs.satellite + "|CLK", "reinflate_isb");
                 log->info("{}SSR clock discontinuity: {} (datum re-reference)",
                           epoch_prefix, obs.satellite);
                 // A receiver clock estimated fresh each epoch (white noise)
