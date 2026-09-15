@@ -66,6 +66,17 @@ ARMS = {
     # refusal forces; WROC00POL = the best-behaved station of the control).
     "a8":  {"__stations__": ["WROC00POL", "GOP600CZE", "FFMJ00DEU"],
             "network.clock_datum_station": "WROC00POL"},
+    # ---- the s24.8 SECOND EXTENSION (manager, 2026-09-13): the ionosphere representation ------------
+    # a9: the PPP posture at the station level — CODE's OSB (EXT-CB), no SH field, per-LOS ionosphere free
+    # at ionosphere_q.  The golden's estimation.ionosphere_weighting.enable stays as it is; whether the
+    # network setup then loads the external GIM as a constraint is read from the run's own log.
+    "a9":   {"network.estimate_iono_sh": False, "network.external_sat_code_bias": True,
+             "network.estimate_sat_code_bias": False, "model_corrections.enable_code_phase_bias": True},
+    # a10 / a10b: the SH<->slant representation-error steady-state sigma (T5v2 GM deviation), 5 -> 50 / 20 TECU
+    "a10":  {"estimation.global_vtec_sh.representation_sigma_tecu": 50.0},
+    "a10b": {"estimation.global_vtec_sh.representation_sigma_tecu": 20.0},
+    # a11: the SH field's resolution, degree 8 -> 15 (layer 2: 4 -> 8)
+    "a11":  {"estimation.global_vtec_sh.max_degree": 15, "estimation.global_vtec_sh.layer2_max_degree": 8},
 }
 DEFAULT_ARMS = ["a0", "a1", "a2", "a3", "a4", "a5"]
 
