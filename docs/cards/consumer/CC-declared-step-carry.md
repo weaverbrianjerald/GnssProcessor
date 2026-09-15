@@ -147,3 +147,25 @@ TRUE statement about the wire AS APPLIED, not an instrument artifact — but the
 leaves a float user at 6–8 m makes every consumer figure a random walk, and the resets are not the channel.  The
 consumer-side bars stay suspended; the replacement instrument is §24.5.
 
+
+## 2026-09-15 — the FIRST field/sim arm of (A) `pb_disc_carry` on a lineage the instrument can see: exact, closure HOLDS, 2 of 5 bars FAIL
+
+Card CC closed (A) as "VALIDATED as exact and neutral; **default OFF, not pinned** — its benefit cannot be measured on a wire that leaves a
+float user at metres … re-graded on the §24.5 wire instrument's successor once §24.6's fix lands."  That successor is card CST
+(`network.trace_consumer_sat`), and the re-grade has now been run on the RF-0hv working posture, both beds, one knob different:
+**[docs/refound/CC-arm_pb_disc_carry_rf0hv_2026-09-15.md](../../refound/CC-arm_pb_disc_carry_rf0hv_2026-09-15.md)**.
+
+Headline: `products.txt` byte-identical on BOTH beds (consumer-side only, confirmed); FIELD `events 390 → pb_disc_carried 390 / resets 0,
+closure HOLDS` with the per-cell trace going `{none 11228, reset_disc 390}` → `{none 11228, carry_disc 390}`; `amb_var` ratio on a carried cell
+≤ 0.979 where the reset path re-inflated 2.75–5.56×.  CST's hour-6 ramp is eliminated at the mechanism — max cumulative |Δamb| over the
+pre-registered 34-epoch window **9.710 → 0.770 m**, hour 6 **3.65 → 1.92 m**, hour 3 **0.97 → 0.38 m**.  Two of five pre-registered bars FAIL:
+the event window is **1.404 m** against ≤ 1.0 m (the residual is the UNDECLARED `G32 L1W` +1.409 m cell, which a carry is structurally blind to
+— CST §7.3's ordering, confirmed), and hours 4/5 are **+0.21 / +0.27 m** worse because two real mass resets at TOW 271050/271200 had also been
+*dumping* accumulated ambiguity error that a faithful translation preserves.  SIM: 720/720, WL 99.1 %, `events 735 → carried 731, resets 4
+(unknown_key)`, closure HOLDS.
+
+**Still default OFF, still not pinned.**  Two new obligations recorded there: a carried ambiguity is *continuous*, not *correct* (invariant #7's
+re-coupling edge has no re-validation), and the refusal ladder has no class for a recorded applied value that is younger than the wire's own
+convergence (the arm reads 27.82 m at the second consumer epoch where the reset path read 4.12 m).  Also noted: on a closed-loop arm this knob
+writes **no `gnss_config.log` line at all** — `GnssConfigLoadNetwork.cpp:11597` derives it onto the copied consumer config, which is never
+re-parsed, so the `GnssConfigLoad.cpp:575` echo never fires; the only arming evidence is `rt_engine.log` and the run-end counter.
