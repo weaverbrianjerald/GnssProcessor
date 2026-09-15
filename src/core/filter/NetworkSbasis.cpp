@@ -539,6 +539,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     NetworkSatGfDatum sat_gf_datum,
     const std::map<std::string, double>& sat_gf_target_m,
     bool sat_if_level_datum, bool sat_gf_datum_time_linked,
+    bool sat_isc_state, const std::set<std::string>& isc_bridged,
     const std::set<std::string>& gf_family_constellations,
     const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
     const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
@@ -907,6 +908,30 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         if (std::abs(mu_k - 1.0) <= 1e-12) {
                             ++out.n_sat_gf_sameband_free;   // ISC stays estimable
                             continue;
+                        }
+                        // --- RF-0f: the band-2 same-band companion -------------------
+                        // The pin's SECOND band gets the same treatment RF-0d already gave
+                        // its first: a companion sharing sig2's band differs from sig2 by a
+                        // pure inter-signal correction — no ionosphere (equal frequency, so
+                        // the iono terms cancel exactly), no clock — so it needs no datum to
+                        // be observable, only a station that tracks BOTH.  RF-0d pinned it
+                        // anyway, at c*T_GD, which asserts ISC = 0: a number RINEX
+                        // navigation does not carry, applied to a channel ten satellites and
+                        // two single-band-2 stations depend on.  RF-0e measured the bill.
+                        //
+                        // So leave it free WHERE IT IS OBSERVABLE, and only there.  A
+                        // satellite with no dual-tracking station this epoch has an ISC the
+                        // data cannot reach; that column falls through to the pin below,
+                        // which is counted separately so the wire can say which satellites'
+                        // C2X is an estimate and which is an assertion.
+                        const bool same_band_as_sig2 =
+                            sig2.size() >= 2 && sk.size() >= 2 && sk[1] == sig2[1];
+                        if (sat_isc_state && same_band_as_sig2) {
+                            if (isc_bridged.count(sat + "|" + sk)) {
+                                ++out.n_isc_observed;   // free: the data determines it
+                                continue;
+                            }
+                            ++out.n_isc_pinned;         // unobservable: pinned below, flagged
                         }
                         Eigen::VectorXd krow = Eigen::VectorXd::Zero(nshared);
                         bool k_ok = false;

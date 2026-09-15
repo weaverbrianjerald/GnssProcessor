@@ -184,8 +184,22 @@ struct LineAssembler {
             } else if (tag == "B") {
                 if (!have_cur || f.size() < 4) { ok = false; return completed; }
                 satSolution(f[1]).code_bias_m[f[2]] = std::stod(f[3]);
-                if (f.size() > 4)   // RTA-4: optional post-emit code disc counter (field 5)
-                    cur.serialized_disc.code[f[1] + "|" + f[2]] = std::stoi(f[4]);
+                // Fields >= 5, any order: the RTA-4 POSITIONAL post-emit code disc counter,
+                // and RF-0f's `isc=` key=value token.  A field containing '=' ends the
+                // positional parse exactly as the C record's iode=/oiod= tokens do — without
+                // that guard `isc=obs` would reach std::stoi and throw on a file whose
+                // producer did not serialize disc counters.
+                for (std::size_t k = 4; k < f.size(); ++k) {
+                    if (f[k].rfind("isc=", 0) == 0) {
+                        // Stored verbatim so an unknown future value survives a round-trip.
+                        if (f[k].substr(4) == "obs")
+                            satSolution(f[1]).isc_observed.insert(f[2]);
+                    } else if (f[k].find('=') == std::string::npos && !f[k].empty()) {
+                        try {
+                            cur.serialized_disc.code[f[1] + "|" + f[2]] = std::stoi(f[k]);
+                        } catch (...) { /* malformed counter: ignored, as before */ }
+                    }
+                }
             } else if (tag == "P") {
                 if (!have_cur || f.size() < 6) { ok = false; return completed; }
                 NetworkPhaseBias pb;
@@ -587,7 +601,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# 'key=value' tokens are self-describing; unknown keys are ignorable.\n"
             "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed[,datum_consts]\n"
             "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]]\n"
-            "# B,sat,signal,code_bias_m[,code_disc]\n"
+            "# B,sat,signal,code_bias_m[,code_disc][,isc=obs]\n"
             "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>]\n"
             "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
             "# I,generation_id               (RTA-3 solution-generation id)\n"
@@ -692,6 +706,15 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             out_ << "B," << s.sat << ',' << signal << ',' << fmt::format("{}", bias_m);
             if (disc_source)
                 out_ << ',' << disc_source->codeBiasDiscontinuityCounter(s.sat, signal);
+            // RF-0f: a NEW per-record token, never an overload of an existing one.  It
+            // says this code bias is `b(pinned band-2 signal) + ISC^s` with the ISC
+            // ESTIMATED — some station tracked both signals of this satellite, so the
+            // difference is data, not an assertion.  Those are the ONLY companion
+            // records the producer emits: a pinned ISC is an assertion of zero that no
+            // VALUE distinguishes from an estimate, so it is withheld instead of
+            // flagged.  Absent unless network.sat_isc_state is armed, so every
+            // pre-RF-0f record is byte-identical.
+            if (s.isc_observed.count(signal)) out_ << ",isc=obs";
             out_ << '\n';
         }
         for (const auto& [signal, pb] : s.phase_bias) {

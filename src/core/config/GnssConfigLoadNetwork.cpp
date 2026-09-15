@@ -2948,6 +2948,10 @@ namespace GnssProcessor {
         network_config_.sat_gf_datum_time_linked =
             jval<bool>(json, "network.sat_gf_datum_time_linked",
                        "sat_gf_datum_time_linked", false);
+        // RF-0f: leave the band-2 same-band companion UNPINNED so its ISC is a free
+        // per-satellite difference rather than an asserted zero.
+        network_config_.sat_isc_state =
+            jval<bool>(json, "network.sat_isc_state", "sat_isc_state", false);
 
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
@@ -3336,6 +3340,28 @@ namespace GnssProcessor {
                           "anchor stays in force, so the frame is still the broadcast one; "
                           "what changes is that it is carried rather than re-asserted.",
                           sat_gf_mode == NetworkSatGfDatum::BroadcastTgd ? "c*T_GD" : "0");
+        }
+
+        // --- RF-0f validation: the ISC reparameterization ------------------------
+        if (network_config_.sat_isc_state) {
+            if (!sat_gf_on) {
+                log->warn("Network (RF-0f): network.sat_isc_state is INERT without "
+                          "network.sat_gf_datum — it decides which companion columns that "
+                          "datum does NOT pin, and without the datum nothing is pinned.");
+            } else {
+                log->info("Network producer (RF-0f): band-2 ISC left as a FREE per-satellite "
+                          "difference — the broadcast T_GD pin applies to the P-code pair "
+                          "only, and a same-band companion on the pin's second band (GPS C2X "
+                          "beside C2W) gets NO geometry-free row.  Its satellite code bias is "
+                          "then b(C2W) + ISC^s on the column it already owns, and the ISC is "
+                          "estimable at any station tracking BOTH signals of that satellite "
+                          "(their difference is a pure bias difference — no ionosphere, no "
+                          "clock).  RF-0d's row asserted ISC = 0, a value RINEX navigation "
+                          "does not carry.  A satellite with NO dual-tracking station has an "
+                          "unobservable ISC: its companion is pinned at 0 as before, counted, "
+                          "and its bias is NOT emitted — the wire carries isc=obs only on "
+                          "records whose ISC the data actually determined.");
+            }
         }
 
         // --- FAMILY-GF: the rd-3b pin, per partitioned secondary channel family ---

@@ -308,6 +308,76 @@ def f(x, w=8, p=3):
     return f"{x:{w}.{p}f}"
 
 
+def if_dispersion(run_dir, t0_tow=259200.0, lo=(3600.0, 7200.0), hi=(18000.0, 21600.0)):
+    """Per-satellite dispersion of the IONOSPHERE-FREE correction's drift (a DIAGNOSTIC).
+
+    The quantity a consumer actually applies per satellite is
+    ``IF_corr = -clock + a1*b(C1C) + a2*b(C2W)``.  Its NETWORK-COMMON drift is a datum and
+    cancels in the consumer's own clock; what a consumer's phase cannot absorb is the
+    PER-SATELLITE departure from that common drift.  So this reports the common drift
+    between two windows (default hour 2 and hour 6) and the spread of the per-satellite
+    deviations around it.
+
+    Introduced by RF-0e, where it separated arms the two bars could not: across RF-0 (GIM),
+    RF-0c, RF-0d and RF-0e's two level-datum arms the p90 ran 0.300 / 0.552 / 1.527 /
+    1.148 / 1.022 m and tracked the field consumer monotonically, while the common drift
+    (-1.2 / -8.1 / -17.2 / -17.1 / -16.9 m) did not.
+
+    Returns None when the product carries no satellite with a clock and both pinned-pair
+    code biases spanning both windows.
+    """
+    f1, f2 = 1575.42e6, 1227.60e6
+    den = f1 * f1 - f2 * f2
+    a1, a2 = f1 * f1 / den, -f2 * f2 / den
+    path = os.path.join(run_dir, "products.txt")
+    if not os.path.exists(path):
+        return None
+    per = {}
+    tow = None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            if ln.startswith("#"):
+                continue
+            f = ln.rstrip("\n").split(",")
+            if f[0] == "E":
+                tow = float(f[2]) if len(f) > 2 else None
+            elif f[0] == "C" and tow is not None and len(f) > 2:
+                try:
+                    per.setdefault(f[1], {}).setdefault(tow, [None, {}])[0] = float(f[2])
+                except ValueError:
+                    pass
+            elif f[0] == "B" and tow is not None and len(f) > 3:
+                try:
+                    per.setdefault(f[1], {}).setdefault(tow, [None, {}])[1][f[2]] = float(f[3])
+                except ValueError:
+                    pass
+
+    def win(series, w):
+        v = [x for t, x in series if w[0] <= t - t0_tow < w[1]]
+        return float(np.mean(v)) if v else None
+
+    drifts = []
+    for sat, byt in per.items():
+        series = []
+        for t in sorted(byt):
+            clk, b = byt[t]
+            if clk is None or "C1C" not in b or "C2W" not in b:
+                continue
+            series.append((t, -clk + a1 * b["C1C"] + a2 * b["C2W"]))
+        lo_v, hi_v = win(series, lo), win(series, hi)
+        if lo_v is not None and hi_v is not None:
+            drifts.append((sat, hi_v - lo_v))
+    if len(drifts) < 3:
+        return None
+    common = float(np.median([d for _, d in drifts]))
+    dev = np.array([abs(d - common) for _, d in drifts])
+    worst = sorted(drifts, key=lambda r: -abs(r[1] - common))[:5]
+    return dict(n=len(drifts), common_drift_m=common,
+                p50=float(np.percentile(dev, 50)), p90=float(np.percentile(dev, 90)),
+                max=float(dev.max()),
+                worst=[dict(sat=s, dev_m=d - common) for s, d in worst])
+
+
 def print_bed(name, bed):
     print("\n" + "=" * 96)
     print(f"  BED: {name}     run {bed['run_dir']}")
@@ -355,6 +425,14 @@ def print_bed(name, bed):
                   f"max step {w['max_step']:8.3f} m")
 
     print("\n  DIAGNOSTICS — NOT BARS.  Read to explain a delta, never to grade.")
+    ifd = bed.get("if_dispersion")
+    if ifd:
+        print("    per-satellite IF-correction dispersion (RF-0e; -clk + a1*b(C1C) + a2*b(C2W),")
+        print("      hour 2 -> hour 6).  The COMMON drift is a datum and cancels in the consumer's")
+        print("      own clock; the PER-SATELLITE deviation is what its phase cannot absorb:")
+        print(f"      n={ifd['n']}  common drift {ifd['common_drift_m']:+.3f} m  |  "
+              f"deviation p50 {ifd['p50']:.3f}  p90 {ifd['p90']:.3f}  max {ifd['max']:.3f} m")
+        print("      worst: " + "  ".join(f"{w['sat']}{w['dev_m']:+.2f}" for w in ifd["worst"]))
     if bed["code_rms"]:
         print("    per-station post-fit code rms (network_pf_keyed STA):")
         print("      hour |     n |   p50 m |   max m")
@@ -420,6 +498,7 @@ def grade_bed(name, run_dir, station, n_hours, runs_root, data_root, do_steps):
         wire=wire, wire_error=werr, wire_tail=tail,
         wire_reference="the COD 30 s CLK + COD MGX OSB .BIA"
                        + (" — WHICH IS THIS BED'S TRUTH" if name == "SIM" else ""),
+        if_dispersion=if_dispersion(run_dir),
         code_rms=code_rms_table(run_dir, n_hours),
         zwd=zwd_table(run_dir, n_hours),
         run_end=run_end_lines(run_dir),

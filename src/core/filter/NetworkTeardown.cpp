@@ -4313,6 +4313,27 @@ int networkTeardown(
                       100.0 * static_cast<double>(ctx.counters.n_sat_gf_anchored)
                           / static_cast<double>(tot));
     }
+    // RF-0f: armed-only run-end line.  The split between an ESTIMATED and an ASSERTED
+    // inter-signal correction is invisible on the wire except through the isc= token and
+    // the missing record, so the run has to state it (standing invariant #4).
+    if (config_.getNetworkConfig().sat_isc_state) {
+        const std::size_t tot = ctx.counters.n_isc_observed + ctx.counters.n_isc_pinned;
+        if (tot == 0)
+            log->warn("Network (ISC-STATE, RF-0f): ARMED but no band-2 same-band companion "
+                      "column was ever seen — no satellite carried a second band-2 code, so "
+                      "this run exercised nothing and is byte-equivalent to the unarmed "
+                      "posture (standing invariant #4).");
+        else
+            log->info("Network (ISC-STATE, RF-0f): {} companion column-epoch(s) left FREE "
+                      "because a station tracked both signals of that satellite, {} PINNED "
+                      "at 0 for want of one ({:.1f} % pinned).  A free one is an estimated "
+                      "inter-signal correction and its bias is emitted with isc=obs; a "
+                      "pinned one is the RF-0d assertion of ISC = 0 and its bias is NOT "
+                      "emitted, because a consumer cannot tell the two apart from the value.",
+                      ctx.counters.n_isc_observed, ctx.counters.n_isc_pinned,
+                      100.0 * static_cast<double>(ctx.counters.n_isc_pinned)
+                          / static_cast<double>(tot));
+    }
     // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
     // tell a live gauge from an armed-but-inert one is the fold count, so print it
     // even (especially) when it is zero.

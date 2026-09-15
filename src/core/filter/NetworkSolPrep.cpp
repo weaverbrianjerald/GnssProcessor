@@ -172,6 +172,30 @@ NetworkSolPrepResult networkSolPrep(
                 s.clock_iode = bc->iode;
         }
     }
+    // --- RF-0f: the band-2 companion's inter-signal correction, on the wire ----------
+    // Two things, both keyed off this epoch's verdicts (solve glue).  A companion whose
+    // ISC was ESTIMATED is flagged `isc=obs`, so a consumer knows the value is
+    // `b(pinned) + ISC^s` with a measured ISC rather than an assumed zero.  A companion
+    // whose ISC had to be PINNED at 0 is ERASED from the record: its value is an
+    // assertion RINEX navigation never made, and nothing about the number itself tells a
+    // consumer that — withholding is the only honest signal, and it is the one the card
+    // asks for ("emitted only when its ISC is observed").  Both sets are empty unless
+    // network.sat_isc_state is armed, so the record stream is byte-identical otherwise.
+    if (!ctx.carry.this_epoch_isc_obs.empty()
+        || !ctx.carry.this_epoch_isc_pinned.empty()) {
+        for (auto& s : sol.sats) {
+            for (auto it = s.code_bias_m.begin(); it != s.code_bias_m.end(); ) {
+                const std::string key = s.sat + "|" + it->first;
+                if (ctx.carry.this_epoch_isc_pinned.count(key)) {
+                    it = s.code_bias_m.erase(it);
+                } else {
+                    if (ctx.carry.this_epoch_isc_obs.count(key))
+                        s.isc_observed.insert(it->first);
+                    ++it;
+                }
+            }
+        }
+    }
     // RT0-4: stamp the wall-clock TIME-OF-GENERATION (distinct from the content
     // epoch se.time) so a consumer can measure product latency.  Only when armed
     // — otherwise generation_time stays {0,0} and no G record is serialized

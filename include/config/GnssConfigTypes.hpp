@@ -1600,6 +1600,31 @@ namespace GnssProcessor {
         /// Default OFF ⇒ the RF-0c/RF-0d absolute RHS ⇒ byte-identical.  INERT (and
         /// warned) without @ref sat_gf_datum.
         bool sat_gf_datum_time_linked{ false };
+        /// RF-0f: the broadcast T_GD pin applies ONLY to the P-code pair.  A same-band
+        /// companion on the pin's SECOND band (GPS C2X beside C2W) is left UNPINNED, so
+        /// its satellite code bias is `b(C2W) + ISC^s` with the inter-signal correction
+        /// free — exactly the reparameterization, since `b(C2X)` is already a
+        /// per-(satellite, signal) shared column (registered at
+        /// ApplicationNetworkAssembly.cpp:2126 / :2150) and `ISC^s = b(C2X) - b(C2W)`.
+        ///
+        /// WHY.  RF-0d pinned every cross-band companion at `c*T_GD`, which ASSERTS
+        /// ISC = 0 — a value RINEX navigation does not carry.  RF-0e measured the cost:
+        /// the per-satellite dispersion of the ionosphere-free correction (the part a
+        /// consumer's phase cannot absorb) went p90 0.55 -> 1.53 m, and removing the
+        /// channel outright gave the best field consumer on record until the two
+        /// stations that carry C2X as their ONLY band-2 code starved.  The ISC is a pure
+        /// bias difference — no ionosphere, no clock — so it is estimable at any station
+        /// tracking both signals of that satellite, and there is nothing to assert.
+        ///
+        /// WHERE IT IS NOT.  A satellite with no station tracking BOTH signals has an
+        /// unobservable ISC; its companion column is then pinned at 0 as before, counted,
+        /// and its bias is NOT emitted (the wire carries `isc=obs` only on records whose
+        /// ISC is observed).  The band-1 companion rule is unchanged — it was already
+        /// free — so this is the band-2 half of the same principle.
+        ///
+        /// Default OFF ⇒ RF-0d's pin-everything behaviour ⇒ byte-identical.  INERT
+        /// without @ref sat_gf_datum.
+        bool sat_isc_state{ false };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

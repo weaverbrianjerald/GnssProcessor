@@ -302,6 +302,37 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ? family_census.partitioned
             : kNoFamilies;
 
+    // --- RF-0f: the ISC BRIDGING ROSTER -----------------------------------------
+    // Which (satellite, companion signal) inter-signal corrections the data can reach
+    // this epoch.  The test is per SATELLITE and per PAIR, not per channel: an ISC is a
+    // pure bias difference, so it is determined iff some present station carries BOTH
+    // signals of that satellite in its own code-bias state map — the same map
+    // ApplicationNetworkAssembly.cpp:2126/:2150 registers the shared columns from, keyed
+    // "sat|signal" (StateKeys::parseSatBiasKey).  Anything less — the channel being dense
+    // network-wide, or both signals being present at DIFFERENT stations — does not
+    // determine it, because each station's own receiver code bias absorbs its half.
+    //
+    // Built here rather than in the row builder because only the driver sees the
+    // stations; empty unless the knob is armed, so the builder's lookups are never
+    // reached on an unarmed run.
+    std::set<std::string> isc_bridged;
+    if (config_.getNetworkConfig().sat_isc_state) {
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!present[i] || !stations[i].sm) continue;
+            // sat -> the signals THIS station holds for it
+            std::map<std::string, std::set<std::string>> by_sat;
+            for (const auto& kv : stations[i].sm->getSatBiasStates()) {
+                const auto parts = StateKeys::parseSatBiasKey(kv.first);
+                if (parts) by_sat[parts->satellite].insert(parts->signal);
+            }
+            for (const auto& [sat, sigs] : by_sat)
+                for (const auto& a : sigs)
+                    for (const auto& b : sigs)
+                        if (a != b && a.size() >= 2 && b.size() >= 2 && a[1] == b[1])
+                            isc_bridged.insert(sat + "|" + a);   // a is bridged to its band-mate
+        }
+    }
+
     const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
@@ -313,6 +344,7 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         // RF-0e: the two arms of the level-datum A/B (loader refuses both at once).
         config_.getNetworkConfig().sat_if_level_datum,
         config_.getNetworkConfig().sat_gf_datum_time_linked,
+        config_.getNetworkConfig().sat_isc_state, isc_bridged,
         gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
@@ -358,6 +390,27 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_if_level_sats  += static_cast<std::size_t>(cbd.n_if_level_sats);
             ctx.counters.n_sat_gf_carried += static_cast<std::size_t>(cbd.n_sat_gf_carried);
             ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
+            ctx.counters.n_isc_observed += static_cast<std::size_t>(cbd.n_isc_observed);
+            ctx.counters.n_isc_pinned   += static_cast<std::size_t>(cbd.n_isc_pinned);
+            // RF-0f: re-derive the per-key verdicts for the EMIT side, from the same two
+            // inputs the row builder used — this epoch's realized IF pin pair (so a held
+            // or re-selected pair is honoured) and the bridging roster.  Derived here
+            // rather than returned from the builder because the emit prep needs them
+            // keyed, and a second return channel for the same fact is how two views of
+            // one truth drift apart.
+            ctx.carry.this_epoch_isc_obs.clear();
+            ctx.carry.this_epoch_isc_pinned.clear();
+            for (const auto& [sat, sig] : registered_code_keys) {
+                const auto pit = this_epoch_if_pin_real.find(sat);
+                if (pit == this_epoch_if_pin_real.end()) continue;
+                const std::string& sig1 = pit->second.first;
+                const std::string& sig2 = pit->second.second;
+                if (sig == sig1 || sig == sig2) continue;
+                if (sig.size() < 2 || sig2.size() < 2 || sig[1] != sig2[1]) continue;
+                (isc_bridged.count(sat + "|" + sig) ? ctx.carry.this_epoch_isc_obs
+                                                    : ctx.carry.this_epoch_isc_pinned)
+                    .insert(sat + "|" + sig);
+            }
         }
         if (within_epoch_armed) {
             cap_H = cbd.H; cap_z = cbd.z;

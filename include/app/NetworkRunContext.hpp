@@ -816,6 +816,17 @@ namespace GnssProcessor {
         // frequency pin gets neither row).  Empty whenever the GF datum is off ⇒ no
         // gfpin= token ⇒ byte-identical S line.  Cleared each epoch.
         std::set<std::string> this_epoch_gf_pin_real;
+        /// RF-0f: THIS epoch's per-(satellite, companion signal) inter-signal-correction
+        /// verdicts, keyed `"sat|signal"`.  A key in @ref this_epoch_isc_obs means some
+        /// present station tracked BOTH that companion and the T_GD pin's band-2 signal on
+        /// that satellite, so `ISC^s = b(companion) - b(pinned)` is determined by data and
+        /// the bias is emitted carrying `isc=obs`; a key in @ref this_epoch_isc_pinned
+        /// means none did, the column was pinned at 0, and the bias is WITHHELD from the
+        /// wire — a consumer cannot tell an asserted zero from an estimate by value.
+        /// Cleared and refilled each epoch by the solve glue, read by the emit prep; both
+        /// empty unless `network.sat_isc_state` is armed.
+        std::set<std::string> this_epoch_isc_obs;
+        std::set<std::string> this_epoch_isc_pinned;
         // FAMILY-GF: the RUN-LATCHED family census.
         // Odijk rd 3b re-derives PER RECEIVER CHANNEL FAMILY when the station population
         // partitions (the Galileo C/Q-vs-X tracking split), because the primary pin is
@@ -3037,6 +3048,10 @@ namespace GnssProcessor {
         // frame from epoch 1 and never re-checked it.
         size_t n_if_level_rows = 0, n_if_level_sats = 0;
         size_t n_sat_gf_carried = 0, n_sat_gf_anchored = 0;
+        // RF-0f: band-2 companion columns left free because a station bridged the two
+        // signals, vs pinned at 0 because none did.  The pinned ones are the part of a
+        // C2X product that is asserted rather than estimated, and they are not emitted.
+        size_t n_isc_observed = 0, n_isc_pinned = 0;
         // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.
