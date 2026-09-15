@@ -4880,6 +4880,22 @@ int networkTeardown(
                  C.n_pb_basis_refuse_flagged, ctx.knobs.pa_flag_quiet_ep,
                  C.n_pb_basis_rank_changed,
                  ctx.carry.pa_reref_erase_total, C.n_pb_basis_value_drift);
+        // RF-2b: WHY the datum moved.  RF-2 could only say HOW OFTEN, which is why its
+        // sim failure (67 % cold elections) had to be read out of the event CSV instead
+        // of off a counter.  The three deposition causes partition the incumbent losses;
+        // `refuse_unusable` and `elev_fallback` are the composed rank's own evidence —
+        // a large fallback count means the ledger screen found nothing to prefer, which
+        // is the sim's failure mode, visible at run end instead of after a grade.
+        log->info("Network (RF-2b election): ledger screen refused {} candidate "
+                  "evaluation(s) as not usable AS A DATUM; {} election(s) fell back to "
+                  "elevation-only because NO candidate was usable (each a COLD pin).  "
+                  "Incumbents deposed: {} by a flag on their OWN basis column, {} by the "
+                  "basis arc's death, {} by their own ledger verdict going out of "
+                  "tolerance.  A large fallback count IS the mis-specification — the "
+                  "rank had nothing usable to prefer.",
+                  C.n_pb_basis_refuse_unusable, C.n_pb_basis_elev_fallback,
+                  C.n_pb_basis_depose_flag, C.n_pb_basis_depose_death,
+                  C.n_pb_basis_depose_unusable);
     }
     if (config_.getNetworkConfig().trace_amb_state)
         // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line —

@@ -2643,6 +2643,12 @@ namespace GnssProcessor {
         long long n_pb_basis_rank_changed  = 0;  ///< elections whose ELEVATION rank picked a different station than the coverage order would have, plus incumbents deposed by a flag.
         long long n_pb_basis_declared      = 0;  ///< RF-2 item 2: handovers DECLARED to the consumer (markSatDiscontinuity via the retro-bump queue) — continuous and cold alike.
         long long n_pb_basis_declared_cold = 0;  ///< …of which cold, i.e. the wire's phase bias actually stepped.
+        // RF-2b — WHY the datum moved (one counter per deposition cause).
+        long long n_pb_basis_refuse_unusable = 0; ///< candidate evaluations refused because their carried level is not usable AS A DATUM (the continuous branch's ledgerVerdict) — the test RF-2's rank was missing.
+        long long n_pb_basis_elev_fallback   = 0; ///< elections where NO candidate was ledger-usable and the rank fell back to elevation-only (a COLD pin).
+        long long n_pb_basis_depose_flag     = 0; ///< incumbents deposed by a screen flag on THEIR OWN basis column.
+        long long n_pb_basis_depose_death    = 0; ///< …deposed because the basis arc no longer has a carry at all.
+        long long n_pb_basis_depose_unusable = 0; ///< …deposed because their own carried level stopped passing the ledger verdict.
         long long n_pb_basis_value_drift   = 0;  ///< ⚠ mid-tenure basis-value changes REFUSED — the held property's own alarm.  Must read 0.
         long long n_amb_sts_selfcheck_fail = 0; ///< transforms whose exactness self-check FAILED: the incoming anchor's carried level did not read 0 within kStsExactTolM afterwards.  A transform defect, never noise — WARNed with identities.
         long long n_amb_block_fallback    = 0;  ///< RF-1 step 3 risk #3: station-epochs whose joint block fell back to per-column rows — a VEHICLE CHANGE on one station-epoch, which is why it is counted rather than noted.  0 in this build.

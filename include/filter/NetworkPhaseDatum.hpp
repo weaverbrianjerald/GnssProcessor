@@ -240,6 +240,13 @@ struct PhaseHeldBasis {
     long long n_refused_flagged = 0;  ///< candidates refused by the screen-flag quiet window.
     long long n_rank_changed = 0;     ///< elections whose elevation rank picked a DIFFERENT station than the coverage order would have.
     long long n_value_drift = 0;      ///< ⚠ mid-tenure basis-value changes REFUSED — the held property's own evidence; any nonzero value is a defect.
+    // ---- RF-2b: WHY the datum moved.  One counter per deposition cause, so a run can
+    //      say which lever to pull instead of only how often the basis changed.
+    long long n_refused_unusable = 0; ///< candidate-family evaluations refused because the candidate's carried level is not usable AS A DATUM by the continuous branch's own ledgerVerdict (var over network.phase_datum_handover_max_var_m2, or the ratio ceiling).  RF-2's defect was that this test did not exist in the rank at all.
+    long long n_elev_fallback = 0;    ///< elections where NO candidate was ledger-usable and the rank fell back to elevation-only — a COLD pin, counted because it is a different event from a clean handover.
+    long long n_depose_flag = 0;      ///< incumbents deposed by a screen flag ON THEIR OWN BASIS COLUMN (item 4's trigger) — never by a flag elsewhere at that station.
+    long long n_depose_arc_death = 0; ///< …deposed because the basis arc has no carry any more (pruned / never stashed): no level to hold, no age to qualify on.
+    long long n_depose_unusable = 0;  ///< …deposed because the incumbent's OWN carried level stopped passing the ledger verdict (its arc drifted out of the datum tolerance).
 };
 
 struct AnchorCandidacyUsable {

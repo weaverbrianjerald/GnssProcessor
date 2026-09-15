@@ -553,9 +553,73 @@ void networkElectPhaseAnchors(
                         // ex-anchor as an ordinary float state (item 4).  Without this
                         // the datum is re-realized in place by whatever the response
                         // does to it, which is the churn the card names.
-                        if (held_on && !basisEligible(i, amb)) {
-                            ++held->n_rank_changed;
-                            break;      // fall through to a fresh election
+                        // ⚠ RF-2b: the incumbent is deposed ONLY by something about
+                        // ITS OWN BASIS COLUMN — never by a flag elsewhere at the same
+                        // station.  `basisEligible` is keyed on (station, THIS ambiguity
+                        // key), so the flag test is already column-scoped; what RF-2b
+                        // adds is the third cause and the per-cause split, so a run can
+                        // say WHY its datum moved instead of only how often.
+                        //   * flag on the basis column   — a T4 / T3 / slip response on
+                        //     this exact arc.  Item 4: the handover happens HERE, before
+                        //     PASS B and before the response acts on that column;
+                        //   * arc death                  — the basis arc has no carry any
+                        //     more (pruned / never stashed), so there is no level to
+                        //     hold and no age to qualify on;
+                        //   * ledger verdict             — the incumbent's OWN carried
+                        //     level has stopped being usable as a datum (var over the
+                        //     ceiling).  Holding a value whose arc has drifted out of
+                        //     tolerance is exactly the "+17.08 m target, 378-σ spike"
+                        //     failure the continuous branch's gate exists to stop.
+                        if (held_on) {
+                            // ⚠ MEASURED, and the reason the third cause is NOT tested
+                            // here.  The card names three: a flag on the basis column,
+                            // the arc's death, and "its own ledger verdict".  The third
+                            // is STRUCTURALLY UNAVAILABLE for an incumbent: a
+                            // gauge-pinned column is excluded from the carry at BOTH the
+                            // inject and the harvest (the S-basis contract), so the
+                            // handover ledger has no live entry for the station that is
+                            // currently holding the basis.  Testing it deposed the
+                            // incumbent EVERY epoch — measured on the first RF-2b sim
+                            // arm: 44 008 "ledger verdict" deposals against 1 293 held
+                            // family-epochs and 43 879 re-elections, i.e. the basis was
+                            // re-elected almost every epoch and "held" in name only.
+                            //
+                            // That is not a tuning miss, it is a category error: a HELD
+                            // value is a constant BY CONSTRUCTION, and re-validating it
+                            // against a ledger that structurally does not track it is
+                            // incoherent.  What an incumbent still has is its column's
+                            // flag history and whether it has an arc at all — so those
+                            // are the two live causes, and the ledger counter is kept so
+                            // a future build can show it reads 0.
+                            // ⚠ And the AGE gate is a CANDIDATE gate, not an incumbent
+                            // one.  "Never a newborn low arc" is a question about a
+                            // station being ELECTED; an incumbent already answered it at
+                            // its own election and has been holding since.  Worse, asking
+                            // it of an incumbent is self-defeating for the same
+                            // structural reason as the ledger: a pinned column is not
+                            // harvested, so its LocalCarry goes stale and is gap-pruned
+                            // after phase_leveling_max_gap_s — and the age test then
+                            // reads "no carry ⇒ newborn" and deposes the holder for the
+                            // crime of having held.  The REAL arc-death test is the
+                            // sticky loop's own `usable_keys[i].count(amb)` above: does
+                            // this station still TRACK the family this epoch.
+                            //
+                            // So the incumbent is deposed by exactly one live cause here
+                            // — a screen flag on ITS OWN basis column (item 4) — and the
+                            // column scoping is what makes "not by a flag elsewhere at
+                            // its station" true by construction.
+                            bool flagged = false;
+                            if (held->flag_quiet_ep > 0 && held->flag_ep) {
+                                const auto ft =
+                                    held->flag_ep->find({static_cast<int>(i), amb});
+                                flagged = ft != held->flag_ep->end()
+                                       && held->now_ep - ft->second < held->flag_quiet_ep;
+                            }
+                            if (flagged) {
+                                ++held->n_depose_flag;
+                                ++held->n_rank_changed;
+                                break;      // fall through to a fresh election
+                            }
                         }
                         anchor = i; break;
                     }
@@ -666,13 +730,49 @@ void networkElectPhaseAnchors(
         if (held_on && anchor == static_cast<size_t>(-1)) {
             const auto cit = cand.find(c);
             if (cit != cand.end()) {
-                size_t best = static_cast<size_t>(-1);
-                double best_el = -2.0;
+                // RF-2b: ARC DEATH is the sticky loop's own miss — the incumbent exists in the
+        // map but was not found present-and-tracking above, so the family has lost the
+        // station that held its basis.  Counted here, where the loop's verdict is known,
+        // rather than inferred from a carry map that a pinned column does not populate.
+        if (held_on && anchor == static_cast<size_t>(-1)
+            && anchor_incumbent.find(amb) != anchor_incumbent.end())
+            ++held->n_depose_arc_death;
+        // ⚠ RF-2b, THE ONE-PREDICATE FIX.  RF-2's rank REPLACED the ledger
+                // screen instead of COMPOSING with it: it asked for age and quiet but
+                // never whether the candidate's carried level is usable AS A DATUM by
+                // the continuous branch's own `ledgerVerdict`.  On the field most
+                // mature high-elevation arcs also pass the 0.01 m² ceiling, so 89 % of
+                // handovers came out continuous; on the sim, whose ambiguity scale is
+                // ~5× larger, they mostly do NOT — 67 % of elections went cold, each
+                // re-realized the datum at 0, and σ̂0 blew past the withhold ceiling
+                // (362 of 720 epochs withheld, WL integers 99.0 % → 35.2 %).
+                //
+                // So: rank by elevation among LEDGER-USABLE candidates first, and fall
+                // back to elevation-only when none qualifies — a family with no usable
+                // candidate must still be pinned, and the fallback is COUNTED, because
+                // a cold pin is a different event from a clean handover.
+                size_t best = static_cast<size_t>(-1), best_any = static_cast<size_t>(-1);
+                double best_el = -2.0, best_any_el = -2.0;
                 for (size_t i : cit->second) {
                     if (!usable_keys[i].count(amb) || banned_sta(i)) continue;
                     if (!basisEligible(i, amb)) continue;
                     const double el = elevOf(i, amb);
+                    if (el > best_any_el) { best_any_el = el; best_any = i; }
+                    // THE COMPOSED PREDICATE: the SAME verdict the continuous branch
+                    // below applies to the elected station, asked of every candidate
+                    // before one is elected.  Sharing it is load-bearing, not tidiness
+                    // (the pre-existing candidacy pass makes the same argument): a rank
+                    // that elects a station the branch then refuses is the defect with
+                    // extra steps.
+                    if (!ledgerVerdict(ledgerEntry(i, amb), dir && dir->cold).ok) {
+                        ++held->n_refused_unusable;
+                        continue;
+                    }
                     if (el > best_el) { best_el = el; best = i; }
+                }
+                if (best == static_cast<size_t>(-1) && best_any != static_cast<size_t>(-1)) {
+                    best = best_any;                 // elevation-only fallback
+                    ++held->n_elev_fallback;
                 }
                 if (best != static_cast<size_t>(-1)) {
                     const auto tp = todayPick();
