@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
-#include <spdlog/spdlog.h>
+#include "logging/SafeLogger.hpp"
 #include "common/Constants.hpp"
 #include "common/PppTypes.hpp"
 
@@ -1078,15 +1078,21 @@ namespace GnssProcessor {
     bool RinexParser::validateMeasurementRate() const {
         if (observations_.empty()) return true;
 
+        // Resolved ONCE, not per iteration: the epoch-interval warning below sits in
+        // a loop over every observation, and each resolution takes spdlog's
+        // process-wide registry mutex.  Holding the shared_ptr for the whole function
+        // also pins one logger for the duration.  See logging/SafeLogger.hpp.
+        const auto log = Logging::safeDefaultLogger();
+
         // Check header interval (expect ~30s for test file)
         if (header_.interval.has_value()) {
             double interval = header_.interval.value();
             if (interval < 0.01 || interval > 300.0) {
-                spdlog::error("Header interval {}s is outside allowed range [0.01s, 300s]", interval);
+                log->error("Header interval {}s is outside allowed range [0.01s, 300s]", interval);
                 return false;
             }
             if (std::abs(interval - 30.0) > 1e-3) {
-                spdlog::warn("Header interval {}s differs from expected 30s for test file", interval);
+                log->warn("Header interval {}s differs from expected 30s for test file", interval);
             }
         }
 
@@ -1098,11 +1104,11 @@ namespace GnssProcessor {
                 dt += TimeUtils::SECONDS_IN_WEEK; // Handle week rollover
             }
             if (dt < 0.01 || dt > 300.0) {
-                spdlog::error("Epoch interval {}s is outside allowed range [0.01s, 300s]", dt);
+                log->error("Epoch interval {}s is outside allowed range [0.01s, 300s]", dt);
                 return false;
             }
             if (std::abs(dt - 30.0) > 1e-3) {
-                spdlog::warn("Epoch interval {}s differs from expected 30s", dt);
+                log->warn("Epoch interval {}s differs from expected 30s", dt);
             }
         }
         return true;

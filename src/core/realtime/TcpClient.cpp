@@ -9,7 +9,7 @@
  */
 
 #include "realtime/TcpClient.hpp"
-#include <spdlog/spdlog.h>
+#include "logging/SafeLogger.hpp"
 #include <chrono>
 
 #ifdef _WIN32
@@ -41,7 +41,7 @@ struct WsaGuard {
     WsaGuard() {
         WSADATA d;
         if (WSAStartup(MAKEWORD(2, 2), &d) != 0) {
-            spdlog::error("TcpClient: WSAStartup failed");
+            Logging::safeDefaultLogger()->error("TcpClient: WSAStartup failed");
         }
     }
 };

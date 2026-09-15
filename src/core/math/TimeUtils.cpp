@@ -16,13 +16,23 @@
 #include <cmath>
 #include <chrono>
 #include <stdexcept>
-#include <spdlog/spdlog.h>
+#include "logging/SafeLogger.hpp"
 #include <sstream>
 #include <iomanip>
 
 namespace GnssProcessor {
 
     namespace {
+        /// Per-call logger for the time-conversion path.  Replaces the bare
+        /// spdlog free functions, which dereference a raw borrowed pointer into
+        /// the registry default-logger slot and fault once that slot has been
+        /// emptied.  Both call sites sit on error/unknown branches a well-formed
+        /// file never reaches, so the registry lookup costs nothing on the normal
+        /// path.  See logging/SafeLogger.hpp.
+        std::shared_ptr<spdlog::logger> timeLog() {
+            return Logging::safeDefaultLogger();
+        }
+
         // RTB-1(c): GPS-UTC leap seconds used by the WALL-CLOCK → GPS
         // conversion (nowContinuousGpsSeconds).  Defaults to the compiled
         // constant; realtime.leap_seconds overrides it at RT startup so a
@@ -197,7 +207,7 @@ namespace GnssProcessor {
         int hour, int minute, double second,
         const std::string& time_system) {
         if (!isValidGregorianDate(year, month, day, hour, minute, second)) {
-            spdlog::warn("Invalid Gregorian date for {} time system: {}-{}-{} {}:{}:{:.3f}",
+            timeLog()->warn("Invalid Gregorian date for {} time system: {}-{}-{} {}:{}:{:.3f}",
                 time_system, year, month, day, hour, minute, second);
             return GnssTime{ 0, 0.0 };
         }
@@ -221,7 +231,7 @@ namespace GnssProcessor {
         }
 
         // Unknown  assume GPS scale
-        spdlog::trace("Unsupported time system {}, assuming GPS time scale", time_system);
+        timeLog()->trace("Unsupported time system {}, assuming GPS time scale", time_system);
         return gregorianGpsToGpsTime(year, month, day, hour, minute, second);
     }
 

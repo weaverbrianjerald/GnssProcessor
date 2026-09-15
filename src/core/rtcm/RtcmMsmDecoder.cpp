@@ -47,7 +47,7 @@
 #include "rtcm/RtcmSignalMap.hpp"
 #include "common/Constants.hpp"
 #include "math/TimeUtils.hpp"
-#include <spdlog/spdlog.h>
+#include "logging/SafeLogger.hpp"
 #include <bitset>
 #include <climits>
 #include <cstdio>
@@ -57,6 +57,12 @@
 namespace GnssProcessor::RtcmMsm {
 
 namespace {
+
+/// Per-call logger for the MSM decode path — see logging/SafeLogger.hpp for
+/// why the bare spdlog::xxx() free functions are unsafe here.
+std::shared_ptr<spdlog::logger> msmLog() {
+    return Logging::safeDefaultLogger();
+}
 
 // ---------------------------------------------------------------------------
 // Per-system descriptor
@@ -541,10 +547,10 @@ MsmDecodeResult decodeMsmImpl(
            + static_cast<double>(sat.rough_range_mod) / 1024.0) * 1e-3;
 
         if (dump) {
-            spdlog::warn("MSM-DUMP {} mt={} sub={} DF397={} DF398={} rough_s={:.12f} "
-                         "rough_m={:.3f}",
-                         sat.sat_id, msg_type, V.msm_subtype, sat.rough_range_int,
-                         sat.rough_range_mod, rough_s, rough_s * c);
+            msmLog()->warn("MSM-DUMP {} mt={} sub={} DF397={} DF398={} rough_s={:.12f} "
+                           "rough_m={:.3f}",
+                           sat.sat_id, msg_type, V.msm_subtype, sat.rough_range_int,
+                           sat.rough_range_mod, rough_s, rough_s * c);
         }
 
         // Rough phase range rate (m/s).  Only present in MSM5/MSM7;
@@ -583,10 +589,10 @@ MsmDecodeResult decodeMsmImpl(
                 if (dump) {
                     const double fine_m =
                         static_cast<double>(fine_pseudorange[idx]) * V.scale_fine_pr_ms * 1e-3 * c;
-                    spdlog::warn("MSM-DUMP {} C{} cell={} DF405raw={} fine_m={:+.3f} "
-                                 "C{}={:.3f}",
-                                 sat.sat_id, sig.suffix, idx, fine_pseudorange[idx],
-                                 fine_m, sig.suffix, rng_s * c);
+                    msmLog()->warn("MSM-DUMP {} C{} cell={} DF405raw={} fine_m={:+.3f} "
+                                   "C{}={:.3f}",
+                                   sat.sat_id, sig.suffix, idx, fine_pseudorange[idx],
+                                   fine_m, sig.suffix, rng_s * c);
                 }
             }
             // Phase (cycles, RINEX-3 convention).
