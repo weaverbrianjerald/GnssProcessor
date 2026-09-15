@@ -87,6 +87,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pd_held_basis = config_.networkPhaseDatumHeldBasis()
                       && config_.getNetworkConfig().ambiguity_vehicle
                              == NetworkAmbiguityVehicle::FloatKf;
+    k.pd_held_cold_release = k.pd_held_basis && config_.networkPhaseDatumHeldColdRelease();
+    k.pd_held_mark_cold    = k.pd_held_basis && config_.networkPhaseDatumHeldMarkCold();
     k.pa_min_age_ep    = config_.networkPhaseAnchorMinAgeEp();
     k.pa_flag_quiet_ep = config_.networkPhaseAnchorFlagQuietEp();
     k.trace_amb_state = config_.getNetworkConfig().trace_amb_state;

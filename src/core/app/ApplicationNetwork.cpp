@@ -2026,7 +2026,18 @@ int Application::runNetwork() {
                         const double dlt =
                             (be != ctx.carry.phase_basis.end())
                                 ? (be->second.value - be->second.prev_value) : 0.0;
-                        const bool steps = std::abs(dlt) > kStsExactTolM;
+                        // RF-2d (network.phase_datum_held_mark_cold): |value − prev_value|
+                        // is the BETWEEN-STATION level difference, not the wire step.  A
+                        // continuous pin is the successor's level in the outgoing frame, so
+                        // the family does not step while the difference is non-zero; a cold
+                        // pin at 0 steps the family by the successor's level, and out of a
+                        // cold tenure the difference reads 0 − 0.  RF-3-read measured the
+                        // predicate inverted on both beds (field: 144/145 continuous marked,
+                        // 10/12 cold unmarked), so the armed rule is the frame's own: a
+                        // handover is declared iff it is cold.
+                        const bool steps = ctx.knobs.pd_held_mark_cold
+                                               ? !h.continuous
+                                               : std::abs(dlt) > kStsExactTolM;
                         if (steps) {
                             ctx.carry.ura_retro_sats.insert(pk->satellite);
                             ++ctx.counters.n_pb_basis_declared;
@@ -2067,7 +2078,16 @@ int Application::runNetwork() {
                     // about.  The erase counter must therefore read 0 on an armed arm;
                     // it is left in the code (not deleted) so the OFF path and every
                     // other datum realization keep it verbatim.
-                    if (ctx.knobs.pd_held_basis) pa_reref.clear();
+                    //
+                    // ⚠ RF-2d (network.phase_datum_held_cold_release): that premise holds
+                    // for CONTINUOUS handovers only, and R2 already keeps those out of this
+                    // set — what reaches here is the COLD and first-sighting families,
+                    // whose frame DID step.  Clearing them leaves their retired-frame
+                    // carries folding against the re-realized design, and the satellite
+                    // clock absorbs the step (RF-3-read, sim G29: 65 m).  Armed, the set is
+                    // kept and released exactly as on the level vehicle.
+                    if (ctx.knobs.pd_held_basis && !ctx.knobs.pd_held_cold_release)
+                        pa_reref.clear();
                 }
                 if (!pa_reref.empty()) {
                     // RF-1 §7.4 D3: on an armed trace, take the entries before they

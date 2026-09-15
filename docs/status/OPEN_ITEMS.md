@@ -29,7 +29,8 @@ grep -l '^- \*\*status:\*\* open' -r docs/cards docs/decisions
 | RF-2 — a fixed S-basis with DECLARED S-transformations at every handover | same |
 | RF-3 — QC that acts on CODE rows, and a wire contract that declares every step | same |
 | Add-backs, one at a time: the SH field as a consumer product; L5; lanes; seams / warm resume | same |
-| The goldens are the RF-0g posture (2026-09-15): its hour-1 ignition deficit (16 near-null directions, 75 withholds), the hours 5–6 field drift, RF-3-read (why the float vehicle disperses the IF correction without the GIM) and RF-2c (the clock level) | [refound/RF-3-prep_golden_rebase_2026-09-15.md](../refound/RF-3-prep_golden_rebase_2026-09-15.md) §5 |
+| The goldens are the RF-0g posture (2026-09-15): its hour-1 ignition deficit (16 near-null directions, 75 withholds), the hours 5–6 field drift and RF-2c (the clock level); RF-3-read is CLOSED | [refound/RF-3-prep_golden_rebase_2026-09-15.md](../refound/RF-3-prep_golden_rebase_2026-09-15.md) §5 |
+| The S-basis NULL-SPACE READ (pre-registered 2026-09-15): name the near-null directions behind the vehicle's field withholds (RF-2d arm, TOW 274859–276299 / 279960–280470) and the golden's hour-1 deficit from `network_estimability.csv`, then a declaration fix or a rank read; the RF-1 + RF-2b + RF-2d vehicle re-enters the golden comparison only through it | [refound/RF-3-read_handover_frame_2026-09-15.md](../refound/RF-3-read_handover_frame_2026-09-15.md) §7.4 |
 | Ledger promotion rows for `network.sat_gf_datum` / `sat_gf_datum_time_linked` (+ their `logNetworkPosture_` rows) and KEEP_OFF rows for the float vehicle on this posture — the manifest pins guard the goldens until then | same |
 | `scripts/event_leg.py` `DEFAULT_GOLDEN`, `ce_make_arms.py`, `cm_make_arms.py`, `make_refound_config.py` still read the RETIRED goldens — re-point when a harness card next needs the new posture | same |
 

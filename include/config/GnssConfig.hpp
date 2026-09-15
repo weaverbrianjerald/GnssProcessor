@@ -4941,6 +4941,42 @@ namespace GnssProcessor {
         int networkPhaseAnchorFlagQuietEp() const {
             return network_phase_anchor_flag_quiet_ep_;
         }
+        /**
+         * @brief RF-2d: does a COLD held-basis handover keep its retired-frame release?
+         *
+         * A cold handover pins the successor at 0, so the (satellite, signal) family's
+         * frame steps by the successor's level in the outgoing frame.  The phase-anchor
+         * reref set (@c network.phase_anchor_carry_reref) holds exactly the cold and
+         * first-sighting families and releases their retired-frame carries (the shared
+         * PB carry for one epoch, the local ambiguity carries at every station), so the
+         * step lands on the free phase bias.  RF-2 cleared that set on every held-basis
+         * election; the released priors then folded against the re-realized design and
+         * the satellite clock absorbed the step (RF-3-read: sim G29, a 51.5 m L2W basis
+         * step became a 65 m clock step).  ON = the set is kept, as on the level vehicle.
+         *
+         * @return network.phase_datum_held_cold_release; INERT unless
+         *         network.phase_datum_held_basis.  OFF = byte-identical.
+         */
+        bool networkPhaseDatumHeldColdRelease() const {
+            return network_phase_datum_held_cold_release_;
+        }
+        /**
+         * @brief RF-2d: is a held-basis handover declared to the consumer iff it is COLD?
+         *
+         * RF-2b marks a handover iff |value − prev_value| exceeds the exact tolerance.
+         * That difference is the between-station level difference, not the wire step: a
+         * CONTINUOUS handover pins the successor at its level in the outgoing frame and
+         * does not step (sim: 50 of 50 IF-correction steps under 1 cm) yet always reads a
+         * non-zero difference (144 of 145 field marks were continuous), while a cold
+         * handover out of a cold tenure reads 0 − 0 and goes unmarked although the family
+         * re-realizes (10 of 12 on the field).  ON = mark exactly the cold ones.
+         *
+         * @return network.phase_datum_held_mark_cold; INERT unless
+         *         network.phase_datum_held_basis.  OFF = byte-identical.
+         */
+        bool networkPhaseDatumHeldMarkCold() const {
+            return network_phase_datum_held_mark_cold_;
+        }
 
         /**
          * @brief Conditional-variance CEILING (m²) on a handover ledger value
@@ -7995,6 +8031,13 @@ namespace GnssProcessor {
         /// basis.  The datum must be the quietest arc available, not merely an old one.
         /// INERT unless network_phase_datum_held_basis_.
         int    network_phase_anchor_flag_quiet_ep_{5};
+        /// RF-2d (docs/refound/RF-3-read_handover_frame_2026-09-15.md): keep the cold /
+        /// first-sighting families in the phase-anchor reref release under the held basis
+        /// instead of clearing the set.  INERT unless network_phase_datum_held_basis_.
+        bool   network_phase_datum_held_cold_release_{false};
+        /// RF-2d: declare a held-basis handover to the consumer iff it is COLD (not on
+        /// |value − prev_value|).  INERT unless network_phase_datum_held_basis_.
+        bool   network_phase_datum_held_mark_cold_{false};
         bool   network_phase_datum_candidacy_usable_{false}; ///< COLD ANCHOR-FALLBACK (SPEC_event_harness §15): when a handover is about to happen, sweep the coverage-ranked candidates for one whose carried value is USABLE by the continuous branch's OWN predicate (finite, 0 < var <= ceiling, ratio gate, not freed this epoch, arc age >= network_phase_datum_candidacy_min_age_ep_) BEFORE falling through to today's take-the-first-tracker sweeps.  A family with no usable candidate keeps today's honest cold path.  INERT unless network_phase_datum_handover_continuous_ (no ledger to screen against).  OFF = byte-identical (the pass is never entered).
         bool   network_phase_datum_candidacy_satellite_{true}; ///< COLD ANCHOR-FALLBACK iteration 2 (SPEC_event_harness §15.8): resolve a satellite's handover JOINTLY — every family of the satellite moving this epoch takes ONE successor (the first coverage-ranked candidate usable for the most of them; a family it is not usable for is pinned THERE through the cold path, which is a frame step, not a split), and a PARTIAL handover prefers the station already anchoring the satellite's other families.  Iteration 1's per-family screen bought producer quality with split references (0.0 → 0.9/3) and cost the consumer 49 %.  Default TRUE; INERT unless network_phase_datum_candidacy_usable_; OFF = iteration 1 exactly (the single-knob A/B).
         int    network_phase_datum_candidacy_min_age_ep_{60}; ///< COLD ANCHOR-FALLBACK maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention — a warm-resume-restored entry carries LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  INERT unless network_phase_datum_candidacy_usable_.

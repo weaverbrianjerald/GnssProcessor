@@ -157,6 +157,10 @@ namespace GnssProcessor {
         /// RF-2 item 1: network.phase_datum_held_basis, already ANDed with float_kf and
         /// phase_datum_prioritized by the loader's interlocks.
         bool pd_held_basis{};
+        /// RF-2d: network.phase_datum_held_cold_release, already ANDed with pd_held_basis.
+        bool pd_held_cold_release{};
+        /// RF-2d: network.phase_datum_held_mark_cold, already ANDed with pd_held_basis.
+        bool pd_held_mark_cold{};
         /// RF-2 item 3: network.phase_anchor_min_age_ep (0 = no age gate).
         int  pa_min_age_ep{};
         /// RF-2 item 3: network.phase_anchor_flag_quiet_ep (0 = no quiet-window gate).

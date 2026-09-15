@@ -8266,6 +8266,15 @@ namespace GnssProcessor {
         if (network_phase_anchor_flag_quiet_ep_ < 0)
             throw std::runtime_error("network.phase_anchor_flag_quiet_ep must be >= 0 "
                                      "(0 = no quiet-window gate)");
+        // ---- RF-2d (docs/refound/RF-3-read_handover_frame_2026-09-15.md): the held-basis
+        //      handover in its own frame algebra — release a COLD family's retired-frame
+        //      carries, and declare exactly the cold handovers.
+        network_phase_datum_held_cold_release_ =
+            jval<bool>(json, "network.phase_datum_held_cold_release",
+                       "network_phase_datum_held_cold_release", false);
+        network_phase_datum_held_mark_cold_ =
+            jval<bool>(json, "network.phase_datum_held_mark_cold",
+                       "network_phase_datum_held_mark_cold", false);
         network_phase_datum_handover_max_var_m2_ =
             jval<double>(json, "network.phase_datum_handover_max_var_m2",
                          "network_phase_datum_handover_max_var_m2", 1.0);
@@ -10323,8 +10332,20 @@ namespace GnssProcessor {
                       "epoch(s), no screen flag within {} epoch(s).  Solve-affecting.",
                       network_phase_anchor_min_age_ep_,
                       network_phase_anchor_flag_quiet_ep_);
-        } else if (network_phase_anchor_min_age_ep_ != 10
-                   || network_phase_anchor_flag_quiet_ep_ != 5) {
+            if (network_phase_datum_held_cold_release_ || network_phase_datum_held_mark_cold_)
+                log->info("Network (RF-2d): held-basis handover — cold-family release {}, "
+                          "declare-cold-only {}.  Solve-affecting (release) / wire-affecting "
+                          "(declaration).",
+                          network_phase_datum_held_cold_release_ ? "ON" : "off",
+                          network_phase_datum_held_mark_cold_ ? "ON" : "off");
+        } else if (network_phase_datum_held_cold_release_ || network_phase_datum_held_mark_cold_) {
+            log->warn("Network (RF-2d): phase_datum_held_cold_release / _held_mark_cold are "
+                      "set but network.phase_datum_held_basis is OFF — they act on the HELD "
+                      "basis handover and are INERT this run (standing invariant #4).");
+        }
+        if (!network_phase_datum_held_basis_
+            && (network_phase_anchor_min_age_ep_ != 10
+                || network_phase_anchor_flag_quiet_ep_ != 5)) {
             log->warn("Network (RF-2): phase_anchor_min_age_ep / _flag_quiet_ep are set "
                       "but network.phase_datum_held_basis is OFF — they gate the HELD "
                       "basis election and are INERT this run (standing invariant #4).");
