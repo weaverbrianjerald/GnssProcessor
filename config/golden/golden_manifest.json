@@ -9,9 +9,89 @@
   "knob under test + the run paths), and run `python scripts/make_golden_config.py --verify`",
   "whenever the ledger changes — a new ledger row that the goldens do not carry FAILS the",
   "verify, which is the promotion step this project never had.",
-  "Paths under runs/ are rewritten per golden name; arms copy the golden and set their own."
+  "Paths under runs/ are rewritten per golden name; arms copy the golden and set their own.",
+  "RE-BASED 2026-09-15 (docs/refound/RF-3-prep_golden_rebase_2026-09-15.md): the goldens are now the",
+  "RE-FOUNDING posture (docs/refound/NETWORK_REFOUNDING_2026-09-14.md) on its two beds - ONE posture,",
+  "GPS-only dual-frequency, self-contained (no GIM, no external biases).  The two previous goldens are",
+  "listed under 'retired': their files stay byte-for-byte at their paths (90 archived configs extend them",
+  "and scripts/event_leg.py, ce_make_arms.py, cm_make_arms.py and make_refound_config.py read them), but",
+  "make_golden_config.py neither regenerates nor verifies a retired entry."
  ],
  "goldens": [
+  {
+   "name": "golden_sim_refound",
+   "out": "config/golden/golden_sim_refound.json",
+   "base": "config/refound/sim_gps_dual_rf0g.json",
+   "description": "SIM bed of the RE-FOUNDING posture (docs/refound/NETWORK_REFOUNDING_2026-09-14.md, card RF-0g): the 60-station synthetic truth bed, GPS-only L1/L2 (no lanes, no F3, no seams), SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH); the leveling vehicle (carry_invariant OFF) + carry_coupling_gauge_project + the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum; ambiguity_vehicle left at level (RF-1 float_kf + RF-2b held basis are KEEP_OFF on this posture: RF-3-prep).  Same posture as golden_field_refound; only the bed differs.  Validated 6 h cold: 720/720, consumer p50 by hour 6.23 / 3.30 / 0.86 / 0.50 / 0.46 / 0.55 m, IF-correction dispersion p90 0.156 m.",
+   "pins": {
+    "processing.frequency_mode": "dual",
+    "processing.active_systems": [
+     "GPS"
+    ],
+    "network.carry_invariant": false,
+    "network.phase_leveling": true,
+    "network.carry_coupling_gauge_project": true,
+    "network.phase_datum_prioritized": true,
+    "network.estimate_iono_sh": false,
+    "estimation.ionosphere_weighting.enable": false,
+    "network.clock_temporal_anchor": true,
+    "network.clock_disc_jump_test": true,
+    "network.rx_code_bias_datum": true,
+    "network.estimate_sat_code_bias": true,
+    "network.cb_kaula_prior": false,
+    "network.sat_gf_datum": "broadcast_tgd",
+    "network.sat_gf_datum_time_linked": true,
+    "network.w6_iono_constraint": "none"
+   },
+   "unset": [],
+   "exceptions": {
+    "network.carry_invariant": "mutually exclusive VEHICLE, frozen by the re-founding decision (docs/refound/NETWORK_REFOUNDING_2026-09-14.md; SPEC_event_harness s24.11): this posture carries ambiguities through the phase-leveling vehicle with carry_coupling_gauge_project and the prioritized phase-datum family; carry_invariant makes do_amb_carry false and left the field station block singular (null dim 7 at 58/61 stations, card ZP).  The ledger row predates the leveling vehicle's field convergence.",
+    "network.cb_kaula_prior": "the prior must not be a datum (RF-0b, docs/refound/RF-0b_dcb_datum_2026-09-15.md): with sat_gf_datum none the loose 3 m diagonal Kaula prior silently became the datum of the between-satellite geometry-free split; this posture pins that split at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), and with the prior off the S-basis gate sees the declared directions (RF-0c).  Every RF-0c..RF-0g arm ran prior off.",
+    "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
+    "network.serialize_sbasis_contract": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); header serialization for restartable producers.  Add back with the seam work, one thing at a time, on a re-validated posture (it changes the product header bytes).",
+    "network.serialize_disc_counters": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); its whole regime is products consumed across producer restarts, and arming it changes the P/B/C record bytes.  Add back with the seam work on a re-validated posture.",
+    "network.phase_leveling_local_block": "scope cut of the re-founding decision: 'no F3' (scripts/make_refound_config.py DROP: 'F3 off (decision)').  The F3 station-wide whitened local block was validated on the retired GPS+Galileo triple sim lineage; on this posture it is a candidate to add back, one thing at a time, with its own arm on both beds.",
+    "network.phase_leveling_los_scale": "F1 is the per-LOS B_eff scale that F3 superseded; the re-founding decision cut F3 and nothing of the F-family was carried onto this posture (RF-0 base).  Unvalidated here - add back (F1 or F3) as its own arm on both beds."
+   }
+  },
+  {
+   "name": "golden_field_refound",
+   "out": "config/golden/golden_field_refound.json",
+   "base": "config/refound/field_gps_dual_rf0g.json",
+   "description": "FIELD bed of the RE-FOUNDING posture (docs/refound/NETWORK_REFOUNDING_2026-09-14.md, card RF-0g): DOY-129, 59 stations (the 61-station roster minus the two C2X-only stations INEG00MEX / OAFA00ARG), GPS-only L1/L2 with the X channels cut (C/L/D/S 1X and 2X), WTZZ00DEU held-out cold consumer; SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH), no external biases; the leveling vehicle (carry_invariant OFF) + carry_coupling_gauge_project + the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum; ambiguity_vehicle left at level (RF-1 float_kf + RF-2b held basis KEEP_OFF on this posture: RF-3-prep).  Validated 6 h cold: 640/720 (80 withheld by the observability gate, 75 of them in hour 1 - the open ignition deficit), consumer p50 by hour 3.77 / 1.08 / 1.28 / 1.25 / 1.78 / 2.68 m, IF-correction dispersion p90 0.512 m.  NOT a passing baseline by RF-0g's own bars; the best posture the record holds.",
+   "pins": {
+    "processing.frequency_mode": "dual",
+    "processing.active_systems": [
+     "GPS"
+    ],
+    "network.carry_invariant": false,
+    "network.phase_leveling": true,
+    "network.carry_coupling_gauge_project": true,
+    "network.phase_datum_prioritized": true,
+    "network.estimate_iono_sh": false,
+    "estimation.ionosphere_weighting.enable": false,
+    "network.clock_temporal_anchor": true,
+    "network.clock_disc_jump_test": true,
+    "network.rx_code_bias_datum": true,
+    "network.estimate_sat_code_bias": true,
+    "network.cb_kaula_prior": false,
+    "network.sat_gf_datum": "broadcast_tgd",
+    "network.sat_gf_datum_time_linked": true,
+    "network.w6_iono_constraint": "none"
+   },
+   "unset": [],
+   "exceptions": {
+    "network.carry_invariant": "mutually exclusive VEHICLE, frozen by the re-founding decision (docs/refound/NETWORK_REFOUNDING_2026-09-14.md; SPEC_event_harness s24.11): this posture carries ambiguities through the phase-leveling vehicle with carry_coupling_gauge_project and the prioritized phase-datum family; carry_invariant makes do_amb_carry false and left the field station block singular (null dim 7 at 58/61 stations, card ZP).  The ledger row predates the leveling vehicle's field convergence.",
+    "network.cb_kaula_prior": "the prior must not be a datum (RF-0b, docs/refound/RF-0b_dcb_datum_2026-09-15.md): with sat_gf_datum none the loose 3 m diagonal Kaula prior silently became the datum of the between-satellite geometry-free split; this posture pins that split at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), and with the prior off the S-basis gate sees the declared directions (RF-0c).  Every RF-0c..RF-0g arm ran prior off.",
+    "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
+    "network.serialize_sbasis_contract": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); header serialization for restartable producers.  Add back with the seam work, one thing at a time, on a re-validated posture (it changes the product header bytes).",
+    "network.serialize_disc_counters": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); its whole regime is products consumed across producer restarts, and arming it changes the P/B/C record bytes.  Add back with the seam work on a re-validated posture.",
+    "network.phase_leveling_local_block": "scope cut of the re-founding decision: 'no F3' (scripts/make_refound_config.py DROP: 'F3 off (decision)').  The F3 station-wide whitened local block was validated on the retired GPS+Galileo triple sim lineage; on this posture it is a candidate to add back, one thing at a time, with its own arm on both beds.",
+    "network.phase_leveling_los_scale": "F1 is the per-LOS B_eff scale that F3 superseded; the re-founding decision cut F3 and nothing of the F-family was carried onto this posture (RF-0 base).  Unvalidated here - add back (F1 or F3) as its own arm on both beds."
+   }
+  }
+ ],
+ "retired": [
   {
    "name": "golden_sim_tri_w6",
    "out": "config/golden/golden_sim_tri_w6.json",
@@ -57,7 +137,8 @@
     "network.clock_datum_sum_to_zero": "does NOT graduate (ledger row: 12 h A/B excursion-suppressing but higher steady median; the pin datum stays); also INERT-izes sticky_pivot",
     "network.emit_pb_filter_gate_v2": "out of regime (needs carry_invariant + emit_pb_filter)",
     "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here."
-   }
+   },
+   "retired": "2026-09-15: superseded by the re-founding goldens (golden_sim_refound / golden_field_refound); file frozen at its path, not regenerated, not verified."
   },
   {
    "name": "golden_field_gps_dual",
@@ -94,7 +175,8 @@
     "network.cycle_slip.if_phase_td_pairs": "FIELD EXCEPTION, decided by FP-2 (SPEC_event_harness s20.3, 2026-09-13): on the fixed posture (scope + pairs all + the clause + if_phase_td_ref_arm_all) the 60-epoch field matrix passes every gate incl. the fan-out census, but the 6 h twin fails the pin - settled consumer de-biased +18-33 %, wire-step epochs +28 % with the p90 step 3x - because the posture catches ~107 more real slips over 6 h and each catch is a declared phase-bias re-realization the float consumer re-converges through.  The detector is right; the RESPONSE cost blocks the pin (owed: a lane-preserving refloat or a consumer that carries state across declared steps).  All four are pinned TOGETHER when that lands.  History: FIELD EXCEPTION, re-confirmed by FP-1 (SPEC_event_harness s20.2, 2026-09-13) on the warm-resuming seed: the identity gate passes on every row with the reference-arc clause, but if_phase_td_pairs=all fans a slip on a chain's REFERENCE satellite out to every other satellite of that chain (E1 at GOPE/G24: six false refloats, a 13.7 m innocent phase-bias re-realization, consumer 4.7 vs 1.0 m) with no backstop on carry_invariant (T4 = 0).  Pinned TOGETHER once REF-FAN (s22.6, if_phase_td_ref_arm_all) passes F1-F4 and the s20 bars are re-run on the fixed posture.  History: FIELD HARNESS EXCEPTION (SPEC_event_harness s20, 2026-09-12): field legs at GOPE00CZE/G25 (equal-count L1C+L5X +29, seed ep0604): all == the (L1C,L5X) IF-TD deviation reads 3.1508 m against a 0.1089 m threshold (29x; 29 cyc x 0.107 m/cyc = 3.10 m predicted) -> veto -> all three bands freed exactly as OFF; first == the pair is never evaluated -> the scope keeps L2W (the innocent band).  The close-spaced pools are healthy on real data (L2W/L5X threshold 0.17 m; the 12x amplification is absorbed; 6 h seed: L1C_L5Q / L1C_L5X pairs 0 flags).  BUT the additional chains do not test their own reference satellite (deviation identically 0 on one arc per station = the highest L5-capable satellite; the first chain's reference arm is not re-run, s14.10.4), so the veto is dead exactly there (G24 at GOPE) - pinned TOGETHER with common_band_scope once the reference-arc clause lands and the field seed can warm-resume (Card 1f).  SPEC_event_harness s20.1.",
     "network.scoped_handover_response": "GPS-ONLY lineage: the knob's entire benefit is sparing the OTHER constellation's carry at a pivot handover, so with one constellation there is nothing to spare and it is structurally inert (the regime predicate already excludes it; this entry is the record, not a suppression).  Arm it when the field lineage becomes multi-constellation — a field arm is owed then.",
     "network.handover_stransform": "PREREQUISITE IS ITSELF A FIELD EXCEPTION: network.handover_stransform requires network.scoped_handover_response, which is excepted on this GPS-only lineage, so the regime predicate is false here and the knob is out of regime rather than suppressed.  This entry is the record.  Sim-validated on two beds (SPEC_event_harness §19.6); a FIELD ARM IS OWED, and it is owed behind the prerequisite's field arm, not independently of it."
-   }
+   },
+   "retired": "2026-09-15: superseded by the re-founding goldens (golden_sim_refound / golden_field_refound); file frozen at its path, not regenerated, not verified."
   }
  ]
 }

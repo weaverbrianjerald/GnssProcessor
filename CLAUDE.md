@@ -315,12 +315,23 @@ exemption (each was re-learned on a "different" mechanism).
 armed set from this prose or from an old arm — start every new network arm from a golden:
 
 ```
-config/golden/golden_sim_tri_w6.json       # sim truth bed: GPS+Gal triple, W6+GF datum, free slant iono,
-                                           #   phase_leveling + F3 station block, r2q3 anchor, sticky pivot
-config/golden/golden_field_gps_dual.json   # field DOY-129 63-sta GPS L1/L2/L5, SH deg-15, W6 OSB,
-                                           #   Card-4 carry_invariant + PD-safe fold + D5 v3, WTZZ consumer
+config/golden/golden_sim_refound.json      # sim truth bed, 60 sta   } ONE posture, two beds: the RE-FOUNDING
+config/golden/golden_field_refound.json    # field DOY-129, 59 sta   } posture (card RF-0g): GPS-only L1/L2,
+                                           #   self-contained (GF bias pinned at broadcast T_GD, no GIM, no
+                                           #   Kaula prior), free slant iono (no SH), leveling vehicle +
+                                           #   gauge projection + prioritized phase datum, Q3 clock anchor,
+                                           #   clock step test; no lanes / F3 / seams; WTZZ / SZZ consumers
 python scripts/make_golden_config.py --verify   # run at session start and after ANY ledger change
 ```
+
+**Re-based 2026-09-15** (`docs/refound/RF-3-prep_golden_rebase_2026-09-15.md`).  The two
+previous goldens, `golden_sim_tri_w6.json` (GPS+Gal triple, F3) and `golden_field_gps_dual.json`
+(Card-4 carry_invariant, SH), are RETIRED: listed under `retired` in the manifest, frozen
+byte-for-byte at their paths (90 archived configs extend them; `event_leg.py`,
+`ce_make_arms.py`, `cm_make_arms.py`, `make_refound_config.py` still read them), neither
+regenerated nor verified.  Do not base new work on them.  The float vehicle
+(`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) is built, default OFF, and FAILED on
+this posture (RF-3-prep) — not armed.
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base

@@ -1,5 +1,7 @@
 # RF-2b — the composed election, the column-scoped depose, and the clock-level read (2026-09-15)
 
+> **⚠ CORRECTED 2026-09-15 ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md)) — the consumer row below holds RATIOS to RF-0, not metres.**  The worker's own read printed `h0 p50 3.022 -> 2.321 (0.77x)`; the card copied the ratio column.  Measured from `runs/_rf2b_field6/logs/closed_loop_trace.csv` the FIELD consumer p50 by hour is **2.32 / 2.83 / 2.29 / 1.89 / 1.23 / 3.05 m** (ratio to RF-0 0.77 / 0.95 / 1.48 / 0.88 / 1.25 / 0.93 — 4 of 6 hours better, as the row's own "4 of 6 better" says) and the SIM consumer is **1.54 / 2.53 / 3.90 / 4.69 / 6.61 / 1.54 m** (ratios 0.46 / 0.59 / 1.09 / 1.44 / 6.27 / 2.68).  So "the most stable field consumer in the record (0.77–1.48 m every hour)" and "the first field posture with every hour's consumer under 1.5 m" are FALSE: RF-2b's field consumer is about RF-0's.  The wire, integer, marks, rate and contract rows are unaffected (D_phase re-derived from `grade.json` to the digit).  The text below is kept as written.
+
 **STATUS:** closed — **the sim is fully restored (720 / 720, WL integers 99.1 %), the field keeps the phase-wire win at a sane handover rate with the
 clock ramp gone and the most stable field consumer in the record (0.77–1.48 m every hour), and R-CL names the next term: the clock's own
 level channel.  RF-1 + RF-2b is the vehicle candidate; the goldens' re-base on it is the author's call (on RF-0g's posture once that is the

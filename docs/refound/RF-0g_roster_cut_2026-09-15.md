@@ -1,5 +1,7 @@
 # RF-0g — the coverage cut on both sides: C2X off the canonical set and the two C2X-only stations off the roster (2026-09-15)
 
+> **⚠ CORRECTED 2026-09-15 ([RF-3-prep](RF-3-prep_golden_rebase_2026-09-15.md)):** the comparison below quotes RF-1 + RF-2b as "0.77–1.48 m every hour" on the GIM baseline — those were ratios to RF-0 (see the RF-2b card's correction); its field consumer was 2.32 / 2.83 / 2.29 / 1.89 / 1.23 / 3.05 m.  RF-3-prep then ran RF-1 + RF-2b on this posture: it FAILS both beds, and the goldens were re-based on RF-0g itself.
+
 **STATUS:** closed — **the best field posture the programme has produced (3.77 / 1.08 / 1.28 / 1.25 / 1.78 / 2.68 m, the first six-hour field
 consumer with no collapse; the per-satellite IF-dispersion bar passed at 0.512 m), and NOT the baseline by its bars: an ignition rank deficit
 withholds 75 epochs in hour 1, and hours 5–6 drift above 1.5 m.**  Config-only on the merged tree (exe `0DC43C60…` = RF-0f's; `sat_isc_state`
