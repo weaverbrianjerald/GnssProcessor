@@ -305,6 +305,8 @@ public:
         int n_if_level_rows{0};       ///< RF-0e e1: ABSOLUTE ionosphere-free level rows folded — one per constellation with at least one satellite carrying a valid IF pin pair.  0 with the knob armed means no satellite presented a dual-frequency pair, i.e. the set level ran unanchored (standing invariant #4).
         int n_if_level_sats{0};       ///< RF-0e e1: satellites summed into those rows.
         int n_sat_gf_carried{0};      ///< RF-0e e2: geometry-free rows whose RHS came from the satellite's PREVIOUS kept-epoch solved value (a change pin).
+        int n_isc_observed{0};        ///< RF-0f: band-2 same-band companion columns left UNPINNED because some present station tracks BOTH that companion and the pin's second signal on that satellite — their difference is a pure inter-signal correction and the data determines it.
+        int n_isc_pinned{0};          ///< RF-0f: companion columns that still had to be pinned at 0 because NO station bridged the two signals this epoch.  The wire does not emit those biases; this count is how a run says how much of its C2X content is assertion rather than estimate.
         int n_sat_gf_anchored{0};     ///< RF-0e e2: geometry-free rows that fell back to the ABSOLUTE target because the satellite had no veteran value — the first-sighting anchor, and the only place the broadcast frame is re-asserted.
     };
 
@@ -479,6 +481,7 @@ public:
         NetworkSatGfDatum sat_gf_datum,
         const std::map<std::string, double>& sat_gf_target_m,
         bool sat_if_level_datum, bool sat_gf_datum_time_linked,
+        bool sat_isc_state, const std::set<std::string>& isc_bridged,
         const std::set<std::string>& gf_family_constellations,
         const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
         const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,

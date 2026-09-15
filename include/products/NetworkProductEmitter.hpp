@@ -118,6 +118,15 @@ struct NetworkSatSolution {
     /// week != 0.
     GnssTime                                orbit_epoch{0, 0.0};
     std::map<std::string, double>           code_bias_m;    ///< RINEX obs code -> satellite code bias (m).
+    /// RF-0f (@c network.sat_isc_state): the subset of @ref code_bias_m whose signal is
+    /// a same-band companion on the T_GD pin's SECOND band and whose inter-signal
+    /// correction was ESTIMATED — some station tracked both that signal and the pinned
+    /// one on this satellite, so `ISC^s = b(companion) - b(pinned)` is determined by
+    /// data.  Those records carry `isc=obs` on the wire.  A companion whose ISC had to
+    /// be pinned at 0 is an ASSERTION a consumer cannot tell from an estimate by value,
+    /// so it is WITHHELD from @ref code_bias_m entirely rather than flagged.  Empty
+    /// unless the knob is armed ⇒ every record is byte-identical.
+    std::set<std::string>                   isc_observed;
     std::map<std::string, NetworkPhaseBias> phase_bias;     ///< RINEX obs code -> satellite phase bias.
 };
 

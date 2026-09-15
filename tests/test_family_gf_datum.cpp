@@ -63,6 +63,8 @@ double muRel(const std::string& base_sig, const std::string& sig) {
 /// exercise network.code_bias_gf_datum's FAMILY extension, so the RF-0c mode stays off
 /// and its target map empty (the builder then builds no RF-0c row at all).
 const std::map<std::string, double> kNoSatGfTargets{};
+/// RF-0f is not this file's concern either: no companion is ever bridged here.
+const std::set<std::string> kNoIscBridged{};
 
 struct FamilyRowsHarness {
     using Pair = std::pair<std::string, std::string>;
@@ -100,6 +102,7 @@ struct FamilyRowsHarness {
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
             NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
             /*sat_if_level_datum=*/false, /*sat_gf_datum_time_linked=*/false,
+            /*sat_isc_state=*/false, kNoIscBridged,
             gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
             code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
             this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,

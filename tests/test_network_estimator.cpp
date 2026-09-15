@@ -4009,6 +4009,8 @@ double gpsCodeFreq(const std::string& /*sat*/, const std::string& sig) {
 /// RF-0c (network.sat_gf_datum) off for every case in this file: these lock the INC-8
 /// IF-pin / sum-to-zero shape, which the RF-0c row sits beside without changing.
 const std::map<std::string, double> kNoSatGfTargets{};
+/// RF-0f is not this file's concern either: no companion is ever bridged here.
+const std::set<std::string> kNoIscBridged{};
 
 struct CbDatumRowsHarness {
     using Pair = std::pair<std::string, std::string>;
@@ -4054,6 +4056,7 @@ struct CbDatumRowsHarness {
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
             NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
             /*sat_if_level_datum=*/false, /*sat_gf_datum_time_linked=*/false,
+            /*sat_isc_state=*/false, kNoIscBridged,
             gf_family_constellations, code_bias_prev,
             code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
             held_clock_ref, this_epoch_if_pin_sel, this_epoch_if_pin_real,

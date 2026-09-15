@@ -131,6 +131,11 @@ struct DatumRowsHarness {
     /// above keeps measuring the posture it was written for.
     bool sat_if_level_datum{false};
     bool sat_gf_datum_time_linked{false};
+    /// RF-0f: leave the band-2 companion unpinned, and the set of (sat|signal) keys a
+    /// station was found to bridge.  Empty means nothing is bridged, so every companion
+    /// falls through to the pin -- which is exactly the unobservable case.
+    bool sat_isc_state{false};
+    std::set<std::string> isc_bridged;
     std::set<std::string> gf_family_constellations;
 
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
@@ -160,6 +165,7 @@ struct DatumRowsHarness {
             clock_signal_basis_hold, emit_clock_disc, gf_datum,
             sat_gf_datum, sat_gf_target_m,
             sat_if_level_datum, sat_gf_datum_time_linked,
+            sat_isc_state, isc_bridged,
             gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
             code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
             this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,
@@ -981,4 +987,137 @@ TEST(W6IonoConstraintTest, SatGfTimeLinkUnarmedKeepsTheAbsoluteTarget) {
     EXPECT_DOUBLE_EQ(rows.z(1), -3.1);
     EXPECT_DOUBLE_EQ(rows.z(3), 1.7);
     EXPECT_DOUBLE_EQ(rows.z(5), 2.2);
+}
+
+// ===========================================================================
+// Card RF-0f - the band-2 ISC: estimated where a station bridges, pinned where none does.
+// ===========================================================================
+
+// THE CARD'S FIRST BAR: estimable with one dual-tracking station.  The companion column
+// gets NO geometry-free row, so `b(C2X) = b(C2W) + ISC^s` with the ISC free -- which is
+// what it already was before RF-0d pinned it at c*T_GD (an assertion of ISC = 0 that
+// RINEX navigation never makes).  The band-1 companion stays free as it always was, and
+// the C2W pin itself is untouched: that is the P-code pair the T_GD describes.
+TEST(W6IonoConstraintTest, IscStateLeavesABridgedBand2CompanionFree) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(8);
+    const std::vector<std::string> sigs{"C1C", "C1W", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_isc_state = true;
+    for (const auto& s : sats) {
+        h.sat_gf_target_m[s] = -2.0;
+        h.isc_bridged.insert(s + "|C2X");     // one station tracks C2W and C2X
+    }
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_isc_observed, 8);
+    EXPECT_EQ(rows.n_isc_pinned, 0);
+    EXPECT_EQ(rows.n_sat_gf_extra_rows, 0);      // no companion row at all
+    EXPECT_EQ(rows.n_sat_gf_rows, 8);            // the P-code pair pin is UNCHANGED
+    EXPECT_EQ(rows.n_sat_gf_sameband_free, 8);   // C1W, free as before
+    // The C2X column carries NO geometry-free row.  Its only entry is the channel's
+    // sum-to-zero LEVEL row (coefficient 1), which RF-0d's suppression correctly
+    // RE-ENABLES here: once the columns are not each pinned, that channel's
+    // constellation-wide mean needs a datum again.  A level row is not an ISC
+    // assertion -- it fixes the mean and leaves every between-satellite ISC free.
+    // Only C1C and C2W are fully pinned: C1W was already free (the band-1 rule) and
+    // C2X is free now, so BOTH keep their level rows.
+    EXPECT_EQ(rows.n_s2z_suppressed, 2);
+    for (const auto& s : sats) {
+        const Eigen::Index c = est.codeBiasColumn(s, "C2X");
+        const Eigen::VectorXd col = rows.H.col(c);
+        EXPECT_EQ((col.array().abs() > 1e-12).count(), 1) << s;
+        EXPECT_NEAR(col.cwiseAbs().maxCoeff(), 1.0, 1e-12) << s;
+    }
+}
+
+// THE CARD'S SECOND BAR: pinned without one.  No station bridges the two signals, so the
+// ISC is unreachable and the column falls through to the RF-0d pin -- counted, so the run
+// and the wire can both say which satellites' C2X is an estimate and which an assertion.
+TEST(W6IonoConstraintTest, IscStatePinsAnUnbridgedBand2Companion) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(8);
+    const std::vector<std::string> sigs{"C1C", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness h;
+    h.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    h.sat_isc_state = true;
+    for (const auto& s : sats) h.sat_gf_target_m[s] = -2.0;
+    h.isc_bridged.insert("G03|C2X");             // exactly one satellite is bridged
+    const auto rows = h.build(est, keys);
+
+    EXPECT_EQ(rows.n_isc_observed, 1);           // G03
+    EXPECT_EQ(rows.n_isc_pinned, 7);
+    EXPECT_EQ(rows.n_sat_gf_extra_rows, 7);      // the pinned ones still get their row
+    EXPECT_EQ(rows.n_sat_gf_rows, 8);            // and the P-code pin is still every satellite's
+    // G03's C2X column carries ONLY the channel sum-to-zero entry; every other
+    // satellite's carries its geometry-free pin as well.  The two are told apart by the
+    // ROW COUNT, not by presence -- which is the honest distinction once a level row is
+    // back in play for that channel.
+    EXPECT_EQ((rows.H.col(est.codeBiasColumn("G03", "C2X")).array().abs() > 1e-12).count(), 1);
+    EXPECT_EQ((rows.H.col(est.codeBiasColumn("G01", "C2X")).array().abs() > 1e-12).count(), 2);
+}
+
+// Standing invariant #6: unarmed, RF-0f changes nothing -- the RF-0d stack is reproduced
+// row for row and target for target, and neither counter moves.
+TEST(W6IonoConstraintTest, IscStateUnarmedIsByteIdenticalToRf0d) {
+    NetworkEstimator est;
+    const auto sats = gpsSats(8);
+    const std::vector<std::string> sigs{"C1C", "C2W", "C2X"};
+    const auto keys = registerRoster(est, sats, sigs);
+
+    DatumRowsHarness off;
+    off.sat_gf_datum = NetworkSatGfDatum::BroadcastTgd;
+    for (const auto& s : sats) off.sat_gf_target_m[s] = -2.0;
+    const auto a = off.build(est, keys);
+
+    DatumRowsHarness on = off;                   // armed, but nothing bridged...
+    on.sat_isc_state = true;
+    const auto b = on.build(est, keys);
+
+    EXPECT_EQ(a.n_isc_observed, 0);
+    EXPECT_EQ(a.n_isc_pinned, 0);                // the counters are RF-0f-only
+    // ...so every companion is pinned and the folded stack is IDENTICAL to RF-0d's.
+    EXPECT_EQ(b.n_isc_pinned, 8);
+    ASSERT_EQ(a.H.rows(), b.H.rows());
+    EXPECT_LT((a.H - b.H).cwiseAbs().maxCoeff(), 1e-15);
+    EXPECT_LT((a.z - b.z).cwiseAbs().maxCoeff(), 1e-15);
+}
+
+// The wire half: `isc=obs` is a NEW per-record token that round-trips, and a record
+// without it parses exactly as it did before the token existed.
+TEST(W6IonoConstraintTest, IscObsTokenRoundTripsOnTheBRecord) {
+    const fs::path path = fs::temp_directory_path() / "w6_iono_isc_token.txt";
+    std::error_code ec; fs::remove(path, ec);
+
+    SbasisContract c;
+    c.decl.reference_receiver_id = "MBAR00UGA";
+    c.present                    = true;
+
+    NetworkSolutionEpoch sol = makeMinimalEpoch();
+    sol.sats[0].code_bias_m["C2W"] = 1.25;
+    sol.sats[0].code_bias_m["C2X"] = 1.31;
+    sol.sats[0].isc_observed.insert("C2X");      // estimated; C1W/C2W carry no token
+    {
+        NetworkProductWriter w(path.string(), c);
+        ASSERT_TRUE(w.good());
+        w.write(sol);
+    }
+
+    bool ok = false;
+    const auto recs = NetworkProductReader::read(path.string(), nullptr, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), 1u);
+    const auto& s = recs[0].epoch.sats.at(0);
+    EXPECT_EQ(s.isc_observed.count("C2X"), 1u);
+    EXPECT_EQ(s.isc_observed.count("C2W"), 0u);
+    EXPECT_EQ(s.isc_observed.count("C1W"), 0u);
+    // The values themselves are untouched by the token.
+    EXPECT_DOUBLE_EQ(s.code_bias_m.at("C2X"), 1.31);
+    EXPECT_DOUBLE_EQ(s.code_bias_m.at("C2W"), 1.25);
+    fs::remove(path, ec);
 }
