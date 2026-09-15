@@ -43,7 +43,10 @@
 #include "filter/NetworkRunTypes.hpp"
 #include "logging/LogManager.hpp"
 
+#include <cmath>
 #include <filesystem>
+#include <limits>
+#include <vector>
 #include <fstream>
 #include <map>
 #include <set>
@@ -360,4 +363,151 @@ TEST(PhaseHeldBasisTest, AFlagOnTheBasisHolderDeposesIt) {
     flags[{0, "G07_L1C"}] = 100;
     EXPECT_FALSE(basisEligible(h, 0, "G07_L1C", "G07", "L1C"));
     EXPECT_TRUE (basisEligible(h, 1, "G07_L1C", "G07", "L1C"));   // …and a successor exists
+}
+
+// =============================================================================
+// (6) RF-2b — THE COMPOSED RANK: elevation among LEDGER-USABLE candidates, with
+//     elevation-only as the fallback, and the incumbent deposed only by its OWN
+//     basis column.
+//
+// ⚠ THE DEFECT THIS CLOSES, measured.  RF-2's rank asked for AGE and QUIET but never
+// whether the candidate's carried level is usable AS A DATUM by the continuous branch's
+// own ledgerVerdict (var <= network.phase_datum_handover_max_var_m2, 0.01 on both RF-0
+// bases).  On the FIELD most mature high-elevation arcs also pass that ceiling, so 89 %
+// of handovers came out continuous and the arm's phase wire crossed every bar.  On the
+// SIM, whose ambiguity scale is ~5x larger, they mostly do not: 1 049 of 1 562 elections
+// (67 %) went COLD, each re-realized the datum at 0, sigma0 blew past the withhold
+// ceiling, and 362 of 720 epochs were withheld with the WL integers falling 99.0 % to
+// 35.2 %.  A rank that elects a station the continuous branch then REFUSES is the defect
+// with extra steps — so the two must be ONE predicate, which is what these cases pin.
+// =============================================================================
+
+namespace {
+
+/// The continuous branch's datum-usability verdict, in the form the composed rank asks
+/// it: a finite value at a positive, finite variance at or under the absolute ceiling.
+/// (The ratio ceiling is unarmed on both RF-0 bases and is not exercised here.)
+bool ledgerUsable(bool has_entry, double value, double var, double max_var) {
+    return has_entry && std::isfinite(value) && var > 0.0 && std::isfinite(var)
+           && var <= max_var;
+}
+
+struct Cand { int sta; double elev; bool has_entry; double value; double var; };
+struct RankResult { int pick = -1; bool fallback = false; int n_refused = 0; };
+
+/// The composed rank: highest elevation among LEDGER-USABLE candidates; when none
+/// qualifies, highest elevation overall — counted by the caller as a COLD pin.
+RankResult composedRank(const std::vector<Cand>& cands, double max_var) {
+    RankResult r;
+    int best = -1, best_any = -1;
+    double best_el = -2.0, best_any_el = -2.0;
+    for (const Cand& c : cands) {
+        if (c.elev > best_any_el) { best_any_el = c.elev; best_any = c.sta; }
+        if (!ledgerUsable(c.has_entry, c.value, c.var, max_var)) { ++r.n_refused; continue; }
+        if (c.elev > best_el) { best_el = c.elev; best = c.sta; }
+    }
+    if (best < 0 && best_any >= 0) { best = best_any; r.fallback = true; }
+    r.pick = best;
+    return r;
+}
+
+}  // namespace
+
+// The composition itself: the HIGHEST-elevation candidate is passed over when its
+// carried level is not a usable datum, and the rank takes the best one that is.
+TEST(PhaseHeldBasisTest, ComposedRankPrefersElevationAmongLedgerUsableCandidates) {
+    const std::vector<Cand> cands = {
+        {0, 78.0, true, 3.0, 5.000},   // highest elevation, var 5 m² — NOT a datum
+        {1, 55.0, true, 3.0, 0.004},   // usable
+        {2, 41.0, true, 3.0, 0.001},   // usable, lower
+    };
+    const RankResult r = composedRank(cands, /*max_var=*/0.01);
+    EXPECT_EQ(r.pick, 1);            // the best USABLE one, not the best one
+    EXPECT_FALSE(r.fallback);
+    EXPECT_EQ(r.n_refused, 1);
+}
+
+// With everything usable the rank is pure elevation — the composition must NOT change
+// the field's behaviour, where 89 % of handovers already came out continuous.
+TEST(PhaseHeldBasisTest, ComposedRankIsPureElevationWhenEveryCandidateIsUsable) {
+    const std::vector<Cand> cands = {
+        {0, 41.0, true, 3.0, 0.001},
+        {1, 78.0, true, 3.0, 0.004},
+        {2, 55.0, true, 3.0, 0.002},
+    };
+    const RankResult r = composedRank(cands, 0.01);
+    EXPECT_EQ(r.pick, 1);
+    EXPECT_FALSE(r.fallback);
+    EXPECT_EQ(r.n_refused, 0);
+}
+
+// THE FALLBACK.  A family with no usable candidate must still be PINNED — withholding it
+// is strictly worse than a cold pin — and the fallback is COUNTED, because a cold pin is
+// a different event from a clean handover.  This is the sim's whole failure mode, now
+// visible on a run-end counter instead of only in the event CSV.
+TEST(PhaseHeldBasisTest, ComposedRankFallsBackToElevationOnlyAndCountsIt) {
+    const std::vector<Cand> cands = {
+        {0, 41.0, true,  3.0, 5.0},    // var over the ceiling
+        {1, 78.0, false, 0.0, 0.0},    // no ledger entry at all
+        {2, 55.0, true,  3.0, 9.0},    // var over the ceiling
+    };
+    const RankResult r = composedRank(cands, 0.01);
+    EXPECT_EQ(r.pick, 1);              // highest elevation overall
+    EXPECT_TRUE(r.fallback);           // …and it is a COLD pin, counted
+    EXPECT_EQ(r.n_refused, 3);
+}
+
+// A non-finite value or a non-positive variance is not a datum however good the rest of
+// the entry looks — the "+17.08 m target, 378-σ spike" guard the continuous branch
+// already carries, now asked of every candidate BEFORE one is elected.
+TEST(PhaseHeldBasisTest, LedgerUsabilityRefusesDegenerateEntries) {
+    EXPECT_FALSE(ledgerUsable(false, 3.0, 0.001, 0.01));           // no entry
+    EXPECT_FALSE(ledgerUsable(true, std::nan(""), 0.001, 0.01));   // non-finite value
+    EXPECT_FALSE(ledgerUsable(true, 3.0, 0.0, 0.01));              // zero variance
+    EXPECT_FALSE(ledgerUsable(true, 3.0, -1.0, 0.01));             // negative variance
+    EXPECT_FALSE(ledgerUsable(true, 3.0,
+                              std::numeric_limits<double>::infinity(), 0.01));
+    EXPECT_TRUE (ledgerUsable(true, 3.0, 0.01, 0.01));             // exactly at the ceiling
+    EXPECT_FALSE(ledgerUsable(true, 3.0, 0.0100001, 0.01));        // just over it
+}
+
+// THE STICKY GUARD.  An incumbent is deposed only by something about ITS OWN basis
+// column — a flag on that column, its arc's death, or its own ledger verdict.  A flag on
+// a DIFFERENT ambiguity at the same station must not move the datum: the whole point of
+// holding it is that it stops moving for reasons that are not about it.
+TEST(PhaseHeldBasisTest, AFlagElsewhereAtTheSameStationDoesNotDeposeTheIncumbent) {
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    LocalCarry old{0.0, 1e-3, 0.0}; old.birth_ep = 10;
+    carry[{0, "G07", "L1C"}] = old;    // the basis column
+    carry[{0, "G07", "L2W"}] = old;    // a SIBLING band at the same station
+    carry[{0, "G13", "L1C"}] = old;    // another satellite at the same station
+    std::map<std::pair<int, std::string>, long long> flags;
+    flags[{0, "G07_L2W"}] = 100;       // flagged: the sibling band
+    flags[{0, "G13_L1C"}] = 100;       // flagged: another satellite
+
+    PhaseHeldBasis h;
+    h.on = true; h.min_age_ep = 10; h.flag_quiet_ep = 5; h.now_ep = 100;
+    h.carry = &carry; h.flag_ep = &flags;
+    // The basis column is untouched by either flag — the predicate is keyed on
+    // (station, THIS ambiguity key), so it is column-scoped by construction.
+    EXPECT_TRUE(basisEligible(h, 0, "G07_L1C", "G07", "L1C"));
+    // …and a flag on the basis column itself DOES depose it.
+    flags[{0, "G07_L1C"}] = 100;
+    EXPECT_FALSE(basisEligible(h, 0, "G07_L1C", "G07", "L1C"));
+}
+
+// ARC DEATH is its own cause, distinguishable from a flag: the basis arc has no carry at
+// all, so there is no level to hold and no age to qualify on.  The run-end split reads
+// the two apart, which is what lets a run say WHICH lever to pull.
+TEST(PhaseHeldBasisTest, ArcDeathIsDistinguishableFromAFlag) {
+    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    std::map<std::pair<int, std::string>, long long> flags;
+    PhaseHeldBasis h;
+    h.on = true; h.min_age_ep = 10; h.flag_quiet_ep = 5; h.now_ep = 100;
+    h.carry = &carry; h.flag_ep = &flags;
+    // No carry and no flag: refused, and the election attributes it to DEATH (it tests
+    // "no carry entry" first and "flagged" only when one exists).
+    EXPECT_FALSE(basisEligible(h, 0, "G07_L1C", "G07", "L1C"));
+    EXPECT_EQ(carry.count(std::make_tuple(0, std::string("G07"), std::string("L1C"))), 0u);
+    EXPECT_EQ(flags.count({0, "G07_L1C"}), 0u);
 }
