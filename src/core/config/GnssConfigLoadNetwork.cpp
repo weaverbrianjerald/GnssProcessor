@@ -11376,6 +11376,14 @@ namespace GnssProcessor {
             // never reaches the producer's solve or its resume fingerprint.
             clc.pb_step_translate        = cl.value("pb_step_translate", false);
             clc.pb_step_translate_eps_m  = cl.value("pb_step_translate_eps_m", 0.005);
+            // Card ALC: the consumer's ambiguity LEVEL re-validation (derived into
+            // the consumer engine as processing.amb_level_check).  Same contract as
+            // pb_step_translate — default false ⇒ byte-identical, and it never
+            // reaches the producer's solve or its resume fingerprint.
+            clc.amb_level_check           = cl.value("amb_level_check", false);
+            clc.amb_level_check_window_ep = cl.value("amb_level_check_window_ep", 20);
+            clc.amb_level_check_k         = cl.value("amb_level_check_k", 4.0);
+            clc.amb_level_check_mode      = cl.value("amb_level_check_mode", std::string("act"));
             clc.state_snapshot           = cl.value("state_snapshot", false);
             // Q5 replay: consume an already-written product file instead of the
             // live producer.  Presence alone arms the replay driver (the enable
@@ -11662,6 +11670,20 @@ namespace GnssProcessor {
         if (cl.pb_step_translate) {
             c.ssr_phase_bias_step_translate_     = true;
             c.ssr_phase_bias_step_translate_eps_m_ = cl.pb_step_translate_eps_m;
+        }
+        // Card ALC: same derivation for the ambiguity LEVEL check.  Never cleared
+        // here — an explicit processing.amb_level_check on the base config is kept.
+        // The three tuning knobs ride along so the harness key is self-contained;
+        // they are only read when the check is armed.  The validation (window >= 2,
+        // k > 0, mode in {act, observe}) already ran on the BASE config's parse, so
+        // the harness values are re-validated here rather than trusted.
+        if (cl.amb_level_check) {
+            c.amb_level_check_ = true;
+            c.amb_level_check_window_ep_ = (cl.amb_level_check_window_ep >= 2)
+                                         ? cl.amb_level_check_window_ep : 20;
+            c.amb_level_check_k_ = (cl.amb_level_check_k > 0.0) ? cl.amb_level_check_k : 4.0;
+            c.amb_level_check_mode_ =
+                (cl.amb_level_check_mode == "observe") ? "observe" : "act";
         }
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates

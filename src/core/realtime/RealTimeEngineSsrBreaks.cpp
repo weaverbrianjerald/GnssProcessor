@@ -138,6 +138,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                         key, pb->discontinuity_counter)) {
                     state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
                     noteConsumerSatEvent_(key, "reset_disc");   // card CST (no-op unarmed)
+                    noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
                     log->info("{}SSR phase-bias discontinuity: reset {} {}",
                               epoch_prefix, obs.satellite, code);
                 }
@@ -156,6 +157,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                 if (it != ssr_phase_bias_applied_.end() && it->second != applied_now) {
                     state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
                     noteConsumerSatEvent_(key, "reset_flip");   // card CST (no-op unarmed)
+                    noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
                     log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
                               epoch_prefix, it->second ? "fresh" : "stale",
                               applied_now ? "fresh" : "stale", obs.satellite, code);
@@ -229,6 +231,10 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
 
             const auto d = pb_disc_carry_.react(*state_manager_, key, amb_key, bump, flip,
                                                 applied_now_m, basis_nlwl, bssd, reset_std);
+            // Card ALC: any non-None action WROTE this key (a carry shifts the value,
+            // a refusal resets it), so the level window for this satellite restarts.
+            if (d.action != PbDiscCarryLedger::Action::None)
+                noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
             using A = PbDiscCarryLedger::Action;
             switch (d.action) {
                 case A::None: break;
@@ -332,6 +338,15 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             const auto d = pb_step_translate_.react(*state_manager_, key, amb_key,
                                                     bump || flip, applied_now, applied_now_m,
                                                     basis_nlwl, bssd, eps_m, reset_std);
+            // Card ALC: every action but None / SkippedEps / RefusedUndeclared WROTE
+            // this key (a translation shifts the value, a declared refusal resets it),
+            // so the level window for this satellite restarts.  The three that write
+            // nothing leave the window alone, which is what keeps an EMPTY declaration
+            // from costing the check a whole window.
+            if (d.action != PbStepTranslateLedger::Action::None
+                && d.action != PbStepTranslateLedger::Action::SkippedEps
+                && d.action != PbStepTranslateLedger::Action::RefusedUndeclared)
+                noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
             using A = PbStepTranslateLedger::Action;
             switch (d.action) {
                 case A::None:

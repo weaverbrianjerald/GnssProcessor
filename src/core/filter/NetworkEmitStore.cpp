@@ -833,6 +833,31 @@ void networkEmitStore(
                 if (n_cst > 0) ++ctx.counters.n_cst_epochs;
                 ctx.counters.n_cst_rows += static_cast<long long>(n_cst);
             }
+            // Card ALC: drain the consumer's AMB_LEVEL events into network_events.csv
+            // and the run counters -- invariant #7's BOTH edges with identities.  The
+            // DECOUPLING edge is the `trip` row (which test, |state-level|, sigma_level,
+            // n, and both statistics in the detail); the RE-COUPLING edge is the
+            // `refloat` row naming the two ambiguity keys re-floated and the std they
+            // were re-floated at.  In `observe` mode the trip rows appear and the
+            // refloat rows do not, which is the mode read back off the artefact.  The
+            // engine's buffer is cleared at the top of every processEpoch, so an epoch
+            // the consumer deferred drains nothing rather than repeating the last one.
+            if (consumer->ambLevelCheckArmed()) {
+                ctx.counters.n_amb_level_checks +=
+                    static_cast<long long>(consumer->ambLevelEpochChecks());
+                for (const auto& e : consumer->ambLevelEvents()) {
+                    const bool is_trip = (std::string(e.kind) == "trip");
+                    if (is_trip) {
+                        if (std::string(e.test) == "wl") ++ctx.counters.n_amb_level_trips_wl;
+                        else                             ++ctx.counters.n_amb_level_trips_if;
+                    } else {
+                        ++ctx.counters.n_amb_level_refloats;
+                    }
+                    traces.emitEvent(se.time, "AMB_LEVEL", e.kind, e.sat, "",
+                                     e.diff, e.sigma, e.test,
+                                     fmt::format("n={} {}", e.n, e.detail));
+                }
+            }
         }
     }
 

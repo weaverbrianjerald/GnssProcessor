@@ -210,6 +210,28 @@ namespace GnssProcessor {
          */
         double        pb_step_translate_eps_m{ 0.005 };
         /**
+         * @brief Card ALC: the consumer RE-VALIDATES each float ambiguity against its
+         *        own code level and refloats the ones the code refuses
+         *        (@c network.closed_loop.amb_level_check, default false ⇒ byte-identical).
+         *
+         * Invariant #7's RE-COUPLING edge for cards CC and PBT: a carried or
+         * translated ambiguity is CONTINUOUS, not CORRECT.  Derived into the consumer
+         * engine's config as @c processing.amb_level_check (@c GnssConfig::ambLevelCheck)
+         * by @c deriveClosedLoopConsumerConfig; a standalone real-time consumer sets
+         * that @c processing key directly.  See @c RealTimeEngine::checkAmbiguityLevel_
+         * (RealTimeEngineEstimate.cpp) and @ref AmbLevelCheck.
+         */
+        bool          amb_level_check{ false };
+        /// Card ALC: samples per satellite before the test is legal
+        /// (@c amb_level_check_window_ep, default 20 = 10 min at 30 s).
+        int           amb_level_check_window_ep{ 20 };
+        /// Card ALC: trip at |state − level| > k · σ_level
+        /// (@c amb_level_check_k, default 4.0).
+        double        amb_level_check_k{ 4.0 };
+        /// Card ALC: what a trip DOES — @c "act" (refloat both bands through the
+        /// existing reset path) or @c "observe" (count only, no state written).
+        std::string   amb_level_check_mode{ "act" };
+        /**
          * @brief Card CC (B): the closed-loop consumer's WARM START in the event
          *        harness (@c network.closed_loop.state_snapshot, default false ⇒
          *        byte-identical — no file is written).

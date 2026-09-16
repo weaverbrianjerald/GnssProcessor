@@ -242,6 +242,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief The model's own @ref PppUtils — the SEEDED one.
+         *
+         * Card ALC needs carrier wavelengths in a seam that holds only the
+         * engine, and a locally constructed @c PppUtils would carry the built-in
+         * default GLONASS slot table rather than the one @ref setGlonassSlots
+         * pushed from the live ephemeris store.  Handing out the model's own
+         * instance is the only way a caller gets the frequencies the MEASUREMENT
+         * MODEL actually used.  Read-only: the slot map is still written through
+         * @ref setGlonassSlots alone.
+         *
+         * @return The model's utility helper (frequencies, wavelengths, system ids).
+         */
+        const PppUtils& pppUtils() const { return ppp_utils_; }
+
+        /**
          * @brief GLONASS FDMA channel k for a satellite, from the SEEDED slot map.
          *
          * Reads the map @ref setGlonassSlots populated, so callers holding only a

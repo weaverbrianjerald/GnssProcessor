@@ -5711,6 +5711,31 @@ int networkTeardown(
                       t.reset_bssd, t.reset_unknown_key, t.refused_undeclared, t.no_pair,
                       t.closureHolds() ? "HOLDS" : "BROKEN");
         }
+        // Card ALC: the ambiguity LEVEL check's counters -- the consumer's ON-path
+        // telemetry at invariant #7's re-coupling edge, printed only when the knob is
+        // armed so an OFF run's summary is byte-identical.  The two totals are read
+        // from DIFFERENT places on purpose: the left-hand ones are the engine's own
+        // ledger and the right-hand ones are what the harness drained into
+        // network_events.csv, so a mismatch means an epoch's events were lost between
+        // the two (which no absence-of-crash reading would show).
+        if (consumer->ambLevelCheckArmed()) {
+            const auto& a = consumer->ambLevelCheckCounters();
+            const auto& k = ctx.counters;
+            const bool agree = (static_cast<long long>(a.checks)   == k.n_amb_level_checks)
+                            && (static_cast<long long>(a.trips_wl) == k.n_amb_level_trips_wl)
+                            && (static_cast<long long>(a.trips_if) == k.n_amb_level_trips_if)
+                            && (static_cast<long long>(a.refloats) == k.n_amb_level_refloats);
+            log->info("  amb level check (ALC)     : mode '{}' window {} ep k {:.2f}; sats {} "
+                      "/ samples {} / window restarts {} -> n_amb_level_checks {}; "
+                      "n_amb_level_trips_wl {} / n_amb_level_trips_if {}; "
+                      "n_amb_level_refloats {}; drained {}/{}/{}/{} -> {}",
+                      config_.getAmbLevelCheckMode(), config_.getAmbLevelCheckWindowEp(),
+                      config_.getAmbLevelCheckK(), a.sats, a.samples, a.restarts,
+                      a.checks, a.trips_wl, a.trips_if, a.refloats,
+                      k.n_amb_level_checks, k.n_amb_level_trips_wl,
+                      k.n_amb_level_trips_if, k.n_amb_level_refloats,
+                      agree ? "AGREE" : "MISMATCH");
+        }
         // Card CC (B): consumer snapshots written beside the network history
         // copies (0 written on an armed seed = no warm start on offer).
         if (cl.state_snapshot)

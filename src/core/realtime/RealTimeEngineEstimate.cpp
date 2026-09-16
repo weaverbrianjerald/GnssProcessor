@@ -15,7 +15,12 @@
 #include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "common/Constants.hpp"         // Card ALC: SPEED_OF_LIGHT
+#include "common/PppUtils.hpp"          // Card ALC: carrier wavelengths
+#include "filter/StateKeySchema.hpp"    // Card ALC: makeAmbiguityKey
+#include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <set>
 
 namespace GnssProcessor {
@@ -332,6 +337,247 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
             gps_time, modeled_obs, meas_update, /*have_applied=*/update_applied,
             *state_manager_);
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Card ALC: the consumer RE-VALIDATES its float ambiguities against their own
+// code level -- invariant #7's RE-COUPLING edge for cards CC and PBT.
+// ---------------------------------------------------------------------------
+//
+// New code (not a relocation).  Cards CC and PBT both preserve an ambiguity
+// across a phase-bias product step; neither asks whether the preserved value is
+// still RIGHT.  PBT sec.7 measured the cost directly: over TOW 270900-273000 the
+// reset-only baseline moved its ambiguities 3.2416 m (cumulative |dAMB|) through
+// two mass resets and came out NEARER the truth, while the translated arm moved
+// 0.4489 m and came out 0.53 / 1.45 m worse at hours 4 / 5.  Those resets were
+// re-levelling accumulated ambiguity error FROM CODE, by accident.  This seam
+// does the same thing deliberately, with both edges instrumented.
+//
+// THE LEVELS COME FROM THE CONSUMER'S OWN CORRECTED OBSERVATIONS, never from a
+// re-read of the products.  ctx.meas_update.innovations holds the PRE-fit
+// innovation of every committed row, i.e. observed minus the predicted of
+// MeasurementModel.cpp:1640-1643 -- which is the point at which the satellite
+// clock (obs.modeled + the clock states), the satellite CODE bias and the
+// satellite PHASE bias (ssr_bias_term, MeasurementModel.cpp:1606-1630) have all
+// been applied.  Two classical combinations of the four innovations of a
+// dual-frequency satellite are therefore levels of the ambiguity error and of
+// nothing else (AmbLevelCheck.hpp derives both):
+//
+//   WL, cycles : [ (f1*ip1 - f2*ip2)/(f1-f2) - (f1*ic1 + f2*ic2)/(f1+f2) ]/lambda_WL
+//   IF, metres : (f1^2*(ip1-ic1) - f2^2*(ip2-ic2))/(f1^2-f2^2)
+//
+// Both are geometry-, clock-, troposphere- and (first-order) ionosphere-free, so
+// the receiver clock, the receiver phase clock and the slant-iono states cancel
+// and no receiver-common constant is left for the test to trip on.  Each is a
+// PAIRED per-epoch (level - state) difference, so the window's own sample sigma
+// is the noise of exactly the quantity tested.
+//
+// THE WINDOW-RESTART GUARANTEE (the spec's "a window that contains a
+// translation/carry epoch cannot trip") has two independent halves, and either
+// alone would be sufficient:
+//
+//   (1) EXPLICIT.  Every seam that WRITES an ambiguity value or variance for a
+//       key calls noteAmbLevelDisturbed_(sat): the reset path
+//       (RealTimeEngineSsrBreaks.cpp resetOnPhaseBiasDisc), the card-CC carry
+//       (carryOnPhaseBiasDisc_), the card-PBT translation
+//       (translatePhaseBiasStep_) and this seam's own refloat.  All of those run
+//       strictly BEFORE this seam in processEpoch (the three reactions sit
+//       pre-update, this seam sits post-AR), so the set is complete for the
+//       epoch by the time it is read.  The window is dropped before this epoch's
+//       sample is pushed, so the translated epoch becomes sample 1 of a NEW
+//       window and cannot be tested for another window_ep epochs.
+//
+//   (2) STRUCTURAL, and it also covers writers this card never touched (the
+//       slip seam's resetAmbiguity, a first sighting, a re-admission).
+//       StateManager::resetAmbiguity sets the ambiguity variance to exactly
+//       ambiguity_std^2 and marks the key pending re-seed; addAmbiguity births
+//       it at the same value.  So any key whose variance is >= ambiguity_std^2
+//       has NOT been updated since it was reset or born, and this seam restarts
+//       its window on that test alone.  It is an equality against the same
+//       constant the writer uses, not a tuned threshold.
+//
+// Consequence worth keeping: after a refloat, (2) holds the window shut until
+// the state has actually re-converged, so the check cannot enter a refloat
+// limit-cycle on one satellite.
+//
+// MODE.  `act` refloats BOTH of the satellite's ambiguities through the existing
+// first-sighting/reset path (the same StateManager::resetAmbiguity call, at the
+// same ambiguity_std, that reset_disc used before card CC).  `observe` writes
+// nothing at all -- it only counts and emits the AMB_LEVEL rows.
+//
+// PLACEMENT.  After the update, the constraints and AR, before the CST harvest:
+// the innovations it reads are the epoch's committed ones, the epoch's own
+// position is NOT retroactively changed by the refloat (the value is unchanged;
+// only the variance is re-inflated, and the re-seed lands at the next epoch's
+// ensureRequiredStates), and the CST row for this epoch reports both the
+// `refloat_level` event and the re-inflated amb_var.
+
+void RealTimeEngine::noteAmbLevelDisturbed_(const std::string& sat) {
+    if (!config_.ambLevelCheck() || sat.empty()) return;
+    amb_level_disturbed_.insert(sat);
+}
+
+void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
+    if (!config_.ambLevelCheck()) return;
+
+    // Resolve the three knobs once (the config cannot change mid-run).
+    if (!amb_level_configured_) {
+        AmbLevelCheck::Config c;
+        c.window_ep = config_.getAmbLevelCheckWindowEp();
+        c.k         = config_.getAmbLevelCheckK();
+        c.mode      = (config_.getAmbLevelCheckMode() == "observe")
+                    ? AmbLevelCheck::Mode::Observe : AmbLevelCheck::Mode::Act;
+        amb_level_check_.configure(c);
+        amb_level_configured_ = true;
+    }
+
+    // An epoch with no committed update has no innovations; every window keeps
+    // its samples (a deferred epoch is not a disturbance, it is an absence).
+    if (!ctx.update_applied) return;
+
+    auto log = log_manager_.getLogger("rt_engine");
+    const std::string& epoch_prefix = ctx.epoch_prefix;
+
+    // Row-aligned (sat, signal) -> PRE-fit innovation, exactly the harvest
+    // traceConsumerSat_ makes (RealTimeEngineSsrDiag.cpp): BSSD / DD rows are
+    // labelled "<sat_i>-<sat_p>" and are not a single-satellite quantity, so they
+    // are skipped rather than attributed to one satellite.  A BSSD consumer
+    // therefore contributes no rows at all and the check is inert there.
+    std::map<std::string, double> innov_of;
+    {
+        const auto& mu = ctx.meas_update;
+        const auto n_lbl = static_cast<Eigen::Index>(
+            std::min(mu.satellite_ids.size(), mu.signal_types.size()));
+        for (Eigen::Index i = 0; i < n_lbl; ++i) {
+            const std::size_t u = static_cast<std::size_t>(i);
+            const std::string& sat = mu.satellite_ids[u];
+            if (sat.find('-') != std::string::npos) continue;
+            if (i < mu.innovations.size())
+                innov_of[sat + "|" + mu.signal_types[u]] = mu.innovations(i);
+        }
+    }
+    if (innov_of.empty()) return;
+
+    const PppUtils& utils = ppp_model_->pppUtils();
+    const double reset_std = config_.getAmbiguityStd();
+    const double reset_var = reset_std * reset_std;
+    const bool   act = (amb_level_check_.config().mode == AmbLevelCheck::Mode::Act);
+
+    for (const auto& obs : ctx.modeled_obs) {
+        const std::string& sat = obs.satellite;
+        if (sat.empty()) continue;
+
+        // ONE raw phase signal per BAND, chosen deterministically: the
+        // lexicographically smallest signal code of that band that carries BOTH a
+        // phase and a paired code innovation this epoch ("L1W" -> "C1W").  A
+        // satellite tracked on L1C + L1W + L2W therefore contributes the L1C/L2W
+        // pair, not an arbitrary one.  Bands beyond the two LOWEST present are
+        // ignored -- the combinations are two-frequency by construction.
+        std::map<char, std::string> band_sig;
+        for (const auto& kv : obs.modeled) {
+            const std::string& sig = kv.first;
+            if (sig.size() < 2 || sig[0] != 'L') continue;
+            if (sig.find('_') != std::string::npos) continue;
+            const std::string code_sig = "C" + sig.substr(1);
+            if (obs.modeled.find(code_sig) == obs.modeled.end()) continue;
+            if (!innov_of.count(sat + "|" + sig) || !innov_of.count(sat + "|" + code_sig))
+                continue;
+            const char band = sig[1];
+            const auto it = band_sig.find(band);
+            if (it == band_sig.end() || sig < it->second) band_sig[band] = sig;
+        }
+        if (band_sig.size() < 2) continue;               // not tracked on two frequencies
+
+        auto b1 = band_sig.begin();
+        auto b2 = std::next(b1);
+        const std::string& sig1 = b1->second;
+        const std::string& sig2 = b2->second;
+
+        const double lam1 = utils.getWavelength(obs.system, sig1, sat);
+        const double lam2 = utils.getWavelength(obs.system, sig2, sat);
+        if (!(lam1 > 0.0) || !(lam2 > 0.0)
+            || !std::isfinite(lam1) || !std::isfinite(lam2)) continue;
+        const double f1 = Constants::SPEED_OF_LIGHT / lam1;
+        const double f2 = Constants::SPEED_OF_LIGHT / lam2;
+        if (!(std::fabs(f1 - f2) > 1.0)) continue;        // same band => no wide lane
+        const double lambda_wl = Constants::SPEED_OF_LIGHT / (f1 - f2);
+
+        // --- The restart rule, both halves (see the banner) -------------------
+        const std::string amb1 = StateKeys::makeAmbiguityKey(sat, sig1);
+        const std::string amb2 = StateKeys::makeAmbiguityKey(sat, sig2);
+        const int i1 = state_manager_->getAmbiguityIndex(amb1);
+        const int i2 = state_manager_->getAmbiguityIndex(amb2);
+        bool restart = (amb_level_disturbed_.count(sat) != 0);
+        if (i1 < 0 || i2 < 0) restart = true;
+        else if (state_manager_->getStateVariance(i1) >= reset_var
+                 || state_manager_->getStateVariance(i2) >= reset_var) restart = true;
+        if (restart) {
+            amb_level_check_.restart(sat);
+            if (i1 < 0 || i2 < 0) continue;   // no state to compare against at all
+        }
+
+        const double ip1 = innov_of[sat + "|" + sig1];
+        const double ip2 = innov_of[sat + "|" + sig2];
+        const double ic1 = innov_of[sat + "|C" + sig1.substr(1)];
+        const double ic2 = innov_of[sat + "|C" + sig2.substr(1)];
+
+        const double wl_cyc = AmbLevelCheck::wlLevelMinusState(f1, f2, lambda_wl,
+                                                               ip1, ip2, ic1, ic2);
+        const double if_m   = AmbLevelCheck::ifLevelMinusState(f1, f2, ip1, ip2, ic1, ic2);
+
+        const auto v = amb_level_check_.push(sat, wl_cyc, if_m);
+        if (v.tested) ++amb_level_epoch_checks_;
+        if (v.test == AmbLevelCheck::Test::None) continue;
+
+        const char* which = AmbLevelCheck::testName(v.test);
+        const std::string detail = fmt::format(
+            "sig={}+{} k={:.2f} wl_mean={:.4f}cyc wl_sig={:.4f} if_mean={:.4f}m "
+            "if_sig={:.4f} mode={}",
+            sig1, sig2, amb_level_check_.config().k, v.wl_mean, v.wl_sigma,
+            v.if_mean, v.if_sigma, act ? "act" : "observe");
+
+        // DECOUPLING edge: the test fired.  Emitted in BOTH modes.
+        amb_level_events_.push_back(AmbLevelEvent{
+            sat, "trip", which, v.diff, v.sigma, v.n, detail });
+        log->info("{}Ambiguity LEVEL check ({}): {} {} + {} |state-level| {:.4f} > {:.2f} x "
+                  "sigma {:.4f} (n {})", epoch_prefix, which, sat, sig1, sig2,
+                  v.diff, amb_level_check_.config().k, v.sigma, v.n);
+
+        if (!act) continue;                   // observe: counted, nothing written
+
+        // RE-COUPLING edge: the response, through the EXISTING reset path --
+        // StateManager::resetAmbiguity (StateManager.cpp:1095), the same call and
+        // the same ambiguity_std that reset_disc used before card CC.  BOTH bands,
+        // because the tests are two-frequency combinations and neither one names
+        // which band carries the error.
+        const bool r1 = state_manager_->resetAmbiguity(amb1, reset_std);
+        const bool r2 = state_manager_->resetAmbiguity(amb2, reset_std);
+        amb_level_check_.noteRefloat();
+        noteAmbLevelDisturbed_(sat);
+        amb_level_check_.restart(sat);
+        noteConsumerSatEvent_(sat + "|" + sig1, "refloat_level");   // card CST (no-op unarmed)
+        noteConsumerSatEvent_(sat + "|" + sig2, "refloat_level");
+        amb_level_events_.push_back(AmbLevelEvent{
+            sat, "refloat", which, v.diff, v.sigma, v.n,
+            fmt::format("{} reset_std={:.3f}m amb1={}({}) amb2={}({})",
+                        detail, reset_std, amb1, r1 ? "ok" : "miss", amb2,
+                        r2 ? "ok" : "miss") });
+        log->info("{}Ambiguity LEVEL refloat: {} {} and {} re-floated at std {:.3f} m "
+                  "({} test)", epoch_prefix, sat, amb1, amb2, reset_std, which);
+    }
+}
+
+void RealTimeEngine::logAmbLevelCheckSummary_(const char* tag) {
+    if (!config_.ambLevelCheck()) return;   // knob off: never printed (byte-identical)
+    const auto& c = amb_level_check_.counters();
+    log_manager_.getLogger("rt_engine")->info(
+        "Consumer ambiguity LEVEL check (ALC, {}, mode '{}', window {} ep, k {:.2f}): "
+        "sats {} / samples {} -> n_amb_level_checks {}; n_amb_level_trips_wl {} / "
+        "n_amb_level_trips_if {}; n_amb_level_refloats {}; window restarts {}",
+        tag, config_.getAmbLevelCheckMode(), config_.getAmbLevelCheckWindowEp(),
+        config_.getAmbLevelCheckK(), c.sats, c.samples, c.checks, c.trips_wl,
+        c.trips_if, c.refloats, c.restarts);
 }
 
 } // namespace GnssProcessor

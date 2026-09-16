@@ -3054,6 +3054,17 @@ namespace GnssProcessor {
         // header; 0 rows with non-zero epochs is impossible by construction.
         long long n_cst_epochs = 0;  ///< consumer epochs that contributed >= 1 row
         long long n_cst_rows   = 0;  ///< (satellite, raw phase signal) rows written
+        // Card ALC (network.closed_loop.amb_level_check) -- invariant #7's edges for
+        // the consumer's ambiguity LEVEL re-validation, counted.  All four stay 0 on
+        // an OFF run.  n_amb_level_checks == 0 on an ARMED run means no satellite ever
+        // filled a window (the instrument never fired) however clean the run reads;
+        // trips == 0 with checks > 0 is the honest null.  In `act` mode
+        // n_amb_level_refloats == trips_wl + trips_if by construction, and in
+        // `observe` mode it is 0 -- which is how the mode is read back off the run.
+        long long n_amb_level_checks   = 0;  ///< full-window (satellite, epoch) evaluations
+        long long n_amb_level_trips_wl = 0;  ///< wide-lane test trips
+        long long n_amb_level_trips_if = 0;  ///< iono-free test trips
+        long long n_amb_level_refloats = 0;  ///< satellites refloated (two ambiguities each)
         // Card JT (network.disc_jump_test_decommon) — the four declaration classes of
         // the DE-COMMONED phase jump test, invariant #7's identities counted (the
         // per-cell PB_JUMP rows carry sat / signal / raw dPB / c_s / de-commoned dPB).

@@ -611,6 +611,48 @@ namespace GnssProcessor {
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
         }
+        // Card ALC: the consumer's ambiguity LEVEL re-validation — invariant #7's
+        // re-coupling edge for the carry and the translation.  Default false =
+        // nothing measured and nothing written (byte-identical); the closed-loop
+        // harness derives it from network.closed_loop.amb_level_check
+        // (deriveClosedLoopConsumerConfig), a standalone consumer sets it here.
+        amb_level_check_ = jval<bool>(json,
+            "processing.amb_level_check", "amb_level_check", false);
+        amb_level_check_window_ep_ = jval<int>(json,
+            "processing.amb_level_check_window_ep", "amb_level_check_window_ep", 20);
+        amb_level_check_k_ = jval<double>(json,
+            "processing.amb_level_check_k", "amb_level_check_k", 4.0);
+        amb_level_check_mode_ = jval<std::string>(json,
+            "processing.amb_level_check_mode", "amb_level_check_mode", std::string("act"));
+        if (amb_level_check_window_ep_ < 2) {
+            log->warn("amb_level_check_window_ep ({}) is below the 2-sample minimum a sample "
+                      "sigma needs; using 20", amb_level_check_window_ep_);
+            amb_level_check_window_ep_ = 20;
+        }
+        if (!(amb_level_check_k_ > 0.0)) {
+            log->warn("Non-positive amb_level_check_k ({:.3f}) ignored; using 4.0",
+                      amb_level_check_k_);
+            amb_level_check_k_ = 4.0;
+        }
+        if (amb_level_check_mode_ != "act" && amb_level_check_mode_ != "observe") {
+            log->warn("Unknown amb_level_check_mode '{}' (expected \"act\" or \"observe\"); "
+                      "using \"act\"", amb_level_check_mode_);
+            amb_level_check_mode_ = "act";
+        }
+        if (amb_level_check_) {
+            log->info("Consumer AMBIGUITY LEVEL CHECK ON (card ALC, mode '{}'): every satellite "
+                      "tracked on two frequencies keeps a {}-epoch window of two code-derived "
+                      "levels built from its OWN corrected observations — the Melbourne-Wubbena "
+                      "wide-lane and the ionosphere-free combination of the PRE-fit innovations, "
+                      "both geometry- and ionosphere-free — and a float state that disagrees "
+                      "with its level by more than {:.2f} sigma REFLOATS both of that "
+                      "satellite's ambiguities through the existing reset path.  This is the "
+                      "RE-COUPLING edge of the phase-bias carry / step translation: a preserved "
+                      "ambiguity is continuous, not correct.  The window restarts at any "
+                      "translation, carry, reset or birth for that satellite, so a window "
+                      "spanning a product step can never trip.",
+                      amb_level_check_mode_, amb_level_check_window_ep_, amb_level_check_k_);
+        }
         // RTA-9(b): CLOCK stale-hold rung.  0 (default) = off — the historic
         // two-state gate (fresh/rejected) is byte-identical.  >0 opens the
         // middle rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is

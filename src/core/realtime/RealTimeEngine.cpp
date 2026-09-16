@@ -366,6 +366,8 @@ void RealTimeEngine::flush() {
     logPbDiscCarrySummary_("end of run");
     // Card PBT (A): ditto for the every-step translation counters.
     logPbStepTranslateSummary_("end of run");
+    // Card ALC: ditto for the ambiguity level-check counters.
+    logAmbLevelCheckSummary_("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -400,6 +402,15 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     if (consumer_sat_trace_) {
         consumer_sat_rows_.clear();
         consumer_sat_events_.clear();
+    }
+
+    // Card ALC: the same contract for the level check's per-epoch transport — a
+    // deferred epoch must hand the harness an EMPTY event list and a zero check
+    // count, never the previous epoch's.  No-op unarmed.
+    if (config_.ambLevelCheck()) {
+        amb_level_events_.clear();
+        amb_level_epoch_checks_ = 0;
+        amb_level_disturbed_.clear();
     }
 
     // Mode tag only — the spdlog %E field already carries the GPS time.
@@ -531,6 +542,17 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     resolveAmbiguities(ctx);
     writeEpochTraces(ctx);
+
+    // Card ALC: RE-VALIDATE this epoch's float ambiguities against their own
+    // windowed code level and refloat the ones the code refuses -- invariant #7's
+    // re-coupling edge for the card-CC carry and the card-PBT translation.  It
+    // sits AFTER the update / constraints / AR (it reads the epoch's committed
+    // pre-fit innovations) and BEFORE the CST harvest (so the row reports the
+    // refloat_level event and the re-inflated amb_var).  The epoch's own position
+    // is untouched: a refloat re-inflates the variance and marks the key pending
+    // re-seed, which lands at the NEXT epoch's ensureRequiredStates.  No-op
+    // unless processing.amb_level_check.
+    checkAmbiguityLevel_(ctx);
 
     // Card CST: harvest the per-satellite readout LAST — after the update, the
     // pseudo-observation constraints and AR — so the ambiguity / slant-iono

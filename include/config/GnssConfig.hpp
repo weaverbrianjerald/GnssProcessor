@@ -637,6 +637,37 @@ namespace GnssProcessor {
             return ssr_phase_bias_step_translate_eps_m_;
         }
 
+        /// @brief Card ALC: RE-VALIDATE each float ambiguity against its own code
+        ///        level and refloat the ones the code refuses
+        ///        (@c processing.amb_level_check, default false = nothing is
+        ///        measured and nothing is written, byte-identical).
+        ///
+        /// Cards CC and PBT preserve an ambiguity across a product step; neither
+        /// asks whether the preserved value is still RIGHT.  This is invariant
+        /// #7's re-coupling edge for both of them: two windowed levels formed from
+        /// the consumer's OWN corrected observations (the Melbourne-Wübbena
+        /// wide-lane and the ionosphere-free combination of the pre-fit
+        /// innovations, both geometry- and ionosphere-free) are compared with the
+        /// float states' own WL and IF combinations, and a satellite the code
+        /// refuses beyond @ref getAmbLevelCheckK sigma is refloated through the
+        /// EXISTING first-sighting/reset path.  The closed-loop harness derives it
+        /// from @c network.closed_loop.amb_level_check.
+        /// See @c RealTimeEngine::checkAmbiguityLevel_ and @ref AmbLevelCheck.
+        bool ambLevelCheck() const { return amb_level_check_; }
+
+        /// @brief Card ALC: samples per satellite before the test is legal
+        ///        (@c processing.amb_level_check_window_ep, default 20 = 10 min at 30 s).
+        int getAmbLevelCheckWindowEp() const { return amb_level_check_window_ep_; }
+
+        /// @brief Card ALC: trip at |state − level| > k · σ_level
+        ///        (@c processing.amb_level_check_k, default 4.0).
+        double getAmbLevelCheckK() const { return amb_level_check_k_; }
+
+        /// @brief Card ALC: what a trip DOES — @c "act" (refloat both of the
+        ///        satellite's ambiguities) or @c "observe" (count only, nothing
+        ///        written).  @c processing.amb_level_check_mode, default @c "act".
+        const std::string& getAmbLevelCheckMode() const { return amb_level_check_mode_; }
+
         /**
          * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
          *
@@ -7693,6 +7724,10 @@ namespace GnssProcessor {
         bool   ssr_phase_bias_disc_carry_{ false };       ///< Card CC (A): carry the float ambiguity across a DECLARED phase-bias step (amb − Δ, value-only) instead of resetting it; OFF = the existing reset path (byte-identical).  Set directly (processing.ssr_phase_bias_disc_carry) or derived from network.closed_loop.pb_disc_carry.
         bool   ssr_phase_bias_step_translate_{ false };   ///< Card PBT (A): translate the float ambiguity by −Δ on EVERY change in the APPLIED phase bias, declared or not (the 451 undeclared > 0.10 m steps of EV6 and the 117 EMPTY declarations of CST §7.1 in one rule); OFF = the existing reset / card-CC carry path (byte-identical).  Set directly (processing.ssr_phase_bias_step_translate) or derived from network.closed_loop.pb_step_translate.  When ON it REPLACES both reactions ⇒ a declared step is translated exactly once.
         double ssr_phase_bias_step_translate_eps_m_{ 0.005 }; ///< Card PBT (A): dead band of the step translation (m) — at or below it nothing is written and the filter absorbs the move as noise.  processing.ssr_phase_bias_step_translate_eps_m / network.closed_loop.pb_step_translate_eps_m.
+        bool   amb_level_check_{ false };                 ///< Card ALC: re-validate each float ambiguity against its own windowed code level (MW wide-lane + iono-free, both from the consumer's own corrected observations) and refloat the ones the code refuses; OFF = nothing measured, nothing written (byte-identical).  processing.amb_level_check / network.closed_loop.amb_level_check.
+        int    amb_level_check_window_ep_{ 20 };          ///< Card ALC: samples per satellite before the test is legal (20 = 10 min at 30 s).  processing.amb_level_check_window_ep.
+        double amb_level_check_k_{ 4.0 };                 ///< Card ALC: trip at |state − level| > k · σ_level.  processing.amb_level_check_k.
+        std::string amb_level_check_mode_{ "act" };       ///< Card ALC: "act" (refloat both bands) or "observe" (count only).  processing.amb_level_check_mode.
         double ssr_clock_stale_hold_factor_{ 0.0 };       ///< RTA-9(b): clock stale-hold rung — a clock aged in (ssr_max_age, factor × ssr_max_age] is still applied with URA-staleness R inflation; 0 (default) = off (byte-identical two-state gate); (0,1] clamps to 1.
         bool   ssr_bias_band_fallback_{ false };          ///< RTA-13 (opt-in): CODE-domain band-wise bias fallback — exact-attribute miss consumes the same-band sibling code bias; phase never falls back.  Default off = store lookups byte-identical.
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.

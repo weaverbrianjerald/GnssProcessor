@@ -43,6 +43,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
 #include "realtime/PbDiscCarryLedger.hpp"    // Card CC (A): declared-step ambiguity carry ledger
+#include "realtime/AmbLevelCheck.hpp"        // Card ALC: consumer ambiguity level re-validation
 #include "realtime/PbStepTranslateLedger.hpp"  // Card PBT (A): every-step ambiguity translation ledger
 #include "realtime/ConsumerSatTrace.hpp"     // Card CST: per-satellite consumer readout row
 #include <Eigen/Dense>
@@ -50,6 +51,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -415,6 +417,24 @@ public:
         return pb_step_translate_.counters();
     }
 
+    // --- Card ALC: consumer ambiguity LEVEL check readout ---------------------
+    /// True iff @c processing.amb_level_check is armed on this engine's config
+    /// (the closed-loop harness derives it from
+    /// @c network.closed_loop.amb_level_check).
+    bool ambLevelCheckArmed() const { return config_.ambLevelCheck(); }
+    /// Run-end counters of the level check (all zero — and never printed — with
+    /// the knob off, so the off path stays byte-identical).
+    const AmbLevelCheck::Counters& ambLevelCheckCounters() const {
+        return amb_level_check_.counters();
+    }
+    /// THIS epoch's AMB_LEVEL events (trips and refloats), for the harness to
+    /// drain into @c network_events.csv.  Cleared at the top of every
+    /// @c processEpoch; empty on an unarmed engine.
+    const std::vector<AmbLevelEvent>& ambLevelEvents() const { return amb_level_events_; }
+    /// THIS epoch's full-window evaluations (@c n_amb_level_checks), for the same
+    /// drain.  0 on an unarmed engine and on any epoch that did not update.
+    uint64_t ambLevelEpochChecks() const { return amb_level_epoch_checks_; }
+
     // --- Card CC (B): harness-driven snapshot write + restore readout --------
     /// Epoch time of the last epoch that ran the full estimation tail (the
     /// epoch the live filter memory is "as of"); nullopt before the first.
@@ -626,6 +646,20 @@ private:
     /// reactions and "<sat>|CLK" for the clock one; repeated actions on one key
     /// in one epoch are joined with ';'.  No-op unless armed.
     void noteConsumerSatEvent_(const std::string& key, const char* action);
+
+    // --- Card ALC: ambiguity LEVEL re-validation (RealTimeEngineEstimate.cpp) --
+    /// Re-validate every dual-frequency satellite's float ambiguities against
+    /// their own windowed code level and refloat the ones the code refuses.
+    /// Runs at the estimation tail, AFTER the update / constraints / AR and
+    /// BEFORE the CST harvest, so the trip reads this epoch's committed
+    /// innovations and the refloat's variance re-inflation shows on the CST row.
+    /// No-op unless @c processing.amb_level_check.
+    void checkAmbiguityLevel_(RtEpochContext& ctx);
+    /// Card ALC: mark @p sat's level window for a restart because a reaction
+    /// wrote its ambiguity this epoch.  No-op unless the check is armed.
+    void noteAmbLevelDisturbed_(const std::string& sat);
+    /// Card ALC: one INFO line with the level-check counters; silent unless armed.
+    void logAmbLevelCheckSummary_(const char* tag);
 
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
     void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
@@ -872,6 +906,24 @@ private:
     /// unchanged — the first cell per key after a restore has no (k−1, k) pair,
     /// so a declared one takes the reset and an undeclared one is a no-op).
     PbStepTranslateLedger pb_step_translate_;
+
+    // --- Card ALC: the consumer's ambiguity LEVEL re-validation ---------------
+    /// The windowed code levels + the two tests + the counters.  Configured once
+    /// on the first armed epoch (@c amb_level_configured_); untouched, and never
+    /// even sampled, with @c processing.amb_level_check off.
+    AmbLevelCheck amb_level_check_;
+    bool          amb_level_configured_{ false };   ///< The three knobs have been resolved onto @ref amb_level_check_.
+    /// THIS epoch's AMB_LEVEL rows; cleared with the CST buffers at the top of
+    /// @c processEpoch and drained by the closed-loop harness afterwards.
+    std::vector<AmbLevelEvent> amb_level_events_;
+    /// THIS epoch's full-window evaluations, drained with the events.
+    uint64_t amb_level_epoch_checks_{ 0 };
+    /// Satellites whose ambiguity state a reaction WROTE this epoch (the reset,
+    /// the card-CC carry, the card-PBT translation, or this check's own refloat).
+    /// The level check restarts their windows before sampling — that is half of
+    /// the guarantee that a window spanning a product step cannot trip; the other
+    /// half is the variance test in @c checkAmbiguityLevel_.  Cleared per epoch.
+    std::set<std::string> amb_level_disturbed_;
     /// RTA-10: last observed network-producer epoch-status STATE from the SSR
     /// store's heartbeat surface (nullopt = never seen).  Edge-trigger for the
     /// one-shot transition log (ok→withheld_sigma0 etc.): the first sighting
