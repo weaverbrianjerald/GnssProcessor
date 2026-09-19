@@ -22,30 +22,33 @@
                                                 % innovation covariance elsewhere)
 
 The Kalman filter of \dcref{sec:kf}{the filtering document} is a
-\emph{local} linear estimator: every update assumes the state lies inside a
-small neighbourhood of the linearisation point, and every dynamic
-state, meaning ambiguity, per-satellite ionosphere, receiver code bias, satellite
-bias, or inter-system offset (\dcref{sec:state}{the state document}), must be
-born with a value and a covariance before it can be updated.  This document
-covers the \emph{support} machinery that supplies those preconditions: the
-weighted-least-squares (WLS) epoch solve that drops the receiver inside the
-linearisation radius (\Cref{sec:estinfra-wls}); the first-epoch
-residual-differencing seeds that give each newly created state a physically
-informed prior (\Cref{sec:estinfra-init}); and the between-satellite pivot
-selection and disturbance logic that keep the single-difference (SD)
-reference frame stable across an arc (\Cref{sec:estinfra-pivot}).  None of
-this is filtering proper; it is the scaffolding that makes the filter's
-local-linear assumptions valid at the first epoch and after every
-discontinuity.
+\emph{local} linear estimator.  Every update assumes the state is close
+to the linearisation point.  Every dynamic state (ambiguity,
+per-satellite ionosphere, receiver code bias, satellite bias, or
+inter-system offset; \dcref{sec:state}{the state document}) needs a
+value and a covariance before it can be updated.  This document covers
+the machinery that provides them:
+\begin{itemize}[leftmargin=*]
+\item the weighted-least-squares (WLS) epoch solve, which places the
+      receiver close enough for the linearisation to hold
+      (\Cref{sec:estinfra-wls});
+\item the first-epoch seeds formed from residual differences, which give
+      each new state a physically reasonable prior
+      (\Cref{sec:estinfra-init});
+\item the between-satellite pivot selection and disturbance logic, which
+      keep the single-difference (SD) reference stable across an arc
+      (\Cref{sec:estinfra-pivot}).
+\end{itemize}
+None of this is filtering.  It is what makes the filter's local-linear
+assumptions valid at the first epoch and after every discontinuity.
 
-The lossless covariance re-referencing algebra (the $\stransform\,\covM\,\stransform^\Tr$
-S\nobreakdash-transform that re-anchors a group onto a new pivot) is
-deliberately \emph{out of scope} here: it is derived in
+The lossless covariance re-referencing (the
+$\stransform\,\covM\,\stransform^\Tr$ S\nobreakdash-transform that moves
+a group onto a new pivot) is \emph{out of scope} here.  It is derived in
 \dcref{sec:diff}{the differencing document} and implemented once in
 \texttt{include/filter/CovarianceReReference.hpp}, which both the
-single-receiver and network handover paths call.  This section names that
-seam where the pivot logic invokes it and otherwise refers the reader to the
-differencing derivation.
+single-receiver and the network handover paths call.  This section notes
+where the pivot logic calls it.
 
 % ============================================================
 \subsection{The WLS epoch estimator: receiver-clock seed and post-gap re-seed}
@@ -53,9 +56,11 @@ differencing derivation.
 % ============================================================
 
 Before the filter can run, the receiver position must be close enough to
-truth that the geometry Jacobian \dcref{eq:geom-linear}{linearised about it}
-is valid to sub-decimetre.  Broadcast pseudoranges alone fix this: a
-GPS-only, code-only iterated Gauss--Newton solve over the compact core state
+the truth that the geometry Jacobian
+\dcref{eq:geom-linear}{linearised about it} is valid to below a
+decimetre.  Broadcast pseudoranges are sufficient for this.  The engine
+runs a GPS-only, code-only iterated Gauss--Newton solve over the core
+state
 \begin{equation}
 \wlsstate = \begin{bmatrix} \rxpos^\Tr & \sLight\,\mathrm{d}t_\rx & \zwd \end{bmatrix}^\Tr
 \in\mathbb{R}^{5},
@@ -80,9 +85,9 @@ $\geomrange_\sat-\geomrange_\sat^{0}$ the change in geometric range relative
 to the range at the iteration's linearisation point, and $\mapw(\sat)$ the
 wet mapping function (\texttt{WlsEstimator::predictObs}, evaluated once per
 row from the design-row loop of \texttt{WlsEstimator::estimate}).  The
-geometric range is \emph{re-evaluated every iteration} about the running
-position estimate inside that loop, so this is a genuine
-Gauss--Newton relinearisation rather than a single-shot least-squares fit.
+geometric range is \emph{re-evaluated every iteration} about the current
+position estimate, so each iteration is a Gauss--Newton
+relinearisation.
 
 The design row for satellite $\sat$ is the negated line-of-sight stacked with
 the clock and wet-mapping partials, assembled in the same loop:
@@ -111,11 +116,10 @@ guarded against rank deficiency: if
 \det\!\bigl(\wlsdesign^\Tr \wlsweight\, \wlsdesign\bigr) \le 10^{-6}
 \label{eq:estinfra-wls-detguard}
 \end{equation}
-the solve aborts and the epoch is left un-seeded
-(the determinant guard immediately preceding the step), which protects
-against the degenerate
-single-constellation, near-coplanar geometry that would otherwise produce a
-wild position step.
+the solve aborts and the epoch is not seeded (the determinant guard
+immediately before the step).  This protects against degenerate
+single-constellation, nearly coplanar geometry, which would otherwise
+produce a very large position step.
 
 On convergence the estimator returns both the state
 $\wlsstate=[\rxpos^\Tr,\ \sLight\,\mathrm{d}t_\rx,\ \zwd]^\Tr$ and its formal
@@ -124,43 +128,49 @@ covariance, the inverse normal matrix
 \covM_{\wlsstate} = \bigl(\wlsdesign^\Tr \wlsweight\, \wlsdesign\bigr)^{-1}
 \label{eq:estinfra-wls-cov}
 \end{equation}
-(the result assembly at the tail of \texttt{WlsEstimator::estimate}).  Of
-this pair the filter consumes only the
-\emph{clock}: \texttt{Application::handleWlsSeeding} writes
-$\sLight\,\mathrm{d}t_\rx$ into the receiver-clock state, and only when one of
-three triggers fires: the first epoch, a data gap, or a clock \emph{jump} of at
-least \texttt{kClockJumpThreshSec}~$=0.5\,\mathrm{ms}$ between the WLS and filter
-clock estimates (in practice the jump, not the gap, is the dominant trigger).
+(the result assembly at the end of \texttt{WlsEstimator::estimate}).  The
+filter uses only the \emph{clock} from this result.
+\texttt{Application::handleWlsSeeding} writes $\sLight\,\mathrm{d}t_\rx$
+into the receiver-clock state when one of three triggers fires: the
+first epoch, a data gap, or a clock \emph{jump} of at least
+\texttt{kClockJumpThreshSec}~$=0.5\,\mathrm{ms}$ between the WLS and
+filter clock estimates.  In practice the jump is the most common
+trigger.
+
 The position, the zenith wet delay, and the covariance
-\eqref{eq:estinfra-wls-cov} are computed but not consumed as filter seeds: the
-position prior is the RINEX-header \texttt{approx\_position} plus the antenna
-offset, and the WLS position re-seeds the filter only on a kinematic (non-IMU)
-long-gap cold start (\texttt{Application::handleGap}); the ZWD estimate reaches
-only a trace-CSV column; and the formal covariance has no filter consumer at
-all.  The whole seeding path is skipped under BSSD, where the filter carries no
-receiver-clock state for the WLS clock to seed
-(\texttt{handleWlsSeeding} early-returns on \texttt{!hasClock()}).  The clock
-seed's recurring role is \emph{post-gap re-seeding}: the receiver clock is the
-most volatile state across a data gap (an unsteered oscillator can drift
-arbitrarily while no measurements constrain it), so after a gap the WLS clock
-estimate re-anchors $\sLight\,\mathrm{d}t_\rx$ before the phase filter
-resumes, rather than letting the filter chase a stale clock prior through a
-sequence of large innovations.
+\eqref{eq:estinfra-wls-cov} are computed but are not used as filter
+seeds.  The position prior is the RINEX-header
+\texttt{approx\_position} plus the antenna offset.  The WLS position
+re-seeds the filter only on a kinematic (non-IMU) cold start after a
+long gap (\texttt{Application::handleGap}).  The ZWD estimate goes only
+to a trace-CSV column, and nothing in the filter reads the formal
+covariance.  The whole seeding path is skipped under BSSD, where the
+filter has no receiver-clock state (\texttt{handleWlsSeeding} returns
+early on \texttt{!hasClock()}).
+
+The main use of the clock seed is \emph{re-seeding after a gap}.  The
+receiver clock is the most volatile state across a data gap, because an
+unsteered oscillator can drift freely while no measurements constrain
+it.  After a gap the WLS clock estimate resets
+$\sLight\,\mathrm{d}t_\rx$ before the phase filter resumes.  Otherwise
+the filter would correct a stale clock prior through a series of large
+innovations.
 
 % ============================================================
 \subsection{First-epoch state seeding by residual differencing}
 \label{sec:estinfra-init}
 % ============================================================
 
-The WLS solve of \Cref{sec:estinfra-wls} seeds the receiver clock (and, on a
-kinematic cold start, position); it does not touch the \emph{differential}
-states.  Every such state (inter-system bias, phase clock, uncombined
-receiver code bias, per-satellite ionosphere, carrier ambiguity) is created
-empty and must be seeded from the measurement residuals.  The unifying
-idea (\texttt{src/core/measurement/StateInitializer.cpp}) is that each such
-state is precisely the quantity left in a particular \emph{difference} of
-residuals once all already-modelled terms are removed; estimating it is a
-matter of forming that difference and taking a robust (median) central value.
+The WLS solve of \Cref{sec:estinfra-wls} seeds the receiver clock and, on
+a kinematic cold start, the position.  It does not touch the
+\emph{differential} states: inter-system bias, phase clock, uncombined
+receiver code bias, per-satellite ionosphere, and carrier ambiguity.
+Each of these is created empty and must be seeded from the measurement
+residuals.  The common idea
+(\texttt{src/core/measurement/StateInitializer.cpp}) is that each state
+is what remains in a particular \emph{difference} of residuals after all
+modelled terms are removed.  The seed is that difference, taken as a
+median over satellites for robustness.
 The shared prefit residual is
 \begin{equation}
 \coderes_{\rx,\sigl}^{\sat}
@@ -180,23 +190,24 @@ anchors the receiver clock itself.
 
 \paragraph{(a) Inter-system bias.}  Each non-GPS constellation $g$ carries a
 receiver clock offset relative to the GPS time scale
-(\dcref{sec:state}{the inter-system offset state}).  Because the GPS clock is
-the datum that the WLS step has already absorbed into
-$\sLight\,\mathrm{d}t_\rx$, the ISB of $g$ is the constellation-median code
-residual minus the GPS-median residual:
+(\dcref{sec:state}{the inter-system offset state}).  The GPS clock is the
+datum, and the WLS step has already put it into
+$\sLight\,\mathrm{d}t_\rx$.  The ISB of $g$ is therefore the median code
+residual of the constellation minus the median GPS residual:
 \begin{empheq}[box=\fbox]{equation}
 \isbsys_g = \medop_{\sat\in g}\ \coderes^{\sat}
           - \medop_{\sat\in\mathrm{GPS}}\ \coderes^{\sat}
 \label{eq:estinfra-isb}
 \end{empheq}
-(\texttt{StateInitializer::initializeInterSystemBiases}).  Medians, not means, are used throughout
-so a single gross code outlier cannot capsize the seed.  A hard guard requires
-at least one GPS code observation at the seeding epoch
-(the GPS-median guard in that same routine): if GPS is absent it returns
-\texttt{false} and \emph{retries the next epoch} rather than latching the ISB
-states as initialised against an arbitrary datum.  This avoids the failure
-mode where a constellation that happens to acquire first becomes the implicit
-zero, and a GPS satellite rising later is then forced to wear the whole offset.
+(\texttt{StateInitializer::initializeInterSystemBiases}).  Medians are used
+throughout, so one gross code outlier cannot spoil the seed.  A guard
+requires at least one GPS code observation at the seeding epoch (the
+GPS-median guard in the same routine).  If GPS is absent the routine
+returns \texttt{false} and \emph{tries again at the next epoch}.  It does
+not mark the ISB states as initialised against an arbitrary datum.
+Without the guard, whichever constellation is acquired first would
+become the implicit zero, and a GPS satellite rising later would then
+carry the whole offset.
 
 \paragraph{(b) Phase clock.}  In the uncombined model the phase observations
 see a receiver clock that differs from the code clock by the receiver
@@ -207,22 +218,24 @@ observation of the code-minus-phase residual:
 \pclk = \medop_{\sat}\ \bigl(\coderes^{\sat}_{\code} - \coderes^{\sat}_{\phaseo}\bigr)
 \label{eq:estinfra-pclk}
 \end{equation}
-(\texttt{StateInitializer::initializePhaseClockOffset}).  The seed's covariance
-is then set from the code noise, tightened relative to the (looser) default
-initial standard deviation but \emph{independent} of the $n$ differences that
-formed the median (the covariance-seeding tail of that routine):
+(\texttt{StateInitializer::initializePhaseClockOffset}).  The covariance of
+the seed is set from the code noise.  It is tighter than the default
+initial standard deviation, and it does not depend on the number $n$ of
+differences in the median (the covariance-seeding code at the end of
+that routine):
 \begin{equation}
 \sigma_{\pclk} = \max\!\Bigl(\tfrac{\sigma_{\code}}{\sqrt{n}},\ \sigma_{\code}\Bigr),
 \qquad
 \covM(\pclk,\pclk) = \sigma_{\pclk}^{2},
 \label{eq:estinfra-pclk-cov}
 \end{equation}
-with the corresponding row and column of $\covM$ first zeroed so the seeded
-state starts uncorrelated.  The $\max$ against $\sigma_{\code}$ makes the
-$\sigma_{\code}/\sqrt{n}$ branch unreachable, since $\sigma_{\code}/\sqrt{n}\le\sigma_{\code}$
-for every $n\ge1$, so the seeded variance is $\sigma_{\code}^{2}$ regardless of
-$n$: a conservative floor at the single-measurement code noise, not a
-$1/\sqrt{n}$ promise.
+The corresponding row and column of $\covM$ are set to zero first, so
+the seeded state starts uncorrelated.  Since
+$\sigma_{\code}/\sqrt{n}\le\sigma_{\code}$ for every $n\ge1$, the $\max$
+always selects $\sigma_{\code}$, and the seeded variance is
+$\sigma_{\code}^{2}$ whatever the value of $n$.  The seed is floored at
+the noise of a single code measurement and does not improve as
+$1/\sqrt{n}$.
 
 \paragraph{(c) Uncombined receiver code bias / IFB.}  In the uncombined
 PPP-RTK model each non-reference code band carries a receiver differential
@@ -259,19 +272,19 @@ frequencies $f_1,f_2$ it is
 guarded by $\lvert\Delta\mu\rvert \ge 10^{-12}$ to avoid dividing by a
 near-degenerate frequency separation.
 
-A third, higher-priority branch precedes both cases for GLONASS: under
-\texttt{enable\_glonass\_ifb} each FDMA band (G1, G2) carries one bias state
+For GLONASS a third branch runs before both cases.  Under
+\texttt{enable\_glonass\_ifb} each FDMA band (G1, G2) has one bias state
 \emph{per FCN slot} $k$ with $\biascoef = 1$
-(\texttt{StateKeys::makeGlonassPerSlotIfbKey}), because the per-slot carrier
-$f = f_{\mathrm{base}} + k\,\Delta f$ gives a slot-dependent receiver group delay
-that a single per-band state cannot represent; the central channel $k=0$ is the
-held datum (no state) and the CDMA bands (G3/G4/G6) fall through to the legacy
-per-band treatment above.  This branch runs before the clock-reference lookup
-because GLONASS usually ships no clock-reference pair in the \texttt{.BIA}
-product and would otherwise early-return before reaching any IFB logic; with the
-flag off a non-reference GLONASS band carries no IFB state at all
-(the per-slot and non-reference-band branches of
-\texttt{resolveReceiverBias}).
+(\texttt{StateKeys::makeGlonassPerSlotIfbKey}).  The per-slot carrier
+$f = f_{\mathrm{base}} + k\,\Delta f$ makes the receiver group delay
+depend on the slot, which one state per band cannot represent.  The
+central channel $k=0$ is the datum and has no state.  The CDMA bands
+(G3/G4/G6) use the per-band treatment above.  The branch runs before the
+clock-reference lookup because GLONASS usually has no clock-reference
+pair in the \texttt{.BIA} product, and the routine would otherwise
+return before reaching any IFB logic.  With the flag off, a
+non-reference GLONASS band has no IFB state (the per-slot and
+non-reference-band branches of \texttt{resolveReceiverBias}).
 
 \paragraph{(d) Per-satellite slant ionosphere.}  Each tracked satellite's
 slant ionospheric delay (\dcref{sec:state}{the per-satellite iono state}) is
@@ -286,29 +299,32 @@ the seed is
 \label{eq:estinfra-iono}
 \end{empheq}
 (\texttt{StateInitializer::computeIonosphereSeed}), where $\code_k^{\mathrm{mod}}$ is the
-modelled pseudorange on band $k$.  Two structural guards apply: the denominator
-must satisfy $\lvert\alpha_1-\alpha_2\rvert \ge 10^{-6}$
-(the denominator guard in that routine), and the seed is rejected unless it is
-finite and $\lvert\ionoest^\sat\rvert < 200\,\mathrm{m}$
-(its magnitude reject).  The $200\,\mathrm{m}$ reject is a physical
-sanity bound: a slant ionospheric delay larger than this is never real and
-signals a band mis-pairing or a gross code outlier, which must not be latched
-into a per-satellite state.  The seed additionally applies two BIA-coverage
-gates so the differenced code is bias-consistent: \emph{presence} (a
-\texttt{.BIA} entry exists on the band, with the zero-valued BeiDou C2I/C6I
-entries treated as missing), and, outside the network producer, which keeps
-presence-only semantics, coverage \emph{honesty}
-(\texttt{bias\_coverage\_requires\_apply}), which skips the seed when an entry is
-loaded but not \emph{applied} to $(P-\mathrm{mod})$ so the raw hardware bias
-still survives.  The honesty gate matters precisely because the failure it
-blocks, a zero-valued BeiDou entry injecting $30$--$60\,\mathrm{m}$, sits well
-under the $200\,\mathrm{m}$ reject above and would not be caught by it.
+modelled pseudorange on band $k$.  Two guards apply.  The denominator
+must satisfy $\lvert\alpha_1-\alpha_2\rvert \ge 10^{-6}$.  The seed is
+rejected unless it is finite and
+$\lvert\ionoest^\sat\rvert < 200\,\mathrm{m}$.  A slant ionospheric delay
+above $200\,\mathrm{m}$ is not physical.  It indicates mis-paired bands
+or a gross code outlier, and must not be stored in a per-satellite
+state.
+
+Two BIA-coverage gates also apply, so that the differenced code is
+consistent in its biases.  The first is \emph{presence}: a \texttt{.BIA}
+entry exists on the band, with the zero-valued BeiDou C2I/C6I entries
+treated as missing.  The second is coverage \emph{honesty}
+(\texttt{bias\_coverage\_requires\_apply}).  It skips the seed when an
+entry is loaded but not \emph{applied} to $(P-\mathrm{mod})$, because the
+raw hardware bias is then still present.  The network producer uses
+presence only.  The honesty gate is needed because the failure it
+prevents, a zero-valued BeiDou entry that injects
+$30$--$60\,\mathrm{m}$, is well below the $200\,\mathrm{m}$ reject and
+would pass it.
 
 \paragraph{(e) Carrier ambiguity.}  The float ambiguity that subsequently feeds
-integer resolution (\dcref{sec:ar}{the ambiguity-resolution document}) is what
-remains of the \emph{phase} residual once every other modelled and estimated
-term has been stripped (\texttt{StateManager::computeAmbiguitySeed}, the shared
-routine every phase-seeding call site invokes),
+integer resolution (\dcref{sec:ar}{the ambiguity-resolution document}) is
+the part of the \emph{phase} residual that remains after every other
+modelled and estimated term is removed
+(\texttt{StateManager::computeAmbiguitySeed}, the routine that every
+phase-seeding call site uses),
 \begin{equation}
 \widehat{N}^\sat_{\rx,\sigl}
 = \phaseo^\sat_{\rx,\sigl} - \mathrm{modelled}
@@ -316,38 +332,41 @@ routine every phase-seeding call site invokes),
   - \isbsys - g_{\mathrm{trop}} + \alpha_\sigl\,\ionoest^\sat,
 \label{eq:estinfra-amb}
 \end{equation}
-i.e.\ the phase observation minus its model, receiver clock \emph{and} phase
-clock $\pclk$ (seed~(b)), wet delay, inter-system bias, and tropospheric
-gradient, plus the slant ionospheric phase advance $+\alpha_\sigl\,\ionoest^\sat$
-(seed~(d)): the phase leads by the same $\alpha_\sigl$ the code lags, so the
-iono enters with the sign opposite to \eqref{eq:estinfra-rawres}.  Both the
-phase clock and the slant iono are removed here because they are already
-estimated states in the uncombined model; the one term this subtraction
-\emph{cannot} remove is a receiver clock still sitting at zero on a network cold
-start, which is what pre-seed~(f) exists to anchor.  By construction this is the
-phase residual after removing every term the filter already estimates, so the
-seeded ambiguity
-absorbs exactly the integer cycle count plus the residual receiver/satellite
-phase-bias remainder, the quantity whose integer part AR recovers once the
-satellite phase bias is supplied and the receiver phase bias cancels under
-between-satellite differencing.
+This is the phase observation minus its model, the receiver clock
+\emph{and} the phase clock $\pclk$ (seed~(b)), the wet delay, the
+inter-system bias, and the tropospheric gradient, plus the slant
+ionospheric phase advance $+\alpha_\sigl\,\ionoest^\sat$ (seed~(d)).  The
+phase is advanced by the same $\alpha_\sigl$ that delays the code, so
+the iono term has the opposite sign to \eqref{eq:estinfra-rawres}.  The
+phase clock and the slant iono are removed because they are estimated
+states in the uncombined model.  One term cannot be removed this way: a
+receiver clock that is still zero on a network cold start.  Pre-seed~(f)
+handles that case.
+
+The seeded ambiguity therefore contains the integer cycle count plus the
+remaining receiver and satellite phase biases.  AR recovers the integer
+part once the satellite phase bias is supplied and the receiver phase
+bias cancels under between-satellite differencing.
 
 \paragraph{(f) Cold receiver-clock pre-seed (network path).}  Seeds (a)--(e)
-assume the receiver clock has already been solved, which is true on the PPP path, where
-the WLS clock seed of \Cref{sec:estinfra-wls} runs first.  The network producer
-does not run that WLS seed, so on the network path nothing pre-solves the
-receiver clock before the ambiguity of (e) is seeded:
-\texttt{computeAmbiguitySeed} then subtracts a clock term of zero and the entire
-free-running receiver-clock offset leaks uniformly into every cold ambiguity
-seed.  The opt-in \texttt{seedColdReceiverClock}
-(\texttt{network.cold\_clock\_seed}, default off) closes this by writing the
-median GPS code residual, the very \texttt{gps\_median} that ISB seed (a)
-computes and discards, into $x(\mathrm{clock})$.  It is self-limiting: it
-overwrites only a \emph{cold} clock, treating any
+assume the receiver clock has already been solved.  That holds on the PPP
+path, where the WLS clock seed of \Cref{sec:estinfra-wls} runs first.
+The network producer does not run the WLS seed, so nothing solves the
+receiver clock before the ambiguity of (e) is seeded.
+\texttt{computeAmbiguitySeed} then subtracts a clock term of zero, and
+the whole free-running receiver-clock offset goes into every cold
+ambiguity seed.
+
+The opt-in \texttt{seedColdReceiverClock}
+(\texttt{network.cold\_clock\_seed}, default off) fixes this.  It writes
+the median GPS code residual into $x(\mathrm{clock})$.  This is the
+\texttt{gps\_median} that ISB seed (a) computes and discards.  The seed
+overwrites only a \emph{cold} clock.  Any
 $\lvert x(\mathrm{clock})\rvert > \texttt{kColdClockEpsilonM} = 10^{-6}\,\mathrm{m}$
-as already solved and latching it untouched, and it returns \texttt{false}
-(retry next epoch, do \emph{not} latch) when the epoch carries no GPS code
-observation, mirroring the GPS-reference contract of seed (a)
+is treated as already solved and is left unchanged.  When the epoch has
+no GPS code observation the routine returns \texttt{false}, so it tries
+again at the next epoch and does \emph{not} mark the clock as seeded.
+This matches the GPS-reference contract of seed (a)
 (\texttt{StateInitializer::seedColdReceiverClock}).
 
 % ============================================================
@@ -357,24 +376,27 @@ observation, mirroring the GPS-reference contract of seed (a)
 
 Between-satellite single differencing (BSSD, \dcref{sec:bssd}{the BSSD
 document}) re-expresses each constellation's ambiguities relative to a
-designated \emph{pivot} satellite $\piv{g}$, cancelling the receiver phase bias
-and rendering the SD ambiguities integer.  The pivot is not arbitrary: a poor
-choice degrades every SD row it anchors, and an unstable choice forces costly
-re-referencing handovers.  \texttt{src/core/filter/PivotManager.cpp} selects and
-maintains it; the baseline double-difference path uses a structurally analogous
+designated \emph{pivot} satellite $\piv{g}$.  This cancels the receiver
+phase bias and makes the SD ambiguities integer.  The choice of pivot
+matters.  A poor pivot degrades every SD row that references it, and an
+unstable one forces costly re-referencing handovers.
+\texttt{src/core/filter/PivotManager.cpp} selects and maintains the
+pivot.  The baseline double-difference path uses the similar
 \texttt{src/core/filter/DdPivotManager.cpp}.
 
 \subsubsection{Lexicographic candidate ranking}
 \label{sec:estinfra-pivot-rank}
 
-Candidates are ordered \emph{lexicographically}: a hard signal-coverage tier
-first, then a continuous score within the tier.  Coverage dominates because the
-pivot must track every signal any non-pivot tracks, since a non-pivot signal the
-pivot does not carry is orphaned and dropped, so \emph{any} full-coverage
-candidate outranks \emph{any} partial-coverage candidate regardless of score
-(the lexicographic comparator in \texttt{PivotManager::buildEpochMaps}).
-Concretely, candidate $a$ beats $b$ iff its
-phase-signal count is higher, or the counts tie and its score is higher.
+Candidates are ordered \emph{lexicographically}: first by a
+signal-coverage tier, then by a continuous score within the tier.
+Coverage comes first because the pivot must track every signal that any
+non-pivot satellite tracks.  A non-pivot signal that the pivot lacks has
+no reference and is dropped.  \emph{Any} full-coverage candidate
+therefore ranks above \emph{any} partial-coverage candidate, whatever
+their scores (the lexicographic comparator in
+\texttt{PivotManager::buildEpochMaps}).  Candidate $a$ beats $b$ if and
+only if its phase-signal count is higher, or the counts are equal and
+its score is higher.
 
 Within a coverage tier the tie-break score combines float-convergence and
 geometry (\texttt{PivotManager::scorePivotCandidate}):
@@ -387,51 +409,60 @@ geometry (\texttt{PivotManager::scorePivotCandidate}):
 \end{empheq}
 where $v_{\max}(\sat)$ is the worst (largest) float-ambiguity variance among the
 satellite's tracked phase signals and $\mathrm{el}(\sat)$ is its elevation in
-degrees.  The first term penalises an un-converged pivot: on handover the new
-pivot's variance is added to every same-group SD state (the diagonal of the
-re-reference, $\covM'(i,i)=\covM(i,i)+\covM(\piv{g},\piv{g})-2\covM(i,\piv{g})$,
-the diagonal of the \dcref{sec:diff}{S-transform}, implemented in
-\texttt{include/filter/CovarianceReReference.hpp}),
-so a pivot whose own state is still settling injects that uncertainty into the
-entire constellation; the penalty saturates at $-1$ (one metre of equivalent
-$1\sigma$ ambiguity uncertainty), with a flat $-1$ sentinel for a candidate that
-has \emph{no} state yet (the negative-\texttt{max\_amb\_variance} sentinel
-branch of that score).  On the first BSSD
-epoch every candidate in a tier shares the sentinel, so the score collapses to
-elevation alone and no special first-election branch is needed.  The
-$\mathrm{el}/90$ term prefers high-elevation pivots, and the explicit
-$-\tfrac12$ sub-$20^\circ$ penalty hard-discourages a low-elevation pivot whose
+degrees.
+
+The first term penalises a pivot that has not converged.  On handover
+the new pivot's variance is added to every SD state in its group.  This
+is the diagonal of the \dcref{sec:diff}{S-transform},
+$\covM'(i,i)=\covM(i,i)+\covM(\piv{g},\piv{g})-2\covM(i,\piv{g})$,
+implemented in \texttt{include/filter/CovarianceReReference.hpp}.  A
+pivot whose own state is still settling therefore passes its uncertainty
+to the whole constellation.  The penalty saturates at $-1$, equivalent
+to one metre of $1\sigma$ ambiguity uncertainty.  A candidate with
+\emph{no} state yet receives a flat $-1$ (the
+negative-\texttt{max\_amb\_variance} sentinel branch of the score).  On
+the first BSSD epoch every candidate in a tier has this sentinel, so the
+score reduces to elevation and no special first-election branch is
+needed.
+
+The $\mathrm{el}/90$ term prefers high-elevation pivots.  The
+$-\tfrac12$ penalty below $20^\circ$ discourages a low pivot, whose
 tropospheric and multipath residuals exceed the formal stochastic model
-regardless of how converged its float state looks.  Both score terms only
-ever \emph{rank}
-candidates that have already cleared a hard elevation gate: a satellite below
-\texttt{pivot\_min\_el} (\texttt{getBssdPivotMinElevation}) is barred from
-election outright, in the freshest-peer scan, the online pick, and the
+however well its float state has converged.
+
+Both terms only \emph{rank} candidates that have already passed a hard
+elevation gate.  A satellite below \texttt{pivot\_min\_el}
+(\texttt{getBssdPivotMinElevation}) cannot be elected at all: not in the
+freshest-peer scan, not in the online pick, and not in the
 sticky-retention test, all three in
-\texttt{PivotManager::selectPivotCandidates}, so the
-$-\tfrac12$ penalty only breaks ties among survivors rather than being the
-mechanism that keeps low satellites out.  The gate falls through deliberately
-when \emph{no} satellite clears the mask (a genuine code-only-float
-constellation): the pick reverts to the precomputed best/highest-elevation
-satellite so the candidate set is never emptied (the fallback from
+\texttt{PivotManager::selectPivotCandidates}.  The $-\tfrac12$ penalty
+therefore only breaks ties among the survivors.  When \emph{no}
+satellite passes the mask (a code-only float constellation), the gate is
+bypassed.  The pick reverts to the precomputed best or highest-elevation
+satellite, so the candidate set is never empty (the fallback from
 \texttt{pickExclusionAwareBest} to the precomputed \texttt{best\_sat} /
-\texttt{highest\_sat}).  Sticky retention, the code's own
-\emph{elevation hysteresis}, suppresses epoch-to-epoch flip-flop, but on that
-same \emph{absolute} gate, not a challenger comparison: the incumbent is kept
-whenever it still clears \texttt{pivot\_min\_el}, is not excluded, and stays
-within the toe spread of \Cref{sec:estinfra-pivot-toe} (the sticky branch of
-\texttt{selectPivotCandidates}), with no score evaluated on that branch, so
-a strictly better challenger cannot displace a qualifying incumbent; the score
-re-ranking runs only once the incumbent has \emph{failed} the gate.
+\texttt{highest\_sat}).
+
+Sticky retention is the code's \emph{elevation hysteresis}, and it
+prevents the pivot changing back and forth between epochs.  It uses the
+same \emph{absolute} gate and does not compare the incumbent with a
+challenger.  The incumbent is kept whenever it still passes
+\texttt{pivot\_min\_el}, is not excluded, and stays within the toe
+spread of \Cref{sec:estinfra-pivot-toe} (the sticky branch of
+\texttt{selectPivotCandidates}).  No score is evaluated on that branch,
+so a better challenger cannot displace a qualifying incumbent.  The
+score ranking runs only after the incumbent has \emph{failed} the gate.
 
 \subsubsection{Ephemeris-freshness guardrail}
 \label{sec:estinfra-pivot-toe}
 
-A pivot anchored to a stale broadcast ephemeris steps \emph{every} SD row that
-references it, because its extrapolated orbit and clock drift away from the
-fresher peers it is differenced against (observed in production as a Galileo
-pivot pinned to a one-hour-old I/NAV record that detonated the entire SD frame
-while its peers were minutes fresh).  The guardrail is \emph{spread-gated}: a
+A pivot with a stale broadcast ephemeris puts a step into \emph{every} SD
+row that references it.  Its extrapolated orbit and clock drift away
+from those of the fresher satellites it is differenced against.  This
+was observed in production: a Galileo pivot held a one-hour-old I/NAV
+record while the other satellites' records were minutes old, and the
+whole SD solution was corrupted.  The guardrail is gated on the
+\emph{spread} of ages.  A
 candidate is barred from pivot election when its absolute ephemeris age
 $\lvert t_{\mathrm{obs}} - t_{\mathrm{oe}}\rvert$ exceeds the constellation's
 freshest qualified peer by more than
@@ -441,21 +472,21 @@ freshest qualified peer by more than
 \end{equation}
 (the \texttt{freshestToeAgeAbs} scan in
 \texttt{PivotManager::selectPivotCandidates}, applied both at the online
-pick and at the sticky-retention test).  Gating on the \emph{spread} rather
-than an
-absolute age means that when every candidate is comparably fresh the ranking is
-untouched; only an outlier-stale candidate is displaced.  The barred satellite
-remains usable as a non-pivot; the freshest peer always passes (its difference
-from itself is zero), so the candidate set is never emptied.
+pick and at the sticky-retention test).  Because the gate is on the
+\emph{spread} and not on an absolute age, the ranking is unchanged when
+all candidates are about equally fresh.  Only a candidate that is much
+staler than the rest is displaced.  The barred satellite can still be
+used as a non-pivot.  The freshest satellite always passes, since its
+difference from itself is zero, so the candidate set is never empty.
 
 \subsubsection{Pivot disturbance detection and handover}
 \label{sec:estinfra-pivot-dist}
 
-By the BSSD construction a held pivot's own SD ambiguity is identically zero
-with zero variance: it \emph{is} the reference, so $x(\piv{g}) = 0$ and
-$\covM(\piv{g},\piv{g}) = 0$ exactly.  Any departure from that frozen state
-signals that the filter has, through process noise or an update, perturbed the
-reference and the SD frame is no longer self-consistent.
+In BSSD the pivot's own SD ambiguity is zero with zero variance, because
+the pivot \emph{is} the reference: $x(\piv{g}) = 0$ and
+$\covM(\piv{g},\piv{g}) = 0$ exactly.  Any departure from that state
+means the filter has perturbed the reference, through process noise or
+an update, and the SD states are no longer consistent.
 \texttt{isPivotDisturbed} flags this when, for any of the pivot's phase signals,
 \begin{empheq}[box=\fbox]{equation}
 \bigl\lvert x(\piv{g})\bigr\rvert > 10^{-6}
@@ -463,38 +494,42 @@ reference and the SD frame is no longer self-consistent.
 \covM(\piv{g},\piv{g}) > 10^{-12}
 \label{eq:estinfra-pivot-disturbed}
 \end{empheq}
-(\texttt{PivotManager::isPivotDisturbed}).  The two thresholds are numerical-zero
-tolerances, not tuned gates: $10^{-6}\,\mathrm{m}$ on the value and
-$10^{-12}\,\mathrm{m}^2$ on the variance are tight enough to catch any genuine
-leakage of state onto the pivot while tolerating floating-point round-off in the
-re-reference arithmetic.  To prevent the predict step from \emph{manufacturing}
-a spurious disturbance, the pivot's process noise is suppressed during
-prediction so $\covM(\piv{g},\piv{g})$ does not grow off zero
-(\dcref{sec:kf}{the freeze-state / $\Qmat$-suppression mechanics}); without that
-suppression every epoch's $\Qmat$ would trip \eqref{eq:estinfra-pivot-disturbed}
-and force a needless handover.
+(\texttt{PivotManager::isPivotDisturbed}).  The two thresholds are
+tolerances for numerical zero, not tuned gates.  $10^{-6}\,\mathrm{m}$ on
+the value and $10^{-12}\,\mathrm{m}^2$ on the variance catch any real
+leakage onto the pivot and tolerate floating-point round-off in the
+re-reference arithmetic.  The predict step must not create a false
+disturbance, so the pivot's process noise is suppressed during
+prediction and $\covM(\piv{g},\piv{g})$ stays at zero
+(\dcref{sec:kf}{the freeze-state / $\Qmat$-suppression mechanics}).
+Without the suppression, every epoch's $\Qmat$ would trip
+\eqref{eq:estinfra-pivot-disturbed} and force an unnecessary handover.
 
-When a handover does fire, either because the incumbent was disturbed or because
-ranking elected a different satellite, the outgoing pivot is classified.  A
-\emph{clean} handover (the old pivot's state is invertible and frame-consistent)
-can be re-referenced losslessly and remains smoother-inverse-referenceable, so the
-RTS smoother can later undo it; a \emph{forced} or disturbed handover cannot be
-inverted cleanly and marks a frame discontinuity.  In either case the actual
-covariance re-anchoring (subtract the new pivot's row/column from each non-pivot
-group member, then zero the new pivot's row/column) is performed in place by
-\texttt{CovReReference::applyBssd} in
-\texttt{include/filter/CovarianceReReference.hpp}, the single shared
-implementation of the $\stransform\,\covM\,\stransform^\Tr$ transform
-\dcref{sec:diff}{derived in the differencing document}; it is \emph{not}
-re-derived here.  The baseline DD path differs structurally: rather than a
-subtract-and-freeze on a single pivot it negates the new-pivot row/column and
-subtracts from the others (a different S-transform), then re-keys the affected
-ambiguity states via \texttt{StateManager::renameAmbiguity}
-(\texttt{DdPivotManager::handleHandover}).  Both paths share only the post-transform
-positive-definiteness guard (\texttt{enforcePsd}); the single-receiver user path
-runs the transform unguarded, since at user scale the groups are small and
-handovers rare enough that floating-point error in $\stransform\,\covM\,\stransform^\Tr$ does
-not accumulate.
+A handover fires when the incumbent is disturbed or when the ranking
+elects a different satellite.  The outgoing pivot is then classified.  In
+a \emph{clean} handover the old pivot's state is invertible and
+consistent.  It can be re-referenced without loss, and the RTS smoother
+can later invert it.  A \emph{forced} or disturbed handover cannot be
+inverted cleanly and marks a discontinuity.
+
+In both cases \texttt{CovReReference::applyBssd} in
+\texttt{include/filter/CovarianceReReference.hpp} re-references the
+covariance in place.  It subtracts the new pivot's row and column from
+each non-pivot member of the group, then sets the new pivot's row and
+column to zero.  This is the one shared implementation of the
+$\stransform\,\covM\,\stransform^\Tr$ transform
+\dcref{sec:diff}{derived in the differencing document}.
+
+The baseline DD path has a different structure.  It negates the
+new-pivot row and column and subtracts from the others, which is a
+different S-transform, and then renames the affected ambiguity states
+with \texttt{StateManager::renameAmbiguity}
+(\texttt{DdPivotManager::handleHandover}).  The two paths share only the
+positive-definiteness guard applied after the transform
+(\texttt{enforcePsd}).  The single-receiver user path runs the transform
+without the guard.  At user scale the groups are small and handovers are
+rare, so floating-point error in
+$\stransform\,\covM\,\stransform^\Tr$ does not accumulate.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

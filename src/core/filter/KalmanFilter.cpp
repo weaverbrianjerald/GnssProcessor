@@ -1304,6 +1304,7 @@ namespace GnssProcessor {
             P.row(amb_idx).setZero();
             P.col(amb_idx).setZero();
             P(amb_idx, amb_idx) = amb_std * amb_std;
+            state_manager_.noteAmbiguityDiscontinuity(amb_key);
 
             klogger->debug("{}Reinitialized ambiguity for {} {} (idx {}): prev={:.6f} m -> seed={:.3f} m, std={:.3f} m{}",
                 epoch_prefix, sat, outlier_sig, amb_idx, prev_amb, seed_value, amb_std,
@@ -1413,6 +1414,7 @@ namespace GnssProcessor {
         P.row(amb_idx).setZero();
         P.col(amb_idx).setZero();
         P(amb_idx, amb_idx) = amb_std * amb_std;
+        state_manager_.noteAmbiguityDiscontinuity(amb_key);
 
         klogger->debug("{}Baseline phase outlier: re-seeded {} (idx {}): "
                        "prev={:.4f} m -> seed={:.4f} m, std={:.3f} m",
@@ -1493,6 +1495,7 @@ namespace GnssProcessor {
             for (const auto& [key, idx] : state_manager_.getAmbiguities()) {
                 if (idx < static_cast<size_t>(P.rows())) {
                     P(idx, idx) = amb_std * amb_std;
+                    state_manager_.noteAmbiguityDiscontinuity(key);
                 }
             }
             klogger->warn("{}Complete reset applied (baseline): state_size={}, ambiguity_std={:.3f} m",
@@ -1569,6 +1572,7 @@ namespace GnssProcessor {
                 }
             }
             P(idx, idx) = amb_std * amb_std;
+            state_manager_.noteAmbiguityDiscontinuity(key);
         }
 
         // Freeze BSSD pivot ionosphere states after reset.

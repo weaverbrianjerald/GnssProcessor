@@ -13,36 +13,42 @@
 %  IonoVariabilityMonitor}.cpp and the matching include/slip headers.
 % ============================================================
 
-The uncombined filter (\dcref{sec:obs}{the observation-equations
-section of the Foundations document}) never forms a linear combination
-on the measurement-update path: per-signal $\code^\sat_{\rx,\sigl}$ and
-$\phaseo^\sat_{\rx,\sigl}$ enter \dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations}
-directly.  Cycle slips are instead screened by a bank of
-\emph{diagnostic} combinations, each constructed so that the geometric
-range $\geomrange^\sat_\rx$, the clocks $\sLight(\mathrm{d}t_\rx -
-\mathrm{d}t^\sat)$ and the troposphere $T^\sat_\rx$ cancel, leaving an
-observable whose only between-epoch variation is measurement noise plus
-any integer carrier discontinuity.  Three detectors are compiled and
-registered: Melbourne--W\"ubbena
-(\texttt{src/core/slip/MwSlipDetector.cpp}), the primary and the only
-one armed by default; GRAPHIC
-(\texttt{src/core/slip/GraphicSlipDetector.cpp}); and the extra-wide-lane
-detector (\texttt{src/core/slip/EwlSlipDetector.cpp}), which additionally
-needs a third frequency.  The latter two are opt-in
-(\Cref{sec:slip-registry}) and no bundled config enables them.  The
-ionosphere-free phase
-detector (\texttt{src/core/slip/IfPhaseSlipDetector.cpp}) is
-\emph{compiled and armed on the network path}, instantiated per
-non-pivot station whenever \texttt{network.cycle\_slip.if\_phase\_td} is
-set (\Cref{sec:slip-if}), but stays staged on the single-receiver
-user/kinematic path, where the position-uncertainty gate it needs is
-unsafe.  The geometry-free phase detector
-(\texttt{src/core/slip/GfSlipDetector.cpp}) is by contrast still
-\emph{staged}, present in the tree but excluded from the build (it is
-commented out of the explicit CMake source list, unlike the IF detector
-beside it), and its algebra is recorded here for completeness.  The
-user/kinematic bank is composed at run time from the config block
-\texttt{estimation.cycle\_slip}; the network producer composes its own
+The uncombined filter (\dcref{sec:obs}{the observation-equations section
+of the Foundations document}) forms no linear combination in its
+measurement update.  The per-signal $\code^\sat_{\rx,\sigl}$ and
+$\phaseo^\sat_{\rx,\sigl}$ enter
+\dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase
+observation equations} directly.  Cycle slips are screened by a set of
+\emph{diagnostic} combinations.  In each one the geometric range
+$\geomrange^\sat_\rx$, the clocks
+$\sLight(\mathrm{d}t_\rx - \mathrm{d}t^\sat)$ and the troposphere
+$T^\sat_\rx$ cancel.  What remains varies between epochs only by
+measurement noise and by any integer discontinuity of the carrier.
+
+The status of the detectors is as follows.
+\begin{itemize}[leftmargin=*]
+\item Melbourne--W\"ubbena (\texttt{src/core/slip/MwSlipDetector.cpp}) is
+      the primary detector and the only one armed by default.
+\item GRAPHIC (\texttt{src/core/slip/GraphicSlipDetector.cpp}) and the
+      extra-wide-lane detector
+      (\texttt{src/core/slip/EwlSlipDetector.cpp}), which needs a third
+      frequency, are compiled and registered.  Both are opt-in
+      (\Cref{sec:slip-registry}), and no bundled config enables them.
+\item The ionosphere-free phase detector
+      (\texttt{src/core/slip/IfPhaseSlipDetector.cpp}) is \emph{compiled
+      and armed on the network path}.  It is instantiated per non-pivot
+      station whenever \texttt{network.cycle\_slip.if\_phase\_td} is set
+      (\Cref{sec:slip-if}).  On the single-receiver user and kinematic
+      path it stays staged, because the position-uncertainty gate it
+      needs is unsafe there.
+\item The geometry-free phase detector
+      (\texttt{src/core/slip/GfSlipDetector.cpp}) is \emph{staged}.  It
+      is in the tree but commented out of the explicit CMake source
+      list, unlike the IF detector beside it.  Its algebra is recorded
+      here for completeness.
+\end{itemize}
+The user and kinematic set is composed at run time from the config block
+\texttt{estimation.cycle\_slip}.  The network producer composes its own
 per-station set from a parallel \texttt{network.cycle\_slip} block
 (\Cref{sec:slip-registry}).
 
@@ -54,81 +60,87 @@ and $\lambda_1 < \lambda_2$
 Carrier phase is read from RINEX in cycles and scaled by
 $\lambda_\sigl = \sLight / f_\sigl$ before combining, so
 $\phaseo^\sat_\sigl$ below is always in metres, consistent with
-\dcref{eq:obs-phase}{the phase observation equation}.  We reserve the operator $\slipd{\,\cdot\,}$ for a
-\emph{temporal} integer slip step (e.g.\ $\slipd N_\sigl$ is the change
-in the ambiguity on signal $\sigl$ across the slip epoch); this is
-deliberately distinct from the between-satellite single difference
-$\bsd{\cdot}$ of \dcref{sec:diff}{the differencing section of the
-Foundations document}, which also uses $\Delta$.
+\dcref{eq:obs-phase}{the phase observation equation}.  The operator
+$\slipd{\,\cdot\,}$ denotes a \emph{temporal} integer slip step: for
+example $\slipd N_\sigl$ is the change in the ambiguity on signal
+$\sigl$ across the slip epoch.  It is distinct from the
+between-satellite single difference $\bsd{\cdot}$ of
+\dcref{sec:diff}{the differencing section of the Foundations document},
+which also uses $\Delta$.
 
 \subsection{Detector registry and composition}\label{sec:slip-registry}
 
-The detectors are not hard-wired.  Each implements a narrow polymorphic
-contract \texttt{ISlipDetector} (\texttt{include/slip/ISlipDetector.hpp}):
-a single per-epoch entry point
+The set of detectors is configurable.  Each detector implements the
+interface \texttt{ISlipDetector}
+(\texttt{include/slip/ISlipDetector.hpp}), which has one entry point per
+epoch
 \begin{equation*}
 \texttt{detect}(\text{SlipEpochContext}) \;\longrightarrow\; \{\,\text{SlipEvent}\,\},
 \end{equation*}
 plus lifecycle hooks (\texttt{resetSatellite},
 \texttt{resetSatelliteSignal}, \texttt{enableTracing},
-\texttt{setCorrections}).  A \texttt{SlipEvent} is the union of the
-legacy per-detector result structs; its \texttt{granularity} field
-distinguishes a \emph{per-signal} flag (GRAPHIC, GF, IF: one carrier)
-from a \emph{band-difference} flag (MW, EWL: a wide-lane integer
-$\slipd \Nwl = \slipd N_1 - \slipd N_2$ that, on its own, cannot
-attribute the jump to one signal, the two-unknown problem
-\Cref{eq:te-mw} resolves downstream).  Inputs are bundled in
-\texttt{SlipEpochContext} so the signature is uniform even though only
-the IF detector consumes the extra 3D position sigma and receiver ECEF
-it carries, and on the network path, where it is armed, that gate is
-satisfied by construction because the estimator pins station positions.
+\texttt{setCorrections}).  A \texttt{SlipEvent} is the union of the legacy
+per-detector result structs.  Its \texttt{granularity} field
+distinguishes two kinds of flag.  A \emph{per-signal} flag (GRAPHIC, GF,
+IF) names one carrier.  A \emph{band-difference} flag (MW, EWL) reports a
+wide-lane integer $\slipd \Nwl = \slipd N_1 - \slipd N_2$, which alone
+cannot assign the jump to one signal.  \Cref{eq:te-mw} resolves those
+two unknowns downstream.  The inputs are bundled in
+\texttt{SlipEpochContext}, so every detector has the same signature.
+Only the IF detector uses the 3D position sigma and receiver ECEF it
+carries.  On the network path, where that detector is armed, the
+position gate is always satisfied, because the estimator holds the
+station positions fixed.
 
 \texttt{SlipDetectorRegistry::createEnabled}
 (\texttt{src/core/slip/SlipDetectorRegistry.cpp}) builds the
-config-selected set from
-\texttt{estimation.cycle\_slip.\{mw,graphic,ewl,gf,if\}} in a
-deterministic order, MW first (it is the primary and the sole source
-of the wide-lane integers consumed by ambiguity resolution
-(\dcref{sec:ar}{the ambiguity-resolution document}) and the BSSD pivot
-machinery (\texttt{src/core/filter/PivotManager.cpp})), then
-the auxiliaries.  MW defaults on; the auxiliary detectors default off,
-preserving the historical MW-only behaviour.  A kind that is enabled in
-config but for which the registry holds no creator is skipped with a
-warning rather than aborting, so a forward-looking config degrades
-gracefully.  Two kinds skip for distinct reasons: \texttt{gf}, whose
-\texttt{.cpp} is excluded from the build (\Cref{sec:slip-gf}); and
-\texttt{if}, whose \texttt{.cpp} \emph{is} compiled but which is
-instantiated directly on the network path (\Cref{sec:slip-if}) rather
-than through this registry, so \texttt{SlipDetectorRegistry} registers
-no \texttt{IonoFreePhase} creator either.  \texttt{CycleSlipManager} drives the whole set
-through one loop and recovers the MW detector's richer API (WL-lock
-queries, pivot-handover hints, per-satellite quality scoring) through a
-typed down-cast (\texttt{asMelbourneWubbena}) rather than widening the
-base interface.
+set selected by
+\texttt{estimation.cycle\_slip.\{mw,graphic,ewl,gf,if\}} in a fixed
+order.  MW comes first.  It is the primary detector and the only source
+of the wide-lane integers used by ambiguity resolution
+(\dcref{sec:ar}{the ambiguity-resolution document}) and by the BSSD
+pivot logic (\texttt{src/core/filter/PivotManager.cpp}).  The auxiliary
+detectors follow.  MW defaults on and the auxiliaries default off, which
+keeps the historical MW-only behaviour.
 
-The network producer does not use this registry at all, for any
-detector.  Each station's set is constructed directly in the
+A kind that is enabled in config but has no creator in the registry is
+skipped with a warning, so a config written for a later version still
+runs.  Two kinds are skipped, for different reasons.  The \texttt{.cpp}
+of \texttt{gf} is excluded from the build (\Cref{sec:slip-gf}).  The
+\texttt{.cpp} of \texttt{if} \emph{is} compiled, but the network path
+instantiates it directly (\Cref{sec:slip-if}) and not through this
+registry, so \texttt{SlipDetectorRegistry} registers no
+\texttt{IonoFreePhase} creator.
+
+\texttt{CycleSlipManager} drives the whole set through one loop.  It
+reaches the MW detector's additional API (WL-lock queries,
+pivot-handover hints, per-satellite quality scoring) through a typed
+down-cast (\texttt{asMelbourneWubbena}), which keeps the base interface
+small.
+
+The network producer does not use this registry for any detector.  The
 \texttt{buildStation} lambda of \texttt{Application::networkSetup\_}
-(\texttt{src/core/app/ApplicationNetworkSetup.cpp}) from a
-\emph{parallel} config block,
-\texttt{network.cycle\_slip.\{mw\_detect, turbo\_edit, if\_phase\_td\}},
-distinct keys from their \texttt{estimation.cycle\_slip} namesakes,
-and all three default off.  The two paths share the detector
-\emph{classes} but neither the composition mechanism, nor the config
-block, nor the response doctrine: the network refloats where the user
-path repairs (\Cref{sec:slip-network-qc}).  One consequence of composing
-by hand is load-bearing.  With \texttt{network.cycle\_slip.mw\_detect}
-on and \texttt{network.cycle\_slip.turbo\_edit} off, the station is given
-an \texttt{MwSlipDetector} but a null \texttt{TurboEditResolver}, and
-that null pointer is precisely what steers the detection branch away
-from integer repair and onto the refloat path.
+(\texttt{src/core/app/ApplicationNetworkSetup.cpp}) constructs each
+station's set directly from a \emph{parallel} config block,
+\texttt{network.cycle\_slip.\{mw\_detect, turbo\_edit, if\_phase\_td\}}.
+These keys are distinct from their \texttt{estimation.cycle\_slip}
+namesakes, and all three default off.  The two paths share the detector
+\emph{classes}.  They do not share the composition mechanism, the config
+block, or the response: the network refloats where the user path repairs
+(\Cref{sec:slip-network-qc}).
 
-\texttt{turbo\_edit} (\Cref{sec:slip-turboedit}) sits a level above the
-registry: it is \emph{not} a detector kind but a \emph{coordination
-mode} that, when the MW detector is enabled, pairs the MW wide-lane
-integer with the geometry-free phase jump to recover per-signal
-integers.  It is therefore documented separately from the detector bank
-below.
+Composing by hand has one important consequence.  With
+\texttt{network.cycle\_slip.mw\_detect} on and
+\texttt{network.cycle\_slip.turbo\_edit} off, the station receives an
+\texttt{MwSlipDetector} and a null \texttt{TurboEditResolver}.  The null
+pointer is what directs the detection branch away from integer repair
+and to the refloat path.
+
+\texttt{turbo\_edit} (\Cref{sec:slip-turboedit}) is \emph{not} a detector
+kind.  It is a \emph{coordination mode}.  When the MW detector is
+enabled, it pairs the MW wide-lane integer with the geometry-free phase
+jump to recover per-signal integers.  It is documented separately from
+the detectors below.
 
 \subsection{Test-statistic combinations}\label{sec:slip-combos}
 
@@ -154,12 +166,13 @@ the engine forms (\texttt{MwSlipDetector::computeMwMeters})
 \end{empheq}
 The range-additive terms common to \dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations},
 namely geometry, clocks and troposphere, cancel between the two bracketed
-combinations.  The slant ionosphere also cancels: the wide-lane phase
-carries the ionospheric coefficient $-(f_1\mu_1 - f_2\mu_2)/(f_1-f_2)$
-and the narrow-lane code carries $+(f_1\mu_1 + f_2\mu_2)/(f_1+f_2)$,
-and with $\mu_\sigl = f_1^2/f_\sigl^2$ (\dcref{eq:iono-scaling}{the ionosphere-scaling relation}) these
-two coefficients are equal, so the difference \eqref{eq:mw} removes the
-ionosphere exactly to first order.  What remains is a near-constant
+combinations.  The slant ionosphere cancels too.  The wide-lane phase
+has the ionospheric coefficient $-(f_1\mu_1 - f_2\mu_2)/(f_1-f_2)$ and
+the narrow-lane code has $+(f_1\mu_1 + f_2\mu_2)/(f_1+f_2)$.  With
+$\mu_\sigl = f_1^2/f_\sigl^2$ (\dcref{eq:iono-scaling}{the
+ionosphere-scaling relation}) the two are equal, so \eqref{eq:mw}
+removes the first-order ionosphere exactly.  What remains is nearly
+constant,
 equal to the wide-lane ambiguity plus hardware bias,
 \begin{equation}
 \mwc^\sat
@@ -171,66 +184,70 @@ equal to the wide-lane ambiguity plus hardware bias,
 \end{equation}
 so a wide-lane slip $\slipd \Nwl = \slipd N_1 - \slipd N_2$ appears as a
 step of $\lamwl\,\slipd \Nwl$.  For GPS L1/L2,
-$\lamwl \approx \SI{0.861}{m}$ while the dominant error is the
-metre-level narrow-lane \emph{code} noise; with code noise
+$\lamwl \approx \SI{0.861}{m}$, and the dominant error is the
+narrow-lane \emph{code} noise.  With code noise
 $\sigma_\code \sim \SI{0.3}{m}$ the MW noise is
 $\sigma_{\mathrm{MW}} \approx \sigma_\code / (\sqrt{2}\,\lamwl) \sim
-0.25$ wide-lane cycles, i.e.\ code-noise-limited.  The integer-ready
+0.25$ wide-lane cycles, so the observable is limited by code noise.  The
+integer-ready
 (BIA-corrected) variant subtracts the satellite MW bias
 $b_{\mathrm{MW}}^\sat$, which has the same algebra as \Cref{eq:mw}
 applied to the OSB phase and code biases of \dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations}.
 
-The level series $\mwc^\sat(k)$ is screened against a robust adaptive
-gate whose deviation statistic is configurable via
-\texttt{estimation.cycle\_slip.mw\_detect\_reference}.  The
-recommended choice, and the one every bundled real-time and replay
-config sets explicitly, is the first time
-difference $\mathrm{TD1}(k) = \mwc^\sat(k) - \mwc^\sat(k-1)$, gated
-against the median-absolute-deviation of its own history; the second
-time difference $\mathrm{TD2}(k) = \mwc^\sat(k) - 2\,\mwc^\sat(k-1) +
-\mwc^\sat(k-2)$ is available (\texttt{mw\_td\_order}) for curvature
-immunity at a $\sqrt{6}$ noise penalty versus the $\sqrt{2}$ of TD1 (the
-white-noise scaling of each statistic is the single source of truth in
-\texttt{MwSlipDetector::activeStatScale}).  TD1 is \emph{not} the loader
-default: a config that leaves
-\texttt{estimation.cycle\_slip.mw\_detect\_reference} unset runs the
-legacy Hatch mean, which is kept as the default for backward
-compatibility and as an A/B arm alongside the windowed local median
-(\texttt{hatch\_mean}, \texttt{local\_median}).  The threshold itself is
-fully data-driven, with no stochastic-model $\sigma$ entering, combining
-a per-arc MAD, an EWMA-smoothed cross-satellite MAD floor and an
-elevation $1/\sin\theta$ shape, with a breadth cascade (band-pair
-$\rightarrow$ constellation $\rightarrow$ global-no-GLONASS) for sparse
-or cold-start arcs; the empirical construction lives in
-\texttt{MwSlipDetector::computeAdaptiveThreshold} and is intentionally
-not reproduced here.
+The series $\mwc^\sat(k)$ is tested against a robust adaptive gate.
+\texttt{estimation.cycle\_slip.mw\_detect\_reference} selects the
+statistic.
+
+The recommended choice is the first time difference
+$\mathrm{TD1}(k) = \mwc^\sat(k) - \mwc^\sat(k-1)$, gated against the
+median absolute deviation of its own history.  Every bundled real-time
+and replay config sets it explicitly.  The second time difference
+$\mathrm{TD2}(k) = \mwc^\sat(k) - 2\,\mwc^\sat(k-1) + \mwc^\sat(k-2)$ is
+available (\texttt{mw\_td\_order}).  It is insensitive to curvature, at a
+noise penalty of $\sqrt{6}$ against $\sqrt{2}$ for TD1.
+\texttt{MwSlipDetector::activeStatScale} holds the white-noise scaling of
+each statistic.
+
+TD1 is \emph{not} the loader default.  A config that leaves
+\texttt{estimation.cycle\_slip.mw\_detect\_reference} unset uses the
+legacy Hatch mean.  It remains the default for backward compatibility
+and as an A/B arm, alongside the windowed local median
+(\texttt{hatch\_mean}, \texttt{local\_median}).
+
+The threshold is derived from the data alone, and no $\sigma$ from the
+stochastic model enters it.  It combines a per-arc MAD, an EWMA-smoothed
+MAD floor across satellites, and a $1/\sin\theta$ elevation shape.  For
+sparse or cold-start arcs the pool widens in steps: band pair, then
+constellation, then all satellites except GLONASS.  The empirical
+construction is in \texttt{MwSlipDetector::computeAdaptiveThreshold} and
+is not reproduced here.
 
 \subsubsection{Extra-wide-lane (EWL)}\label{sec:slip-ewl}
 
-For three-or-more frequency satellites the same MW algebra
+For satellites with three or more frequencies the MW algebra
 (\Cref{eq:mw}) is applied to a pair of \emph{non-L1} carriers
-(\texttt{EwlSlipDetector::computeEwlMwMeters}; band digit $\ge 2$).
-Because the two carriers are spectrally close, with $f_1 - f_2$ small,
-the extra-wide-lane wavelength
+(\texttt{EwlSlipDetector::computeEwlMwMeters}; band digit $\ge 2$).  The
+two carriers are close in frequency, so $f_1 - f_2$ is small and the
+extra-wide-lane wavelength
 \begin{equation}
 \lamewl \;=\; \frac{\sLight}{f_1 - f_2}
 \label{eq:ewl-wavelength}
 \end{equation}
-is very long: GPS L2/L5 gives $\lamewl \approx \SI{5.86}{m}$ and Galileo
-E5a/E5b $\approx \SI{9.77}{m}$.  Metre-level code noise then maps to
-$\lesssim 0.05$ EWL cycles, so the EWL integer $N_{\mathrm{EWL}} = N_2 -
-N_5$ resolves in a single epoch and a slip $\slipd N_{\mathrm{EWL}}$ is
-sized with near-certainty.  Together with the L1/L2 wide-lane
-(\Cref{eq:mw-content}) this yields two independent band-difference
-constraints,
+is very long: $\lamewl \approx \SI{5.86}{m}$ for GPS L2/L5 and
+$\approx \SI{9.77}{m}$ for Galileo E5a/E5b.  Metre-level code noise is
+then $\lesssim 0.05$ EWL cycles.  The EWL integer
+$N_{\mathrm{EWL}} = N_2 - N_5$ resolves in one epoch, and the size of a
+slip $\slipd N_{\mathrm{EWL}}$ is determined almost without error.  With
+the L1/L2 wide-lane (\Cref{eq:mw-content}) this gives two independent
+band-difference constraints,
 \begin{equation}
 \slipd \Nwl = \slipd N_1 - \slipd N_2,
 \qquad
 \slipd N_{\mathrm{EWL}} = \slipd N_2 - \slipd N_5,
 \label{eq:wl-ewl-system}
 \end{equation}
-narrowing the per-signal triple $(\slipd N_1, \slipd N_2, \slipd N_5)$
-to a single remaining degree of freedom \cite{geng2013triple}.
+which leave the per-signal triple $(\slipd N_1, \slipd N_2, \slipd N_5)$
+with one degree of freedom \cite{geng2013triple}.
 
 \subsubsection{GRAPHIC (single-frequency half-sum)}\label{sec:slip-graphic}
 
@@ -242,31 +259,32 @@ band (\texttt{GraphicSlipDetector::computeGraphic}):
 \tfrac{1}{2}\bigl(\code^\sat_{\sigl} + \phaseo^\sat_{\sigl}\bigr),
 \label{eq:graphic}
 \end{equation}
-with $\phaseo^\sat_\sigl$ in metres.  Because the slant ionosphere
-enters $+\mu_\sigl I^\sat_{\rx,1}$ on the code and $-\mu_\sigl
-I^\sat_{\rx,1}$ on the phase of the \emph{same} signal
-(\dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase observation equations}), the half-sum cancels it to first
-order: GRAPHIC is ionosphere-free without a second frequency, at the
-cost of retaining half the code noise.  The combination still contains
-the geometric range, clocks and troposphere plus the constant
-half-ambiguity $\tfrac12 \lambda_\sigl N^\sat_\sigl$, so the
-between-epoch first difference
+with $\phaseo^\sat_\sigl$ in metres.  The slant ionosphere enters as
+$+\mu_\sigl I^\sat_{\rx,1}$ on the code and $-\mu_\sigl I^\sat_{\rx,1}$
+on the phase of the \emph{same} signal
+(\dcref{eq:obs-code,eq:obs-phase}{the uncombined code and phase
+observation equations}), so the half-sum cancels it to first order.
+GRAPHIC is therefore ionosphere-free with one frequency, but it keeps
+half the code noise.  The combination still contains the geometric
+range, the clocks, the troposphere, and the constant half-ambiguity
+$\tfrac12 \lambda_\sigl N^\sat_\sigl$.  The between-epoch first
+difference
 \begin{equation}
 \mathrm{d}\graphicc^\sat_\sigl(k)
 \;=\;
 \graphicc^\sat_\sigl(k) - \graphicc^\sat_\sigl(k-1)
 \label{eq:graphic-diff}
 \end{equation}
-removes the constant ambiguity (and cancels range and clocks down to
-receiver-motion / code-noise level).  A $\slipd N$-cycle slip on signal
-$\sigl$ therefore produces a jump of $\tfrac12 \lambda_\sigl\,\slipd N$,
-and the integer estimate is $\slipd N = \operatorname{round}\!\bigl(2\,
-\mathrm{d}\graphicc / \lambda_\sigl\bigr)$.  With $\sigma_\code \sim
-\SI{0.3}{m}$ the post-difference noise is $\sim\SI{0.3}{m}$, so
-sensitivity is noise-limited to a few L1 cycles; in practice a hard
-floor \texttt{kMinThresholdM} $= \SI{0.5}{m}$ governs on quiet arcs
-($\approx 5$ L1 cycles), keeping GRAPHIC a coarse backstop rather than a
-sub-cycle detector \cite{yunck1993coping,banville2013mitigating}.
+removes the constant ambiguity, and reduces range and clocks to the level
+of receiver motion and code noise.  A slip of $\slipd N$ cycles on
+signal $\sigl$ produces a jump of $\tfrac12 \lambda_\sigl\,\slipd N$, and
+the integer estimate is
+$\slipd N = \operatorname{round}\!\bigl(2\,\mathrm{d}\graphicc / \lambda_\sigl\bigr)$.
+With $\sigma_\code \sim \SI{0.3}{m}$ the noise after differencing is
+$\sim\SI{0.3}{m}$, so the detector can resolve only a few L1 cycles.  On
+quiet arcs the hard floor \texttt{kMinThresholdM} $= \SI{0.5}{m}$
+($\approx 5$ L1 cycles) sets the threshold.  GRAPHIC is therefore a
+coarse backstop and not a sub-cycle detector \cite{yunck1993coping,banville2013mitigating}.
 
 \subsubsection{Geometry-free phase (staged)}\label{sec:slip-gf}
 
@@ -278,9 +296,9 @@ The geometry-free (GF) observable is the between-band phase difference
 \;+\; (\lambda_1 N^\sat_1 - \lambda_2 N^\sat_2),
 \label{eq:gf}
 \end{equation}
-which removes geometry, clocks and troposphere exactly but retains the
-\emph{difference} of the two ionospheric delays.  Since $I^\sat_{\rx,1}$
-varies smoothly, a second-order time difference
+which removes geometry, clocks and troposphere exactly but keeps the
+\emph{difference} of the two ionospheric delays.  $I^\sat_{\rx,1}$ varies
+smoothly, so a second-order time difference
 \begin{equation}
 \mathrm{TD2}_{\gfc}(k)
 \;=\;
@@ -288,21 +306,21 @@ varies smoothly, a second-order time difference
 \label{eq:gf-td2}
 \end{equation}
 cancels the ionospheric trend up to quadratic order over the sampling
-interval, leaving noise plus slip
+interval and leaves noise plus any slip
 (\texttt{GfSlipDetector::computeGfMeters} for \Cref{eq:gf}; the TD2
-update is the level-jump test statistic).  The detector is intrinsically
-high-rate ($\ge \SI{1}{Hz}$): at coarse rate the residual ionospheric
-curvature defeats \eqref{eq:gf-td2}.  It is present in the tree but
-excluded from the build.
+update is the test statistic for a level jump).  The detector needs a
+high data rate ($\ge \SI{1}{Hz}$).  At a coarse rate the remaining
+ionospheric curvature is too large for \eqref{eq:gf-td2}.  The detector
+is in the tree but excluded from the build.
 
-The TD2 statistic \eqref{eq:gf-td2} is not orphaned by that staging.
+The TD2 statistic \eqref{eq:gf-td2} is still used elsewhere.
 \texttt{slip/IonoVariabilityMonitor} forms the same second difference
 per satellite on the two lowest RINEX bands
-(\texttt{selectPrimaryPair}, \texttt{computeGfMeters}) and \emph{is}
-compiled, but it is a process-noise \emph{monitor}, not a detector.
-Its per-satellite output is the clamped squared ratio of a
-recent-window MAD-derived $\sigma$ of $\mathrm{TD2}_{\gfc}$ to a
-baseline-window one,
+(\texttt{selectPrimaryPair}, \texttt{computeGfMeters}), and it \emph{is}
+compiled.  It is a process-noise \emph{monitor}, not a detector.  Its
+per-satellite output is the clamped squared ratio of two MAD-derived
+values of $\sigma$ for $\mathrm{TD2}_{\gfc}$, one over a recent window
+and one over a baseline window,
 \begin{equation}
 m^\sat
 \;=\;
@@ -310,23 +328,24 @@ m^\sat
 \Bigl(\hat\sigma_{\text{recent}} / \hat\sigma_{\text{baseline}}\Bigr)^{2},
 \;\; 1, \;\; m_{\max}\right),
 \end{equation}
-and the ratio form is what makes it self-normalising: the slowly varying
-obliquity-curvature content of \Cref{eq:gf} sits in \emph{both} windows
-and cancels, so a quiet sky returns $m^\sat \approx 1$ at any elevation
-and the $1/\sin^2\theta$ obliquity scaling already carried by the
-ionospheric process noise is not double-counted.  The consequence for
-this chapter is that the monitor treats cycle slips as isolated
-single-epoch outliers that the MAD is designed to \emph{reject}, the
-exact opposite of a detection statistic, so it must not be read as a
-substitute for the staged detector.  Both of its arming keys default
-off: \texttt{estimation.adaptive\_iono\_process\_noise.enable} on the
-user path, where $m^\sat$ scales the static ionospheric spectral density
-into a per-satellite zenith override consumed by
-\texttt{StateManager::setIonoProcessNoiseOverrides}, and
-\texttt{network.adaptive\_iono\_q} per station on the network path,
-where it instead scales the deviation-channel innovation of the only
-time-linked slant-iono element the producer carries.  The window lengths
-and the clamp $m_{\max}$ are empirical and stay in config.
+The ratio normalises itself.  The slowly varying obliquity and curvature
+content of \Cref{eq:gf} is present in \emph{both} windows and cancels.  A
+quiet sky gives $m^\sat \approx 1$ at any elevation, and the
+$1/\sin^2\theta$ obliquity scaling already in the ionospheric process
+noise is not counted twice.  The monitor treats a cycle slip as an
+isolated single-epoch outlier, which the MAD is designed to
+\emph{reject}.  That is the opposite of a detection statistic, so the
+monitor is not a substitute for the staged detector.
+
+Both arming keys default off.  On the user path,
+\texttt{estimation.adaptive\_iono\_process\_noise.enable} makes $m^\sat$
+scale the static ionospheric spectral density into a per-satellite
+zenith override, which
+\texttt{StateManager::setIonoProcessNoiseOverrides} consumes.  On the
+network path, \texttt{network.adaptive\_iono\_q} (per station) makes it
+scale the deviation-channel innovation of the only time-linked
+slant-iono element the producer carries.  The window lengths and the
+clamp $m_{\max}$ are empirical and stay in config.
 
 \subsubsection{Ionosphere-free phase (staged on the user path; armed on the network path)}\label{sec:slip-if}
 
@@ -344,13 +363,13 @@ giving $\phaseo^\sat_{\mathrm{IF}} = c_1 \phaseo^\sat_1 - c_2
 \phaseo^\sat_2$ and the effective wavelength $\lamif = \bigl|c_1
 \lambda_1 - c_2 \lambda_2\bigr|$
 (\texttt{IfPhaseSlipDetector::computeIfWavelengthMeters}); for GPS L1/L2
-$\lamif \approx \SI{0.107}{m}$.  Rather than screen the raw combination,
-the detector forms the IF observed-minus-computed (OMC),
-differences it between satellites against a high-elevation pivot
-$\piv{g}$ to remove the receiver clock, the inter-system offset
-$\sLight\,\delta t^{(g)}_\rx$ and the satellite phase clock, then
-between epochs to remove the slowly-varying wet troposphere and the
-constant ambiguity:
+$\lamif \approx \SI{0.107}{m}$.  The detector does not test the raw
+combination.  It forms the IF observed-minus-computed (OMC) value and
+differences it twice.  The first difference is between satellites,
+against a high-elevation pivot $\piv{g}$.  It removes the receiver
+clock, the inter-system offset $\sLight\,\delta t^{(g)}_\rx$ and the
+satellite phase clock.  The second is between epochs.  It removes the
+slowly varying wet troposphere and the constant ambiguity:
 \begin{equation}
 \dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}}(k)
 =
@@ -362,47 +381,47 @@ constant ambiguity:
 which is near zero for a clean arc and jumps by $\sim \slipd N\,\lamif$
 on a slip.  The between-satellite step does not cancel the differential
 geometric error $(\los^\sat - \los^{\piv{g}})^{\Tr} \delta\rxpos$, so
-flagging must be gated by the filter's 3D position sigma.  That
-precondition, a static site with a precise a priori position, has
-no guarantee on the single-receiver kinematic path, where the detector
-has no instantiation route and the
-\texttt{estimation.enable\_if\_slip\_detector} user toggle stays inert;
-the network estimator, by contrast, \emph{pins} every station position
-and so satisfies the gate by construction.  It is there that the
-detector is armed.
+flagging must be gated by the filter's 3D position sigma.  The gate
+requires a static site with a precise a priori position.  The
+single-receiver kinematic path cannot guarantee that.  There the
+detector is never instantiated, and the user toggle
+\texttt{estimation.enable\_if\_slip\_detector} has no effect.  The
+network estimator holds every station position \emph{fixed}, so the gate
+is always satisfied, and the detector is armed there.
 
 On the network path (the \texttt{buildStation} lambda of
 \texttt{Application::networkSetup\_}, gated on
 \texttt{network.cycle\_slip.if\_phase\_td}) an
 \texttt{IfPhaseSlipDetector} is instantiated per \emph{non-pivot}
-station, because the pivot's ambiguities are gauge-pinned, so on the legacy
-datum path there is nothing there to refloat; and, under the
-prioritised phase datum \texttt{network.phase\_datum\_prioritized}, per
-station, because the former pivot then carries non-anchored arcs that
-still need detection.  It is built with \texttt{setDeferFlagging(true)}:
-it caches each per-epoch
-$\dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}}$ of \Cref{eq:if-dd} but does
-\emph{not} threshold locally.  The driver
+station.  The pivot's ambiguities are fixed by the gauge, so on the legacy
+datum path the pivot has nothing to refloat.  Under the prioritised
+phase datum \texttt{network.phase\_datum\_prioritized} the detector is
+instantiated for every station, because the former pivot then has arcs
+that are not anchored and still need detection.  The detector is built
+with \texttt{setDeferFlagging(true)}.  It caches each per-epoch
+$\dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}}$ of \Cref{eq:if-dd} and does
+\emph{not} apply a threshold locally.  The driver
 (\texttt{networkSlipIfTdDriver} in
-\texttt{src/core/slip/NetworkSlipQc.cpp}) instead \emph{pools} the
-deferred jumps across stations by signal pair and removes their median
-$\mathrm{med}$, the network common mode, a frame/datum wobble that is
-elevation-independent and is therefore removed in raw metres.  Each
+\texttt{src/core/slip/NetworkSlipQc.cpp}) \emph{pools} the deferred jumps
+across stations by signal pair and removes their median $\mathrm{med}$.
+The median is the network common mode, a wobble of the frame or datum.
+It does not depend on elevation, so it is removed in raw metres.  Each
 residual is then normalised to a zenith equivalent,
 \begin{equation}
 z \;=\; \bigl(\dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}} - \mathrm{med}\bigr)\,\sin\theta,
 \end{equation}
-before the pooled robust scale $\hat s = 1.4826\,\mathrm{median}\,|z|$
-is formed, and the scale is re-inflated by $1/\sin\theta$ again at each
-satellite's own threshold, so \emph{one} scale is valid across the whole
-sky.  The map is the free function \texttt{ifElevMap} ($1/\sin\theta$,
-clamped at $5^\circ$ so it cannot blow up at the already
-elevation-masked horizon).  The effective scale $\hat s_{\mathrm{eff}}$
-is an empirical-Bayes blend of that pooled prior with the
-station-pair's own EWMA scale, shrinkage weight $w = n/(n + \kappa)$ in
-the station-pair's clean sample count $n$, so a quiet reference station
-and a noisy modernised-signal station each get their own envelope rather
-than one pooled threshold set by the majority.  A satellite at elevation
+and the pooled robust scale $\hat s = 1.4826\,\mathrm{median}\,|z|$ is
+formed.  At each satellite's threshold the scale is multiplied by
+$1/\sin\theta$ again, so \emph{one} scale serves the whole sky.  The map
+is the free function \texttt{ifElevMap} ($1/\sin\theta$, clamped at
+$5^\circ$ so that it stays bounded near the horizon, which is already
+elevation-masked).  The effective scale $\hat s_{\mathrm{eff}}$ is an
+empirical-Bayes blend of the pooled prior with the station pair's own
+EWMA scale.  The shrinkage weight is $w = n/(n + \kappa)$, with $n$ the
+number of clean samples of the station pair.  A quiet reference station
+and a noisy station with modernised signals therefore each get their own
+envelope, and the majority does not set one threshold for all.  A
+satellite at elevation
 $\theta$ is flagged when
 \begin{equation}
 \bigl|\dd{\phaseo^{\sat,\piv{g}}_{\mathrm{IF}}} - \mathrm{med}\bigr|
@@ -410,11 +429,11 @@ $\theta$ is flagged when
 \max\!\left(\frac{k\,\hat s_{\mathrm{eff}}}{\sin\theta},
 \;\; c_{\mathrm{floor}}\,\lamif\right),
 \end{equation}
-with $k$ a deliberately loose MAD multiplier and the floor
-\emph{proportional} to the $(1,1)$ IF jump $\lamif =
-\sLight/(f_1+f_2) \approx \SI{10.7}{cm}$, kept in raw metres so a
-one-cycle simultaneous slip is caught at any elevation.  Clean survivors,
-and only clean survivors, then fold into the station-pair EWMA,
+where $k$ is a deliberately loose MAD multiplier.  The floor is
+\emph{proportional} to the $(1,1)$ IF jump
+$\lamif = \sLight/(f_1+f_2) \approx \SI{10.7}{cm}$ and is kept in raw
+metres, so a simultaneous one-cycle slip is caught at any elevation.
+Only the clean survivors are then folded into the station-pair EWMA,
 so the scale never absorbs the event it must catch.  The five knobs
 ($\kappa$, $k$, $c_{\mathrm{floor}}$, the minimum pool size and the
 EWMA weight) live under

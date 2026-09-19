@@ -139,6 +139,13 @@ void RealTimeEngine::initStateManagerAndApriori() {
     // State manager.
     constexpr size_t core_state_size = 5; // Pos(3) + Clk(1) + Tropo(1)
     state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, config_);
+    // Generation IDs are local to this manager's lifetime. A public initialize()
+    // call must not pair a new manager with windows from the previous instance.
+    amb_level_check_ = AmbLevelCheck{};
+    amb_level_configured_ = false;
+    amb_level_generations_.clear();
+    amb_level_events_.clear();
+    amb_level_epoch_checks_ = 0;
 
     // Seed initial position.
     initial_position_ = Eigen::Vector3d(0.0, 0.0, Constants::EARTH_RADIUS);

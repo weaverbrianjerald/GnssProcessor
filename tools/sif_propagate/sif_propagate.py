@@ -43,6 +43,9 @@ Usage
     # stations from a file (one id per line, or a JSON array)
     python sif_propagate.py --stations-file roster.txt --doy 2024:129
 
+    # NGS datasheet recipe: CURRENT occupation, linear only, back to 2010.0
+    python sif_propagate.py CORV00USA --epoch 2010.0 --datasheet
+
 Identifiers may be a 9-char IGS long name (``CIT100USA``), a 4-char marker
 (``CIT1``, case-insensitive), or a DOMES number (``40400S201``) -- matching the
 C++ ``find()`` resolution order.
@@ -500,11 +503,37 @@ class ResolvedCoord:
     has_covariance: bool = False
     in_window: bool = False                              # epoch inside the occupation window?
     window: Tuple[float, float] = (0.0, 0.0)             # (start_year, end_year) of the used occupation
+    occupation_mode: str = "covering"                    # selection mode actually applied
 
 
-def _select_occupation(station: Station, year: float) -> Optional[Occupation]:
-    """Occupation covering ``year`` (start<=year<end, not flagged), else nearest midpoint."""
-    best: Optional[Occupation] = None
+OCCUPATION_MODES = ("covering", "latest")
+
+
+def _select_occupation(station: Station, year: float,
+                       mode: str = "covering") -> Optional[Occupation]:
+    """Pick the occupation to evaluate at ``year``.
+
+    ``mode="covering"`` (default, and the only mode the C++ engine implements):
+    the occupation whose window covers ``year`` (start<=year<end, not flagged),
+    else the non-flagged occupation whose window midpoint is nearest.
+
+    ``mode="latest"``: the last non-flagged occupation by window start -- the
+    *current* solution for the mark.  This is the NGS datasheet convention: a
+    published NAD83(2011) epoch-2010.00 coordinate is the CURRENT occupation
+    propagated linearly back to 2010.0, not the occupation that was live in 2010.
+    Returns None when the station has no usable occupation.
+    """
+    if mode == "latest":
+        best: Optional[Occupation] = None
+        for o in station.occupations:
+            if o.do_not_use:
+                continue
+            if best is None or o.start_year > best.start_year:
+                best = o
+        return best
+    if mode != "covering":
+        raise ValueError(f"unknown occupation mode {mode!r}; want one of {OCCUPATION_MODES}")
+    best = None
     best_dist = 1e30
     for o in station.occupations:
         if o.do_not_use:
@@ -532,15 +561,26 @@ def _eval_psd_component(comp: PsdComponent, dt: float) -> float:
 
 def resolve_station_coordinate(station: Station, decimal_year: float,
                                with_periodic: bool = True,
-                               with_psd: bool = True) -> ResolvedCoord:
+                               with_psd: bool = True,
+                               occupation: str = "covering") -> ResolvedCoord:
     """Evaluate a station's SIF coordinate function at ``decimal_year``.
 
-    Faithful port of ``GnssProcessor::resolveStationCoordinate``.  Returns a
-    ``ResolvedCoord`` whose ``valid`` is False when the station has no usable
-    occupation (the caller should then fall back to its own a-priori).
+    With the default ``occupation="covering"`` this is a faithful port of
+    ``GnssProcessor::resolveStationCoordinate``.  ``occupation="latest"`` instead
+    evaluates the CURRENT (last-starting, non-flagged) occupation -- the NGS
+    datasheet convention for a published legacy-epoch coordinate.  Everything
+    else (linear term, periodic/PSD toggles, covariance propagation, dt measured
+    from the SIF reference epoch) is identical and applies to whichever
+    occupation was selected; periodic and post-seismic terms are keyed on the
+    EPOCH, not the occupation, so "latest" does not imply "no periodic" --
+    pass ``with_periodic=False`` for that.
+
+    Returns a ``ResolvedCoord`` whose ``valid`` is False when the station has no
+    usable occupation (the caller should then fall back to its own a-priori).
     """
     out = ResolvedCoord()
-    occ = _select_occupation(station, decimal_year)
+    out.occupation_mode = occupation
+    occ = _select_occupation(station, decimal_year, occupation)
     if occ is None:
         return out
 
@@ -659,6 +699,7 @@ def build_record(key: str, station: Optional[Station], resolved: Optional[Resolv
             "window_start": resolved.window[0],
             "window_end": (None if resolved.window[1] >= _NEAREST_WINDOW_CAP else resolved.window[1]),
             "has_covariance": resolved.has_covariance,
+            "occupation_mode": resolved.occupation_mode,
         })
         if resolved.has_covariance and resolved.covariance is not None:
             sx, sy, sz = ecef_sigmas(resolved.covariance)
@@ -681,6 +722,9 @@ _CSV_COLUMNS = [
     "x", "y", "z", "lat_deg", "lon_deg", "height_m",
     "sigma_x", "sigma_y", "sigma_z", "sigma_e", "sigma_n", "sigma_u",
     "in_window", "window_start", "window_end", "source",
+    # Appended LAST so the historical column order is untouched for existing
+    # consumers; default runs report "covering".
+    "occupation_mode",
 ]
 
 
@@ -811,7 +855,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="Disable post-seismic deformation terms.")
     ap.add_argument("--no-covariance", action="store_true",
                     help="Omit the full 3x3 covariance matrix from JSON output (sigmas still shown).")
+    ap.add_argument("--occupation", choices=OCCUPATION_MODES, default="covering",
+                    help="Occupation selection: 'covering' (default; the window containing the "
+                         "epoch, else nearest -- what the C++ engine does) or 'latest' (the "
+                         "current occupation, propagated back; the NGS datasheet convention).")
+    ap.add_argument("--datasheet", action="store_true",
+                    help="Preset reproducing NGS datasheet coordinates: --occupation latest "
+                         "plus --no-periodic. Post-seismic terms stay ON (pass --no-psd to "
+                         "drop them); the published value still needs the epoch-matched "
+                         "ITRF2020->NAD83(2011) transformation applied afterwards.")
     args = ap.parse_args(argv)
+
+    occupation_mode = "latest" if args.datasheet else args.occupation
+    no_periodic = args.no_periodic or args.datasheet
 
     # Epoch.
     try:
@@ -853,8 +909,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
         rc = resolve_station_coordinate(
             st, decimal_year,
-            with_periodic=not args.no_periodic,
+            with_periodic=not no_periodic,
             with_psd=not args.no_psd,
+            occupation=occupation_mode,
         )
         records.append(build_record(key, st, rc, decimal_year,
                                     with_covariance=not args.no_covariance))

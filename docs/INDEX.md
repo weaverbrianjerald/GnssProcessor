@@ -28,6 +28,19 @@ Further RF-N card files land in `docs/refound/`. That directory is the program's
 space and is **not** split or reorganised by the topic tree; everything below is the
 record the program is re-founding **on**.
 
+- [ALC-ARC](refound/ALC-ARC_reset_generation_2026-09-16.md) — closed, 2026-09-16:
+  reset-gap fix; 82 focused tests pass and ALC-OFF products are byte-identical;
+  longer accuracy campaigns deferred.
+- [PBT-AUDIT](refound/PBT-AUDIT_translation_premise_2026-09-16.md) — closed,
+  2026-09-16: blanket translation premise falsified; seven controlled witnesses;
+  frame-transfer contract recommended, runtime unchanged.
+- [ALC-STAT](refound/ALC-STAT_statistics_audit_2026-09-17.md) — closed,
+  2026-09-17: statistical interpretation audited; 40 focused tests pass;
+  correlation and nuisance bias prevent a calibrated 4-sigma claim; no tuning.
+- [ALC-BAND](refound/ALC-BAND_window_scope_review_2026-09-17.md) — closed,
+  2026-09-17: retain paired restarts; per-band dual-code levels need a separate
+  statistical design; 44 focused tests pass, runtime unchanged.
+
 ---
 
 ## Start here

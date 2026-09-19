@@ -230,11 +230,85 @@ def test_selfcheck(reg):
     check(0.0 < d < 0.05, f"periodic delta {d:.4f} m in (0, 0.05)")
 
 
+def test_occupation_mode(reg):
+    """[4] 'latest' occupation mode (NGS datasheet convention).
+
+    CORV00USA has a break at the 2019-07 antenna swap: the window covering
+    2010.0 is 1998-04-26..2019-08-03, the LATEST is 2019-08-04..open.  The NGS
+    datasheet AH2488 (NAD83(2011) epoch 2010.00) is built from the LATEST
+    occupation propagated linearly back, so only that route closes on the
+    published value (0.4 mm, vs 32.8 mm for the covering window -- the closure
+    through the epoch-matched ITRF2020->NAD83(2011) Helmert is demonstrated in
+    corv_worked_example.py, which is not run here to keep this test
+    dependency-free).
+    """
+    print("[4] OCCUPATION selection modes")
+    # (b) CORV latest + no-periodic at 2010.0 == the linear propagation of the
+    #     current occupation: X20 + V*(2010.0 - 2020.0).
+    expect = (-2498423.3133, -3802819.9155, 4454736.7162)
+    corv = reg.find("CORV00USA")
+    if check(corv is not None, "CORV00USA found"):
+        rl = sp.resolve_station_coordinate(corv, 2010.0, with_periodic=False,
+                                           with_psd=True, occupation="latest")
+        check(rl.valid, "CORV latest valid")
+        check(rl.occupation_mode == "latest", "CORV result reports mode 'latest'")
+        check(rl.window[0] > 2019.0, f"latest window starts 2019+, got {rl.window[0]:.3f}")
+        check(not rl.in_window, "2010.0 is OUTSIDE the latest window")
+        for k in range(3):
+            d = abs(rl.ecef[k] - expect[k])
+            check(d <= 2e-4, f"CORV latest ECEF[{k}] d={d*1e3:.3f} mm > 0.2 mm")
+
+        # (c) covering vs latest differ by 30-35 mm, dominated by Up.
+        rc = sp.resolve_station_coordinate(corv, 2010.0, with_periodic=False,
+                                           with_psd=True, occupation="covering")
+        check(rc.occupation_mode == "covering", "covering result reports its mode")
+        check(rc.window[0] < 2000.0, f"covering window is the 1998 one ({rc.window[0]:.3f})")
+        d3 = math.dist(rc.ecef, rl.ecef)
+        check(0.030 <= d3 <= 0.035, f"covering-vs-latest 3D {d3*1e3:.2f} mm not in [30,35]")
+        lat, lon, _h = sp.ecef_to_llh(*rl.ecef)
+        R = sp.enu_to_ecef_matrix(lat, lon)
+        dv = tuple(rc.ecef[k] - rl.ecef[k] for k in range(3))
+        de, dn, du = sp._mat3_vec(sp._mat3_transpose(R), dv)
+        check(abs(du) > math.hypot(de, dn),
+              f"jump not Up-dominated: E={de*1e3:.2f} N={dn*1e3:.2f} U={du*1e3:.2f} mm")
+        check(abs(du) > 0.028, f"Up component {du*1e3:.2f} mm, expected ~32 mm")
+        print(f"    CORV 2010.0 covering-vs-latest: 3D {d3*1e3:.2f} mm  "
+              f"(E {de*1e3:+.2f}, N {dn*1e3:+.2f}, U {du*1e3:+.2f} mm)")
+
+    # (d) a single-occupation station is mode-invariant.
+    amc = reg.find("AMC400USA")
+    if check(amc is not None, "AMC400USA found"):
+        usable = [o for o in amc.occupations if not o.do_not_use]
+        check(len(usable) == 1, f"AMC400USA expected 1 usable occupation, got {len(usable)}")
+        for ep in (2010.0, 2018.5, 2024.36):
+            a = sp.resolve_station_coordinate(amc, ep, True, True, occupation="covering")
+            b = sp.resolve_station_coordinate(amc, ep, True, True, occupation="latest")
+            check(a.valid and b.valid, f"AMC400USA@{ep} valid both modes")
+            check(a.window == b.window, f"AMC400USA@{ep} same window both modes")
+            for k in range(3):
+                check(abs(a.ecef[k] - b.ecef[k]) == 0.0,
+                      f"AMC400USA@{ep} ECEF[{k}] differs between modes")
+
+    # default keyword == covering (so (a), the oracle block above, is untouched).
+    cit = reg.find("CIT100USA")
+    r_def = sp.resolve_station_coordinate(cit, 2024.36, True, True)
+    r_cov = sp.resolve_station_coordinate(cit, 2024.36, True, True, occupation="covering")
+    check(r_def.ecef == r_cov.ecef, "default occupation kwarg == 'covering'")
+    check(r_def.occupation_mode == "covering", "default result reports 'covering'")
+    check(sp._CSV_COLUMNS[-1] == "occupation_mode", "occupation_mode is the LAST CSV column")
+    try:
+        sp.resolve_station_coordinate(cit, 2024.36, occupation="bogus")
+        check(False, "bogus occupation mode should raise")
+    except ValueError:
+        pass
+
+
 def main():
     reg = load_registry()
     test_oracle(reg)
     test_anchors(reg)
     test_selfcheck(reg)
+    test_occupation_mode(reg)
     print()
     if _fail:
         print(f"RESULT: FAIL ({_fail} check(s) failed)")

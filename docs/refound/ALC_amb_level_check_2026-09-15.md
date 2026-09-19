@@ -389,3 +389,65 @@ Open items:
 - New grader: `scripts/alc_level_read.py` (trace-only — the per-hour / per-satellite / per-σ breakdown the run-end line cannot carry, plus the
   CST `refloat_level` cross-check).  `scripts/cc_arm_grade.py`, `scripts/cst_consumer_read.py`, `scripts/rf2d_grade.py` and
   `scripts/simnet_amb_integer.py` cover everything else and are unchanged.
+
+## 9. 2026-09-16 — correction to the window-restart guarantee
+
+The variance fallback described in §1 is insufficient: a same-epoch measurement
+update can contract the reset variance before this post-update check runs. Some
+slip and KF recovery paths also bypassed the explicit notification. Per-epoch
+notifications could be lost during epochs without usable samples.
+
+[ALC-ARC](ALC-ARC_reset_generation_2026-09-16.md) closes those gaps with persistent
+ambiguity generations and immediate window clearing on explicit notifications.
+Eight new engine regressions exercise actual reseeding and Kalman updates; all
+82 focused tests pass. ALC-OFF products are byte-identical. The existing results
+above remain historical results of the original implementation; six-hour accuracy
+campaigns on the corrected implementation are deferred, and nothing is promoted.
+
+## 10. 2026-09-17 — correction to the statistical interpretation
+
+[ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md) audits the statistical claims
+above without changing k, window length, floors or runtime behavior. The scale
+is an estimated standard error: with iid Gaussian noise and inactive floors,
+the single-channel ratio follows Student t(19), not a standard normal. The
+two-sided probability at 4 is 0.07662%, approximately twelve times the Gaussian
+tail. Production-detector experiments give 0.1504% either-channel rejections
+per independent noise-only window; stationary code correlation phi=0.5 raises
+that to 7.5084% with the same marginal noise and correct ambiguities.
+
+Persistent code bias can give exactly the same two statistics as ambiguity
+error. A phase-only receiver clock also survives the combinations. Therefore
+the historic "4 sigma" ratios do not establish ambiguity correctness, identify
+the defect's cause, or give a calibrated false-refloat probability. The quoted
+"minimum detectable" levels are nominal thresholds without a specified power.
+Overlapping windows, trip clears, engine restarts and act feedback also prevent
+reading historical event counts as independent false-alarm trials.
+
+The historical position results above remain unchanged. Four new production
+statistical tests pass; the full focused selection is 40 passing tests. Saved
+PBT traces show a more persistent upper correlation tail in field than sim,
+but lack the monitor population and truth labels for field calibration. The
+next step is observation-only telemetry and null/power calibration of the
+complete event policy, before any threshold/window tuning or promotion.
+
+## 11. 2026-09-17 — reconsider the band-scoped-window proposal
+
+[ALC-BAND](ALC-BAND_window_scope_review_2026-09-17.md) withdraws section 7's
+claim that keeping a one-band window is the obvious next increment. Both
+existing WL and IF samples depend on both selected ambiguity arcs; a reset
+of either invalidates both existing histories for the new pair. Independently
+averaging raw band contributions over different times also breaks the common
+geometry/ionosphere cancellation. Retain the paired-generation safeguard.
+
+A per-ambiguity direction can be constructed from its own phase and both
+simultaneous codes, or projected from the existing paired samples. That is a
+viable different observable, with strongly amplified and correlated code
+noise; it needs explicit dependencies, covariance, null/power calibration and
+a separately justified response. It is not a bookkeeping-only optimization.
+Narrowing satellite-wide notifications for events outside the selected pair
+is a separate potential change with no measured benefit on the current bed.
+
+Four new numerical witnesses pass, and the focused selection totals 44 passing
+tests. No runtime windows or settings changed. Complete the statistical
+calibration work first; the historical low coverage does not by itself justify
+more checks or band-scoped refloats.

@@ -1,0 +1,583 @@
+\documentclass[main.tex]{subfiles}
+\begin{document}
+\ifSubfilesClassLoaded{\begin{center}\small\itshape Part of the GnssProcessor Mathematical Reference \textbullet\ \today\end{center}}{}
+\section{Terrestrial Reference Frames, Epochs, and Datum Transformation}\label{sec:trf}
+% ============================================================
+%  Frame vs epoch; Helmert similarity and its rate field;
+%  ITRF/NAD83/NATRF2022 parameter sets; the NGS SIF occupation
+%  model; a fully numerical CORV worked example.
+% ============================================================
+
+% --- Doc-local symbols ---------------------------------------------------
+% NOTE: gnssreport.sty is the single source of truth for shared notation.
+% Everything below is scoped to this component; nothing here is global,
+% and no shared macro (\rxpos, \Tr, \dt, \los, ...) is redefined.
+\newcommand{\helmT}{\bm{T}}                      % Helmert translation (m)
+\newcommand{\helmE}{\bm{E}}                      % linearised rotation matrix
+\newcommand{\stavel}{\bm{v}}                     % station velocity (m/yr)
+\newcommand{\eulerv}{\bm{\omega}}                % Euler (plate rotation) vector
+\newcommand{\epo}{t}                             % coordinate epoch
+\newcommand{\refep}{t_0}                         % parameter reference epoch
+
+A terrestrial coordinate is three numbers, a frame, and an epoch.  The
+engine works in ITRF at the epoch of observation, so the frame and the
+epoch are usually implicit.  They become explicit when a result is
+compared with a national datum, a published datasheet, or a passive
+mark.  Changing the frame and changing the epoch are different
+operations, and mixing them up produces decimetre-level offsets.  The
+rule is:
+
+\begin{empheq}[box=\fbox]{equation}
+\textbf{Frames take a Helmert. Epochs take a velocity.}
+\label{eq:trf-rule}
+\end{empheq}
+
+\Cref{sec:trf-rule,sec:trf-veltrans,sec:trf-plate} develop the rule and
+its one exception.  \Cref{sec:trf-conv,sec:trf-params} give the sign
+conventions and the published parameter sets.  \Cref{sec:trf-natrf}
+covers NATRF2022.  \Cref{sec:trf-sif,sec:trf-arp} cover the NGS Site
+Information File and the monument-to-ARP offset.  \Cref{sec:trf-corv}
+is a numerical example at CORV, and \Cref{sec:trf-defmodel} compares the
+NGS deformation model with station velocities.
+
+% ============================================================
+\subsection{Frame versus epoch}\label{sec:trf-rule}
+
+A Helmert similarity (seven parameters, or fourteen with their linear
+rates) maps frame $A$ to frame $B$ \emph{at the same epoch}.  It
+describes how two realisations differ in origin, orientation, and
+scale.  It says nothing about how the ground moves.
+
+The fourteen-parameter form is
+\begin{equation}
+p(\epo) \;=\; p_0 \;+\; \dot{p}\,(\epo-\refep),
+\qquad p \in \{\helmT,\,s,\,\bm{\varepsilon}\},
+\label{eq:trf-14p}
+\end{equation}
+and the rates $\dot{p}$ are rates \emph{of the parameters}: the drift of
+one frame relative to the other.  They are not station velocities.
+Evaluating \eqref{eq:trf-14p} at epoch $\epo$ gives the transformation
+from $A$ to $B$ at that epoch.  It does not move the coordinate through
+time.
+
+Moving a coordinate between epochs requires information about the site:
+\begin{equation}
+\bm{x}(\epo) \;=\; \bm{x}(\refep) \;+\; \stavel\,(\epo-\refep)
+              \;+\; \bm{d}_{\mathrm{per}}(\epo)
+              \;+\; \bm{d}_{\mathrm{PSD}}(\epo),
+\label{eq:trf-propagate}
+\end{equation}
+with $\stavel$ a station velocity, $\bm{d}_{\mathrm{per}}$ the periodic
+(annual $+$ semiannual) terms, and $\bm{d}_{\mathrm{PSD}}$ the
+post-seismic deformation.  \texttt{resolveStationCoordinate} and
+\texttt{tools/sif\_propagate} implement this form.  The three site terms
+are observed or modelled.  A transformation parameter set does not
+contain them, so a transformation that appears to handle an epoch
+change is using the rigid-plate approximation of \Cref{sec:trf-plate}.
+
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=14mm and 30mm,
+  fr/.style={proc, minimum width=31mm, minimum height=9mm},
+  lbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt}]
+  % rows = frames, columns = epochs
+  \node[fr, very thick]           (N10) {NAD83(2011)\\{\footnotesize 2010.00}};
+  \node[fr, right=of N10]         (N20) {NAD83(2011)\\{\footnotesize 2020.0}};
+  \node[fr, below=of N10]         (I10) {ITRF2020\\{\footnotesize 2010.0}};
+  \node[fr, below=of N20, very thick] (I20) {ITRF2020\\{\footnotesize 2020.0}};
+  \node[fr, right=of I20]         (It)  {ITRF2020\\{\footnotesize $t$}};
+  \node[fr, below=of I20]         (T20) {NATRF2022\\{\footnotesize 2020.00}};
+  \node[fr, below=of It]          (Tt)  {NATRF2022\\{\footnotesize $t$}};
+  % epoch changes: velocity (horizontal)
+  \draw[flow, <->, very thick] (I10) -- node[lbl] {$\stavel$} (I20);
+  \draw[flow, <->] (I20) -- node[lbl] {$\stavel$} (It);
+  \draw[flow, <->] (N10) -- node[lbl] {$\stavel_{\mathrm{NAD83}}$} (N20);
+  \draw[flow, <->] (T20) -- node[lbl] {$\stavel-\eulerv\times\bm{x}$} (Tt);
+  % frame changes: Helmert / Euler pole (vertical)
+  \draw[flow, <->, very thick] (I10) -- node[lbl] {Helmert(2010.0)} (N10);
+  \draw[flow, <->] (I20) -- node[lbl] {Helmert(2020.0)} (N20);
+  \draw[flow, <->] (It)  -- node[lbl] {Euler pole $(t-2020)$} (Tt);
+  \draw[double, double distance=1.5pt, semithick] (I20) -- node[lbl] {$\equiv$} (T20);
+  % axes
+  \node[note, above=3mm of N10, xshift=31mm] {epoch change $\longleftrightarrow$ station velocity};
+  \node[note, rotate=90, anchor=south] at ([xshift=-5mm]$(N10.west)!0.5!(I10.west)$) {frame change $\updownarrow$ Helmert};
+\end{tikzpicture}
+\caption{Frames (rows) and epochs (columns).  Vertical moves change the
+frame at a fixed epoch; horizontal moves change the epoch within a frame
+and need a station velocity.  Heavy lines mark the worked example of
+\Cref{sec:trf-corv}, from ITRF2020 at 2020.0 to NAD83(2011) at 2010.00.
+Because NAD83 rotates with the plate, $\stavel_{\mathrm{NAD83}}$ is
+small on the stable interior and larger at the plate margins
+(\Cref{sec:trf-plate}).}
+\label{fig:trf-grid}
+\end{figure}
+
+% ============================================================
+\subsection{Transforming a velocity}\label{sec:trf-veltrans}
+
+Differentiating the linearised transformation with respect to time gives
+\begin{equation}
+\stavel_B \;=\; \stavel_A \;+\; \dot{\helmT}
+              \;+\; \dot{s}\,\bm{x} \;+\; \dot{\helmE}\,\bm{x}.
+\label{eq:trf-veltrans}
+\end{equation}
+Three properties of \eqref{eq:trf-veltrans} matter in practice.
+
+\paragraph{The rate field is rigid.}  The added terms
+$\dot{\helmT} + \dot{s}\bm{x} + \dot{\helmE}\bm{x}$ depend on the
+station's \emph{position} only, not on its motion.  This was checked by
+transforming fictitious stations at one position with different
+velocities: the added velocity was identical to the micron.  The rates
+of a fourteen-parameter set are therefore a rigid velocity field, just
+as the seven parameters are a rigid displacement field.
+
+\paragraph{Propagation and transformation commute, with one condition.}
+Propagating in frame $A$ and then transforming gives the same result as
+transforming and then propagating in frame $B$, to $0.000$~mm, provided
+each propagation uses the velocity expressed in its own frame.  That
+velocity comes from \eqref{eq:trf-veltrans}.
+
+\paragraph{Using the wrong frame's velocity is a large error.}
+Propagating a NAD83(2011) coordinate with an ITRF velocity costs about
+$20$~mm/yr at CORV, or $203$~mm per decade.  No single-epoch check
+reveals it.  The error exceeds every geophysical correction of
+\dcref{sec:sitedisp}{the Site Displacement document} combined.
+
+% ============================================================
+\subsection{The rigid-plate approximation}\label{sec:trf-plate}
+
+The parameter rates can stand in for a station velocity in one case.
+A plate-fixed frame is built so that stations on the rigid plate do not
+move in it.  Setting $\stavel_B = \bm{0}$ in \eqref{eq:trf-veltrans}
+gives
+\begin{equation}
+\stavel_A \;=\; -\bigl(\dot{\helmT} + \dot{s}\,\bm{x}
+                        + \dot{\helmE}\,\bm{x}\bigr).
+\label{eq:trf-plate}
+\end{equation}
+The right-hand side is then a \emph{modelled} rigid-plate velocity, and
+\eqref{eq:trf-14p} is being used as a one-term deformation model.
+
+The approximation is as good as the assumption.  On stable North
+America the horizontal velocity relative to the plate is
+$1$--$2$~mm/yr, so \eqref{eq:trf-plate} costs $1$--$3$~cm per decade.
+At a plate margin it fails.  CORV sits on the deforming Cascadia
+margin, and the fourteen-parameter-only reconstruction of
+\Cref{sec:trf-corv} misses by $104$~mm per decade.
+
+
+% ============================================================
+\subsection{Rotation-sign conventions}\label{sec:trf-conv}
+
+Two rotation conventions are in use, and the sources cited here use
+both.  The NGS / EPSG:1056 \emph{coordinate frame} form, linearised for
+small rotations, is
+\begin{equation}
+\bm{x}' \;=\; \bm{x} \;+\; \helmT \;+\; s\,\bm{x} \;+\; \helmE\,\bm{x},
+\qquad
+\helmE \;=\;
+\begin{bmatrix}
+ 0        & \varepsilon_z & -\varepsilon_y \\
+-\varepsilon_z & 0        &  \varepsilon_x \\
+ \varepsilon_y & -\varepsilon_x & 0
+\end{bmatrix}.
+\label{eq:trf-cf}
+\end{equation}
+The IERS / IGN \emph{position vector} form is identical except that
+$\helmE$ carries the opposite sign throughout; equivalently,
+$\bm{\varepsilon} \to -\bm{\varepsilon}$.
+
+Using one convention's parameters in the other convention's matrix
+applies the rotation backwards.  For a rotation angle $\theta$ and a
+position of magnitude $L$ the error is $2\lvert\theta\rvert L$, twice
+the size of omitting the rotation.  The same holds for the rate field
+of \Cref{sec:trf-veltrans}.  A rate field derived here with the wrong
+convention came out exactly negated, a $\sim\!35$~mm/yr error at CORV
+where the true field is $\sim\!20$~mm/yr.  Check the sign of a rate
+field against a station of known velocity; a plausible magnitude is not
+evidence of a correct sign.
+
+% ============================================================
+\subsection{Published parameter sets and their composition}\label{sec:trf-params}
+
+\Cref{tab:trf-params} lists the three sets the tooling uses.  The first
+is in position-vector convention and the other two are in
+coordinate-frame convention.  The IGN rotations are zero, so the
+composition below can add the sets without converting between the
+conventions of \Cref{sec:trf-conv}.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Published Helmert parameter sets.  ITRF2020$\to$ITRF2014 is
+IGN's, in position-vector convention; the two NAD83 sets are NGS/EPSG,
+in coordinate-frame convention.  Rotations $\bm{\varepsilon}$ in
+milliarcseconds.}
+\label{tab:trf-params}
+\begin{tabular}{llll}
+\toprule
+& \textbf{ITRF2020$\to$ITRF2014} & \textbf{ITRF2014$\to$NAD83(2011)} & \textbf{ITRF2020$\to$NAD83(2011)} \\
+& IGN, position-vector & NGS MYCS2, EPSG:8970 & EPSG:10334 (pre-composed) \\
+& $\refep=2015.0$ & $\refep=2010.0$, coord-frame & $\refep=2010.0$, coord-frame \\
+\midrule
+$T_x$ & $-1.4$ mm            & $1.00530$ m      & $1.00390$ m \\
+$T_y$ & $-0.9$ mm            & $-1.90921$ m     & $-1.90961$ m \\
+$T_z$ & $+1.4$ mm            & $-0.54157$ m     & $-0.54117$ m \\
+$s$   & $-0.42$ ppb          & $0.36891$ ppb    & $-0.05109$ ppb \\
+$\varepsilon_x$ & $0$        & $26.78138$ mas   & $26.78138$ mas \\
+$\varepsilon_y$ & $0$        & $-0.42027$ mas   & $-0.42027$ mas \\
+$\varepsilon_z$ & $0$        & $10.93206$ mas   & $10.93206$ mas \\
+\midrule
+$\dot{T}_x$ & $0.0$ mm/yr    & $0.00079$ m/yr   & $0.00079$ m/yr \\
+$\dot{T}_y$ & $-0.1$ mm/yr   & $-0.00060$ m/yr  & $-0.00070$ m/yr \\
+$\dot{T}_z$ & $+0.2$ mm/yr   & $-0.00144$ m/yr  & $-0.00124$ m/yr \\
+$\dot{s}$   & $0$            & $-0.07201$ ppb/yr& $-0.07201$ ppb/yr \\
+$\dot{\varepsilon}_x$ & $0$  & $0.06667$ mas/yr & $0.06667$ mas/yr \\
+$\dot{\varepsilon}_y$ & $0$  & $-0.75744$ mas/yr& $-0.75744$ mas/yr \\
+$\dot{\varepsilon}_z$ & $0$  & $-0.05133$ mas/yr& $-0.05133$ mas/yr \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+PROJ applies the pre-composed EPSG:10334 set for
+\texttt{EPSG:9988}$\to$\texttt{EPSG:6317}, with
+\texttt{t\_epoch}$=2010$ and the \texttt{coordinate\_frame} convention.
+It can be rebuilt from the other two sets in two steps:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Run the IGN set to the NGS epoch.}  Evaluate
+      \eqref{eq:trf-14p} at $2010.0$ from its own $\refep=2015.0$:
+      $\helmT(2010) = \helmT(2015) + \dot{\helmT}\cdot(-5)
+       = (-1.4,\,-0.4,\,+0.4)$~mm.
+\item \textbf{Add term by term} to the NGS set at its native $2010.0$.
+\end{enumerate}
+
+The result matches PROJ's set: the largest difference over the fourteen
+parameters is $4\times10^{-15}$ in the respective units.  Adding the
+sets is valid because the cross terms of the exact composition are
+below a micron at Earth radius.  The rotation-times-translation term
+$\bm{\Omega}\helmT$ is $\sim\!0.3$~\si{\micro\metre} and the
+rotation-squared term $\Omega_1\Omega_2 R$ is
+$\sim\!0.1$~\si{\micro\metre}.  The two-step chain and the pre-composed
+set agree to $0.0000$~mm at $2010.0$, $2015.0$, and $2020.0$.
+
+Two conditions apply.  First, both sets must be in the same rotation
+convention before they are added.  That step is unnecessary here only
+because the IGN rotations are zero.  Second, step~1 is required: adding
+the IGN set at its own $2015.0$ reference epoch introduces a $0.5$~mm
+error in $Y$ and $1.0$~mm in $Z$.
+
+The EPSG codes are ITRF2020 \texttt{9988} /
+\texttt{9990} / \texttt{9989} (geocentric XYZ, 2D, 3D), ITRF2014
+\texttt{7789} / \texttt{9000} / \texttt{7912}, and NAD83(2011)
+\texttt{6317} / \texttt{6318} / \texttt{6319}.
+
+% ============================================================
+\subsection{NATRF2022}\label{sec:trf-natrf}
+
+NATRF2022, the North American frame of NSRS2022, is ITRF2020 rotated
+about the North America Euler pole.  It has no translation and no
+scale.  The two frames are identical at epoch $2020.00$ and separate as
+the plate moves.  With $\eulerv$ the Euler vector, positive
+counter-clockwise under the right-hand rule,
+\begin{align}
+\bm{x}_{\mathrm{NATRF}}(\epo)
+  &= \bm{x}_{\mathrm{ITRF2020}}(\epo)
+     \;-\; (\eulerv \times \bm{x})\,(\epo - 2020.0),
+     \label{eq:trf-natrf-pos}\\
+\stavel_{\mathrm{NATRF}} &= \stavel_{\mathrm{ITRF2020}} - \eulerv \times \bm{x}.
+     \label{eq:trf-natrf-vel}
+\end{align}
+
+The NGS \textsc{beta} EPP2022 Euler poles are, in mas/yr,
+$\eulerv_{\mathrm{NA}} = (0.046,\,-0.704,\,-0.047)$, with the companion
+plates $\eulerv_{\mathrm{PA}} = (-0.409,\,1.063,\,-2.188)$,
+$\eulerv_{\mathrm{CA}} = (-0.056,\,-0.957,\,0.589)$, and
+$\eulerv_{\mathrm{MA}} = (-8.089,\,5.937,\,2.159)$ for PATRF2022,
+CATRF2022, and MATRF2022 respectively.  These are \textsc{beta} values
+from \url{https://beta.ngs.noaa.gov/NATRF2022/}.  Fetch the current
+values before production use.
+
+The sign of \eqref{eq:trf-natrf-vel} was checked on stable-interior
+stations, whose plate-fixed velocity must be near zero.  The NATRF2022
+velocities, ENU in mm/yr, are AMC4 $(-0.49,\,1.01,\,-1.17)$,
+GODN $(-0.12,\,0.47,\,-1.49)$, TXAU $(-0.34,\,1.73,\,-0.52)$,
+WES2 $(0.07,\,-0.03,\,-0.12)$, and MIA3 $(0.28,\,0.90,\,0.56)$.  A sign
+error would double the plate rate, giving $20$--$30$~mm/yr here.
+
+PROJ 9.5.1 has no NATRF2022 CRS, so the caller must apply
+\eqref{eq:trf-natrf-pos} directly.
+
+% ============================================================
+\subsection{SIF occupations and the datasheet convention}\label{sec:trf-sif}
+
+The NGS Site Information File (SIF) gives ITRF2020 coordinates at epoch
+$2020.0$ from the MYCS3 solution.  A station can have several
+\textbf{occupation} windows, each with its own reference coordinate and
+velocity.  An occupation boundary is an equipment change or a known
+offset, so the coordinate series is discontinuous there.  Two
+consequences follow.
+
+\paragraph{The datasheet convention.}  NGS produces a datasheet's
+NAD83(2011) epoch-$2010.00$ coordinate as follows.  Take the
+\emph{latest} occupation.  Propagate its reference coordinate back ten
+years with its linear velocity and \textbf{no} periodic term.  Apply
+the fourteen-parameter transformation of \Cref{sec:trf-params} at
+$2010.0$.  This recipe reproduces the datasheet to $0.4$~mm at CORV
+(PID AH2488) and $0.6$~mm at CHZZ (PID AJ6961).  In
+\texttt{tools/sif\_propagate} it is the \texttt{-{}-datasheet} option.
+
+\paragraph{The engine convention.}  \texttt{resolveStationCoordinate},
+and \texttt{tools/sif\_propagate} by default, select the occupation that
+\emph{covers the requested epoch}.  A coordinate for an observation
+session must describe the equipment installed at that time.  At CORV a
+request for $2010.0$ uses the 1998--2019 occupation and differs from the
+datasheet by $32.8$~mm.  Of that, $\delta U = -32.4$~mm is the jump at
+the 2019-07-24 antenna change (ASH700936E\_C $\to$ TRM59800.99 SCIS).
+Both coordinates are correct for their purpose.  One rule follows:
+
+\begin{remark}
+The difference of two resolved coordinates across an occupation break
+is \emph{not} a velocity.  It includes the equipment offset, which is
+often the larger part.
+\end{remark}
+
+\paragraph{Periodic terms are a constant offset at whole-year epochs.}
+The SIF annual and semiannual terms are referenced to the station's
+reference epoch.  A whole number of years from that epoch,
+$\cos = 1$ and $\sin = 0$, so the terms add a fixed vector: $0.65$~mm at
+CORV, $1.73$~mm at NEWP, $3.18$~mm at CHZZ.  The offset cancels in a
+difference between two such epochs but not in an absolute comparison.
+Published coordinates exclude it, so a propagated coordinate that
+includes it differs from the datasheet by these amounts.
+
+% ============================================================
+\subsection{Monument versus ARP}\label{sec:trf-arp}
+
+A datasheet comparison must also use the same reference point.  SIF and
+datasheet coordinates refer to the \textbf{monument} (ground reference
+point, GRP).  The engine's position state and the NGS CORS coordinate
+files refer to the \textbf{ARP}.  The offset between them is the RINEX
+\texttt{ANTENNA: DELTA H/E/N} eccentricity, which the SIF publishes as
+\texttt{ARP\_MINUS\_GRP\_ENU}.  The reduction is developed in
+\dcref{sec:frame-arp}{the marker/ARP section of the Coordinate Frames
+document}.
+
+At CORV, $\delta H = 1.521$~m, and both comparisons close:
+\begin{itemize}[leftmargin=*]
+\item SIF monument $+\,1.521$~m Up versus the published ITRF2020 ARP
+      $(-2498424.007,\,-3802820.797,\,4454737.751)$: $0.3$~mm.
+\item Datasheet $+\,1.521$~m Up versus the published NAD83(2011) ARP
+      $(-2498423.096,\,-3802822.020,\,4454737.741)$: $0.5$~mm.
+\end{itemize}
+Omitting this step at CORV gives an obvious $1.5$~m height error.  The
+harder case is a site with an eccentricity of a few centimetres, where
+the error is small enough to go unnoticed.
+
+% ============================================================
+\subsection{Worked example: CORV}\label{sec:trf-corv}
+
+This example works every step above with numbers, at the monument,
+using the latest occupation (2019-08-04 to open).
+\texttt{tools/sif\_propagate/corv\_worked\_example.py} reproduces it.
+% The reproducer reads the IFDM2022 grids from data/static/ifdm2022/
+% (git-ignored; downloaded from the beta NCAT Downloads tab).
+
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=15mm and 9mm,
+  st/.style={io, text width=70mm, minimum height=11mm},
+  op/.style={font=\footnotesize, align=left, anchor=west},
+  chk/.style={proc, text width=38mm, minimum height=9mm}]
+  \node[st]              (S1) {\textbf{ITRF2020}, 2020.0 \hfill{\footnotesize SIF}\\
+        {\footnotesize $-2498423.4121\;\;{-}3802819.8917\;\;4454736.6830$}};
+  \node[st, below=of S1] (S2) {\textbf{ITRF2020}, 2010.0\\
+        {\footnotesize $-2498423.3133\;\;{-}3802819.9155\;\;4454736.7162$}};
+  \node[st, below=of S2] (S3) {\textbf{ITRF2014}, 2010.0\\
+        {\footnotesize $-2498423.3136\;\;{-}3802819.9143\;\;4454736.7147$}};
+  \node[st, below=of S3] (S4) {\textbf{NAD83(2011)}, 2010.00\\
+        {\footnotesize $-2498422.5017\;\;{-}3802821.1141\;\;4454736.6736$}};
+  \draw[flow] (S1) -- node[op, xshift=2mm] {velocity $\times\,(-10$ yr)\\$(-9.88,\,+2.38,\,-3.31)$ mm/yr} (S2);
+  \draw[flow] (S2) -- node[op, xshift=2mm] {Helmert at 2010.0\\$\helmT=(-1.4,-0.4,+0.4)$ mm,\; $s=-0.42$ ppb} (S3);
+  \draw[flow] (S3) -- node[op, xshift=2mm] {Helmert at $\refep=2010.0$\\fourteen-parameter set, \Cref{sec:trf-params}} (S4);
+  % checks
+  \node[chk, right=of S4]  (P) {PROJ \texttt{EPSG:10334}\\{\footnotesize $0.0$ mm}};
+  \node[chk, below=4mm of P] (D) {NGS datasheet AH2488\\{\footnotesize $0.4$ mm}};
+  \draw[feedback] (S4.east) -- (P.west);
+  \draw[feedback] (S4.east) -- ++(4mm,0) |- (D.west);
+  % monument -> ARP
+  \node[chk, right=of S1] (A1) {$+\,1.521$ m Up $=$ ARP\\{\footnotesize NGS CORS file: $0.3$ mm}};
+  \node[chk, below=4mm of D] (A4) {$+\,1.521$ m Up $=$ ARP\\{\footnotesize NGS CORS file: $0.5$ mm}};
+  \draw[feedback] (S1) -- (A1);
+  \draw[feedback] (S4.east) -- ++(4mm,0) |- (A4.west);
+\end{tikzpicture}
+\caption{The CORV worked example, modern $\to$ legacy, at the monument
+(metres).  Solid arrows are the computation; dashed arrows are
+independent checks, with the 3-D closure.  The antenna reference point
+lies $1.521$~m above the monument (RINEX \texttt{DELTA H}).}
+\label{fig:trf-corv}
+\end{figure}
+
+\paragraph{Starting point (SIF, ITRF2020 @ 2020.0).}
+$\bm{x} = (-2498423.4121,\,-3802819.8917,\,4454736.6830)$~m,
+$h = 105.5881$~m; velocity in ECEF
+$(-9.8836,\,2.3812,\,-3.3134)$~mm/yr, i.e.\ ENU
+$(-9.57,\,-4.77,\,+0.12)$~mm/yr.
+
+\paragraph{Step 2a: propagate to 2010.0 in ITRF2020.}
+$\bm{x} - 10\stavel = (-2498423.3133,\,-3802819.9155,\,4454736.7162)$~m;
+the station moved $106.9$~mm.
+
+\paragraph{Step 2b: ITRF2020 $\to$ ITRF2014 at 2010.0.}
+With $\helmT = (-1.4,\,-0.4,\,+0.4)$~mm (the IGN set run to $2010.0$)
+and $s = -0.42$~ppb:
+$(-2498423.3136,\,-3802819.9143,\,4454736.7147)$~m.
+
+\paragraph{Step 2c: ITRF2014 $\to$ NAD83(2011) at 2010.0.}
+Translation $(1.00530,\,-1.90921,\,-0.54157)$~m; rotation term
+$(-0.19247,\,0.71082,\,0.49885)$~m; scale term
+$(-0.00092,\,-0.00140,\,0.00164)$~m.  Result
+$(-2498422.5017,\,-3802821.1141,\,4454736.6736)$~m.  PROJ gives the
+same result ($0.0$~mm).
+
+\paragraph{Closure against the datasheet.}  NGS datasheet AH2488 gives
+$\varphi = 44^\circ\,35'\,07.91300''$~N,
+$\lambda = 123^\circ\,18'\,16.51681''$~W, $h = 105.953$~m, i.e.\
+$(-2498422.5015,\,-3802821.1143,\,4454736.6734)$~m.  Hand computation
+minus datasheet is $\delta E = -0.3$, $\delta N = +0.2$,
+$\delta U = +0.1$~mm, which is $0.4$~mm in three dimensions.
+
+\paragraph{The reverse direction.}  Going from the datasheet to ITRF2020
+at $2020.00$, which is also NATRF2022 at that epoch
+(\Cref{sec:trf-natrf}), requires ten years of station velocity.  The
+miss against the SIF coordinate depends on the source of that velocity:
+
+\begin{table}[htbp]
+\centering\small
+\caption{CORV reverse reconstruction: miss against the SIF coordinate by
+velocity source.  The last row is the rigid-plate approximation of
+\Cref{sec:trf-plate}, which does not hold at CORV.}
+\label{tab:trf-corv-reverse}
+\begin{tabular}{lll}
+\toprule
+\textbf{Velocity source} & \textbf{3D miss} & \textbf{Dominant component} \\
+\midrule
+SIF velocity                       & $0.4$~mm   & $\delta E = 0.3$ \\
+IFDM2022 grid $(-8.68,-4.78,+0.04)$ mm/yr ENU & $9.3$~mm & $\delta E = 9.2$ \\
+\textsc{beta} NCAT                 & $9.6$~mm   & $\delta E\,6.9$, $\delta N\,-5.4$, $\delta U\,4.0$ \\
+14-parameter only ($\stavel_{\mathrm{NAD83}} := \bm{0}$) & $104.2$~mm & $\delta E\,-54.6$, $\delta N\,-88.2$, $\delta U\,10.4$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The same point in four frames.}  CORV velocity, ENU mm/yr:
+ITRF2020 $(-9.57,\,-4.77,\,0.12)$; plate motion $\eulerv\times\bm{x}$
+$(-13.20,\,-13.12,\,-0.04)$; NATRF2022 $(3.63,\,8.35,\,0.17)$;
+NAD83(2011) $(5.49,\,8.80,\,-1.05)$.  The NATRF2022 velocity is what
+remains after removing rigid North America.  At a deforming margin it
+is not small: a NATRF2022 coordinate at CORV moves
+$(21.8,\,50.1,\,1.0)$~mm by $2026.0$ and $(36.3,\,83.5,\,1.7)$~mm by
+$2030.0$ from its $2020.00$ value.  A plate-fixed coordinate is not a
+static one.
+
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm and 11mm,
+  tool/.style={proc, text width=46mm, minimum height=10mm},
+  res/.style={io, minimum width=17mm, minimum height=9mm},
+  hd/.style={font=\small\bfseries, align=center}]
+  \node[tool]                 (A) {PROJ $+$ \texttt{sif\_propagate}\\{\footnotesize station velocity (SIF)}};
+  \node[tool, below=of A]     (B) {PROJ $+$ IFDM2022 grid\\{\footnotesize model velocity}};
+  \node[tool, below=of B]     (C) {NCAT (beta)\\{\footnotesize model velocity (IFDM2022)}};
+  \node[tool, below=of C]     (D) {PROJ only\\{\footnotesize no velocity (parameter rates)}};
+  \node[io, left=of $(B.west)!0.5!(C.west)$, minimum height=14mm] (src) {NAD83(2011)\\2010.00};
+  \foreach \n in {A,B,C,D} \draw[flow] (src.east) -- ++(4mm,0) |- (\n.west);
+  \node[res, right=of A] (A1) {0.4};  \node[res, right=4mm of A1] (A2) {0.0};
+  \node[res, right=of B] (B1) {9.3};  \node[res, right=4mm of B1] (B2) {11.8};
+  \node[res, right=of C] (C1) {9.6};  \node[res, right=4mm of C1] (C2) {17.1};
+  \node[res, right=of D, fill=black!12] (D1) {\textbf{104.2}}; \node[res, right=4mm of D1] (D2) {26.1};
+  \foreach \n in {A,B,C,D} \draw[flow] (\n.east) -- (\n1.west);
+  \node[hd, above=2mm of A1] {CORV\\{\footnotesize\mdseries margin}};
+  \node[hd, above=2mm of A2] {AMC4\\{\footnotesize\mdseries interior}};
+  \node[hd, above=2mm of A]  {ten years supplied by};
+  \node[note, below=2mm of $(D1.south)!0.5!(D2.south)$, align=center] {miss at ITRF2020 $\equiv$ NATRF2022, 2020.00 [mm]};
+\end{tikzpicture}
+\caption{Legacy $\to$ modern, NAD83(2011) epoch 2010.00 to
+ITRF2020 $\equiv$ NATRF2022 epoch 2020.00, by four routes.  PROJ is the
+inverse of \texttt{EPSG:10334}, evaluated at 2010.0 (at 2020.0 in the
+last row, where it stands alone).  The number is
+the 3-D miss against the SIF coordinate at 2020.0.  CORV starts from NGS
+datasheet AH2488; AMC4 (Colorado Springs, single occupation) starts from
+its SIF-derived 2010.00 coordinate, so its first row is zero by
+construction.}
+\label{fig:trf-tools}
+\end{figure}
+
+% ============================================================
+\subsection{Deformation models and validation}\label{sec:trf-defmodel}
+
+A passive mark has no observed velocity, so a model must supply one.
+NGS supplies IFDM2022 with \textsc{beta} NCAT.  It is a global
+$0.1^\circ$ ENU velocity grid with per-node standard deviations, in
+ITRF2020 (\texttt{epsg:9990}), plus 33 earthquake displacement grids.
+It was compared with SIF velocities at 21 stations in CONUS, Alaska,
+and British Columbia, using one occupation per station:
+
+\begin{itemize}[leftmargin=*]
+\item $\lVert \stavel_{\mathrm{IFDM}} - \stavel_{\mathrm{SIF}} \rVert$:
+      median $1.34$~mm/yr, maximum $3.11$~mm/yr.
+\item The grid's formal $\sigma$ is optimistic by roughly a factor of
+      two (median ratio $2.1$, up to $5.9$ in the stable interior).
+      The comparison is \emph{in-sample}, because the grid was built
+      from these CORS.  A passive mark should expect a larger error.
+\item In the stable interior the IFDM horizontal velocity equals the
+      EPP2022 plate motion to $0.01$~mm/yr.  The model assigns zero
+      intraplate velocity there.
+\item Velocity spread across a single grid cell is $0.03$--$0.05$~mm/yr
+      in the interior and up to $3.7$~mm/yr in the Aleutians.
+      Interpolation error matters only where the field is steep.
+\end{itemize}
+
+NCAT's transformation from NAD83(2011) at $2010.00$ to NATRF2022 at
+$2020.00$ was compared with the SIF coordinate at $2020.0$.  The mean
+difference is $(+4.9,\,-6.1,\,-1.3)$~mm and the median 3D difference is
+$18$~mm, within NCAT's stated uncertainty of about $2$~cm for most
+stations.  The small mean confirms that NATRF2022 and ITRF2020 coincide
+at $2020.00$ to a few millimetres, as \Cref{sec:trf-natrf} requires.
+Five stations are outliers: FAIR $115$, SNI1 $82$, AB02 $78$, KYW1 $61$,
+and HOLP $43$~mm.  Four of them lie inside IFDM earthquake displacement
+grids.  The SIF represents those events as occupation \emph{breaks}
+rather than PSD terms, so the two sources model them differently.  This
+attribution rests on grid coverage only.  The displacement magnitudes
+were not evaluated, and KYW1 is unexplained.
+
+\paragraph{Limitations of \textsc{beta} NCAT.}  It offers only fixed
+epochs: NAD83(2011) at $2010.00$ and NATRF2022 at $2020.00$.  Its
+offline CLI performs coordinate \emph{conversions} only, not datum
+transformations.  Its XYZ input is rounded to $1$~mm.  The post-seismic
+terms of both tools are untested here, because no station in the
+comparison has a PSD term.
+
+\paragraph{Mixing velocity sources.}  Within NSRS2022 the deformation
+model is the convention, so using IFDM (or HTDP) for a passive mark is
+correct by definition.  The risk is mixing sources.  A network that
+propagates its CORS with SIF velocities and its marks with grid
+velocities introduces a $1$--$2$~mm/yr difference between the two
+groups, which distorts the network over a decade.  The grid also gives
+only a diagonal covariance, and an optimistic one by the ratio above.
+SIF propagation gives the full
+\begin{equation}
+\bm{C}_{xx}(\epo) \;=\; \bm{C}_{xx}
+   \;+\; \Delta\epo\,\bigl(\bm{C}_{xv} + \bm{C}_{xv}^{\Tr}\bigr)
+   \;+\; \Delta\epo^{2}\,\bm{C}_{vv},
+\label{eq:trf-covprop}
+\end{equation}
+including the position--velocity cross-covariance, which dominates
+\eqref{eq:trf-covprop} at short $\Delta\epo$ and which the grid does not
+provide.
+
+\ifSubfilesClassLoaded{\printbibliography}{}
+\end{document}

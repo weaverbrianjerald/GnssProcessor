@@ -43,6 +43,57 @@ summed in the local ENU frame for events before `t`, then rotated to ECEF.
 Toggle the nonlinear terms with `--no-periodic` / `--no-psd` (both on by default,
 matching the C++ network-roster path).
 
+### Occupation selection
+
+A SIF station carries one OCCUPATION per equipment era, each with its **own**
+reference coordinate, velocity and 6×6 covariance; the breaks are equipment
+changes and the offsets that come with them. Which occupation you evaluate is a
+choice, and `--occupation` makes it explicit:
+
+| mode | meaning |
+|---|---|
+| `covering` (default) | the occupation whose window contains the epoch, else the nearest by window midpoint. **The coordinate that was valid for data collected at that epoch** — this is what the C++ engine does. |
+| `latest` | the last non-`DO_NOT_USE` occupation by window start — the *current* solution for the mark, propagated (linearly, and optionally with the nonlinear terms) back to the requested epoch. |
+
+**Why `latest` exists: it is the NGS datasheet convention.** A datasheet's
+NAD83(2011) epoch-2010.00 position is produced from the **current** occupation
+propagated linearly back to 2010.0 with **no periodic term**, then run through
+the epoch-matched ITRF2020→NAD83(2011) 14-parameter transformation
+(EPSG:9988→6317 evaluated at *t* = 2010.0). Reproducing a published value means
+reproducing that recipe, not asking "what was the coordinate in 2010".
+
+`--datasheet` is the preset: `--occupation latest` **+** `--no-periodic`.
+Post-seismic terms stay **on** (pass `--no-psd` to drop them; the stations
+checked here carry none). It does **not** apply the Helmert — it stops at
+ITRF2020 ECEF at your epoch. The closure through the transformation is
+demonstrated end-to-end in `corv_worked_example.py` in this folder.
+
+Measured on CORV00USA (Corvallis, OR) against datasheet **AH2488**, whose
+monument position is lat 44 35 07.91300 N, lon 123 18 16.51681 W,
+*h* = 105.953 m, NAD83(2011) epoch 2010.00:
+
+- The covering occupation at 2010.0 is the 1998-04-26 … 2019-08-03 window; the
+  latest starts 2019-08-04. They differ by **32.8 mm**, almost entirely **Up**
+  (E +1.6, N −4.2, **U +32.4 mm**) — the 2019-07 antenna swap.
+- Default (`covering`) lands **32.8 mm** from the datasheet. `--datasheet`
+  closes to **0.4 mm**. CHZZ00USA (datasheet **AJ6961**, latest occupation from
+  2022-11-30) closes to **0.6 mm**.
+
+```bash
+python sif_propagate.py CORV00USA --epoch 2010.0 --datasheet
+```
+
+> ⚠ **Differencing resolved coordinates across an occupation break is not a
+> velocity.** The jump between modes (or between two epochs straddling a break)
+> is an equipment offset plus a change of reference coordinate — it contains no
+> site motion. For site velocity read the occupation's `VELOCITY` directly.
+
+> **The C++ `resolveStationCoordinate` implements `covering` only**, deliberately:
+> the engine wants the coordinate valid for the data epoch it is processing. The
+> `latest` mode exists in this tool for reproducing published legacy coordinates,
+> and the default is byte-identical to the C++ path so the oracle tests still
+> hold.
+
 ## Usage
 
 ```bash
@@ -103,6 +154,7 @@ CSV columns (JSON carries the same fields plus the full 3×3 `covariance_ecef`):
 | `in_window` | true if the epoch fell inside an occupation window (false ⇒ extrapolated to the nearest one) |
 | `window_start` / `window_end` | the used occupation window (blank end = open-ended) |
 | `source` | SIF file the record came from |
+| `occupation_mode` | which selection mode produced the row (`covering` / `latest`); **appended last**, so the historical column order is unchanged |
 
 **Precision.** CSV floats are written with per-column precision so nothing
 meaningful is truncated: angular columns (`lat_deg`, `lon_deg`) get 11 decimal
@@ -129,7 +181,15 @@ reg.load("ncn20_SIF.json")
 st = reg.find("CIT100USA")          # or "cit1", or a DOMES number
 rc = resolve_station_coordinate(st, 2024.36)   # with_periodic / with_psd default True
 print(rc.ecef, rc.covariance)        # (x,y,z) [m], 3x3 [m^2]
+
+# NGS datasheet recipe: current occupation, linear only
+ds = resolve_station_coordinate(reg.find("CORV00USA"), 2010.0,
+                                with_periodic=False, occupation="latest")
+print(ds.ecef, ds.window, ds.in_window, ds.occupation_mode)
 ```
+
+`in_window` / `window` always describe the occupation **actually used**, so a
+`latest` result at an old epoch correctly reports `in_window=False`.
 
 ## Validation
 
@@ -147,6 +207,10 @@ failure:
    `tests/test_station_info.cpp`.
 3. **Self-checks** — `find()` key resolution, `dt=0 ⇒ Cxx`, covariance symmetry,
    ENU↔ECEF round-trip, and the calendar/DOY time conversions.
+4. **Occupation modes** — CORV00USA `latest` + no-periodic at 2010.0 reproduces
+   the expected ITRF2020 XYZ to ≤ 0.2 mm; `covering` vs `latest` differ by
+   30–35 mm and Up-dominated; a single-occupation station (AMC400USA) is
+   bit-identical in both modes; the default keyword is still `covering`.
 
 ```bash
 python test_sif_propagate.py     # needs data/static/sif/*.json (or $SIF_PATHS)

@@ -490,6 +490,7 @@ public:
     const RtSnapshotRestoreStatus& stateSnapshotRestoreStatus() const { return rt_snap_restore_; }
 
 private:
+    friend struct AmbLevelArcTestAccess;  ///< Exercises the ALC seam after real reseed/update recovery.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -918,12 +919,11 @@ private:
     std::vector<AmbLevelEvent> amb_level_events_;
     /// THIS epoch's full-window evaluations, drained with the events.
     uint64_t amb_level_epoch_checks_{ 0 };
-    /// Satellites whose ambiguity state a reaction WROTE this epoch (the reset,
-    /// the card-CC carry, the card-PBT translation, or this check's own refloat).
-    /// The level check restarts their windows before sampling — that is half of
-    /// the guarantee that a window spanning a product step cannot trip; the other
-    /// half is the variance test in @c checkAmbiguityLevel_.  Cleared per epoch.
-    std::set<std::string> amb_level_disturbed_;
+    /// Generations of the two selected ambiguity signals at the last ALC sample.
+    /// StateManager assigns unique IDs across births, resets and translations,
+    /// so this also detects a signal-pair change or removal/rebirth of a key.
+    /// Kept across deferred epochs and missing observations; never snapshotted.
+    std::map<std::string, std::pair<uint64_t, uint64_t>> amb_level_generations_;
     /// RTA-10: last observed network-producer epoch-status STATE from the SSR
     /// store's heartbeat surface (nullopt = never seen).  Edge-trigger for the
     /// one-shot transition log (ok→withheld_sigma0 etc.): the first sighting

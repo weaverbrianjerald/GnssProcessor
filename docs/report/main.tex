@@ -52,10 +52,13 @@ them in roughly the order the engine applies them:
       the between-satellite single-difference (BSSD) and double-difference
       (DD) transformations.  Every other component builds on this.
 \item \textbf{Reference systems and measurement models}
-      (\Cref{sec:frames,sec:products,sec:atmos,sec:sitedisp,sec:obsphys}):
+      (\Cref{sec:frames,sec:trf,sec:products,sec:atmos,sec:sitedisp,sec:obsphys}):
       the deterministic substrate and physics behind the observation
       model the Foundations document writes abstractly: the coordinate
-      frames and time systems every other chapter assumes; the baseline
+      frames and time systems every other chapter assumes, together with the terrestrial
+      reference frames, datum transformations, and station-coordinate
+      epoch propagation that relate them to national frames and published
+      coordinates; the baseline
       satellite orbit/clock product evaluation that SSR refines;
       tropospheric and ionospheric delay modelling; the geophysical
       site displacements (solid Earth, ocean, and pole tides) that
@@ -134,6 +137,7 @@ see \Cref{sec:notation} for the symbol table this document depends on.
 
 \part{Reference systems and measurement models}
 \subfile{frames_time}
+\subfile{reference_frames}
 \subfile{product_evaluation}
 \subfile{atmosphere}
 \subfile{site_displacement}

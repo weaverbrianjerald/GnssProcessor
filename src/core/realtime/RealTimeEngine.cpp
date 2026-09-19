@@ -410,7 +410,6 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     if (config_.ambLevelCheck()) {
         amb_level_events_.clear();
         amb_level_epoch_checks_ = 0;
-        amb_level_disturbed_.clear();
     }
 
     // Mode tag only — the spdlog %E field already carries the GPS time.

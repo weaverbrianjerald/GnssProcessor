@@ -396,3 +396,18 @@ What the runs establish anyway:
 - New gtests: `tests/test_pb_step_translate.cpp` (`PbStepTranslateTest`, 9 cases), `tests/test_disc_mark_scope.cpp` (`DiscMarkScopeTest`, 9).
 - No new grader: `scripts/cc_arm_grade.py`, `scripts/cst_consumer_read.py`, `scripts/rf2d_grade.py` and `scripts/simnet_amb_integer.py` cover
   everything this card reports.
+
+## 10. 2026-09-16 — correction to the universal translation premise
+
+[PBT-AUDIT](PBT-AUDIT_translation_premise_2026-09-16.md) demonstrates that keeping
+`phase_bias + ambiguity` unchanged preserves the previous prediction, but does
+not necessarily match the current observation. A correctly tracked physical
+phase-bias change is cancelled by blanket translation, producing a residual that
+was zero without it. Known datum shifts remain a valid use of translation.
+Clock/bias redistributions and improved-estimate counterexamples further show
+that the applied bias delta and discontinuity bit do not identify the required
+state transformation. The blanket necessity claim in §1.1 and §8 is superseded
+by this audit; the recorded field improvements remain valid historical results.
+Seven new production-ledger premise tests pass. Runtime behavior is unchanged;
+a provenance-bearing frame-transfer contract is recommended before replacement
+or promotion, and the field contribution of each mechanism remains unmeasured.

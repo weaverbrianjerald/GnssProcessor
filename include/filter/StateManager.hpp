@@ -12,6 +12,7 @@
 #include "common/PppTypes.hpp"
 #include "config/GnssConfig.hpp"
 #include <Eigen/Dense>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -599,6 +600,32 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& getAmbiguities() const;
 
         /**
+         * @brief Read the continuity generation of a live ambiguity.
+         *
+         * Birth, reset/reseed request, explicit translation, restore and rename
+         * assign a new nonzero generation. Ordinary filter updates and clearing
+         * a pending-reseed mark leave it unchanged. Generations are unique for
+         * this manager's lifetime, including after removal and rebirth of a key.
+         * This metadata survives covariance contraction after a reset; it does
+         * not alter the estimated state and is not serialized in snapshots.
+         *
+         * @param key Ambiguity key.
+         * @return Generation, or zero if the key is absent.
+         */
+        uint64_t getAmbiguityGeneration(const std::string& key) const;
+
+        /**
+         * @brief Mark a discontinuous ambiguity edit made on external x/P copies.
+         *
+         * KF recovery and slip repairs use this when they apply the edit
+         * themselves. Changes metadata only, without setting pending reseed.
+         *
+         * @param key Existing ambiguity key.
+         * @return True if the key exists and its generation was advanced.
+         */
+        bool noteAmbiguityDiscontinuity(const std::string& key);
+
+        /**
          * @brief Add a new ambiguity state and return its index.
          *
          * Appends a row to the state vector and covariance.
@@ -613,18 +640,18 @@ namespace GnssProcessor {
                              double initial_std_override = -1.0);
 
         /**
-         * @brief Reset (or create then reset) a float ambiguity state.
+         * @brief Reset an existing float ambiguity state.
          *
          * Zeroes the row/column cross-covariances, sets the diagonal to std_m²,
          * and marks the key pending re-seed.  The value is left alone —
-         * ensureRequiredStates overwrites it with a geometry-based seed.  A key
-         * that does not exist yet is created first.
+         * ensureRequiredStates overwrites it with a geometry-based seed. Unknown
+         * keys are refused. Advances the key's continuity generation.
          *
          * Intended for ambiguity reinitialization after a detected phase outlier.
          *
          * @param key Ambiguity key.
          * @param std_m Standard deviation (m) for the ambiguity diagonal.
-         * @return true if a reset (or creation + reset) was applied.
+         * @return true if a reset was applied.
          */
         bool resetAmbiguity(const std::string& key, double std_m);
 
@@ -1378,6 +1405,8 @@ namespace GnssProcessor {
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> system_time_rate_offset_indices_; //!< Map system name -> ISBR state index (clock-rate inter-system offset; active when velocity is estimated).
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
+        std::map<std::string, uint64_t> ambiguity_generations_; //!< Continuity generation for each live ambiguity.
+        uint64_t next_ambiguity_generation_{ 0 }; //!< Monotone across removals; zero denotes a missing key.
         std::set<std::string> unresolvable_ambiguities_; //!< Ambiguity keys excluded from integer AR (incomplete product coverage).
         std::set<std::string> pending_reseed_ambiguities_; //!< Ambiguity keys awaiting re-seeding after reset.
         std::map<std::string, size_t> code_bias_indices_; //!< Map code bias key -> state index (PPP-RTK uncombined).

@@ -157,6 +157,7 @@ void RealTimeEngine::detectAndRepairSlips(RtEpochContext& ctx) {
                 const double prev = x(idx);
                 x(idx) += static_cast<double>(r.dN) * r.lambda;
                 state_manager_->setStateVector(x);
+                state_manager_->noteAmbiguityDiscontinuity(key);
                 log->info("{}TurboEdit REPAIR {} {}: dN={:+d} cyc, delta={:+.4f} m, "
                           "x: {:.4f} -> {:.4f} (covariance preserved)",
                           epoch_prefix, r.satellite, r.signal, r.dN,

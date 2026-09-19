@@ -225,6 +225,7 @@ void SoftLliBridge::resolveHolds(const TurboEditResolver::EpochResolution& te,
         if (var < 1e-6) var = 1e-6;  // numeric floor
         P(i, i) = var;
         state_manager.setCovariance(P);
+        state_manager.noteAmbiguityDiscontinuity(amb_key);
         log->info("{}Soft-LLI bridge REPAIR {}: anchor {:.4f} + dN={:+d}·λ({:.4f}) "
                   "= {:.4f} m (was {:.4f}; var={:.3e})",
                   epoch_prefix, amb_key, anchor, dN, lambda, val, prev, var);

@@ -977,6 +977,17 @@ namespace GnssProcessor {
         return ambiguity_indices_;
     }
 
+    uint64_t StateManager::getAmbiguityGeneration(const std::string& key) const {
+        const auto it = ambiguity_generations_.find(key);
+        return it == ambiguity_generations_.end() ? 0 : it->second;
+    }
+
+    bool StateManager::noteAmbiguityDiscontinuity(const std::string& key) {
+        if (!ambiguity_indices_.count(key)) return false;
+        ambiguity_generations_[key] = ++next_ambiguity_generation_;
+        return true;
+    }
+
     size_t StateManager::addAmbiguity(const std::string& key, double initial_value,
                                         double initial_std_override) {
         auto logger = log_manager_.getLogger("state_manager");
@@ -989,6 +1000,7 @@ namespace GnssProcessor {
                                 : config_.getAmbiguityStd();
         const size_t index = appendState(initial_value, amb_std * amb_std);
         ambiguity_indices_[key] = index;
+        noteAmbiguityDiscontinuity(key);
 
         logger->info("Added ambiguity {} at index {} with initial value {:.3f}, std={:.3f} m{}",
                      key, index, initial_value, amb_std,
@@ -1136,7 +1148,7 @@ namespace GnssProcessor {
         covariance_.col(idx).setZero();
         covariance_(idx, idx) = std_m * std_m;
 
-        pending_reseed_ambiguities_.insert(key);
+        markAmbiguityPendingReseed(key);
 
         logger->info("Reset ambiguity {} at index {}: marked pending reseed, std={:.3f} m (var={:.3e})",
             key, idx_i, std_m, std_m * std_m);
@@ -1177,6 +1189,7 @@ namespace GnssProcessor {
         // Value-only translation: the covariance and the pending-reseed set are
         // deliberately untouched (see the header).
         state_vector_(idx) += delta_m;
+        if (delta_m != 0.0) noteAmbiguityDiscontinuity(key);
         logger->debug("Shifted ambiguity {} at index {} by {:+.4f} m (value-only, covariance kept)",
                       key, idx_i, delta_m);
         return true;
@@ -1222,6 +1235,8 @@ namespace GnssProcessor {
         // the layout rebuild, so nothing ever reads this value.
         const size_t idx = appendState(value, 1.0);
         (*map)[key] = idx;
+        if (kind == RestoredStateKind::Ambiguity)
+            noteAmbiguityDiscontinuity(key);
         return true;
     }
 
@@ -1244,6 +1259,8 @@ namespace GnssProcessor {
         const size_t idx = it->second;
         ambiguity_indices_.erase(it);
         ambiguity_indices_[new_key] = idx;
+        ambiguity_generations_.erase(old_key);
+        noteAmbiguityDiscontinuity(new_key);
         logger->trace("Renamed ambiguity '{}' -> '{}' at index {}", old_key, new_key, idx);
         return true;
     }
@@ -1268,6 +1285,7 @@ namespace GnssProcessor {
 
         removeStateAtIndex(rem_idx);
         ambiguity_indices_.erase(key);
+        ambiguity_generations_.erase(key);
 
         logger->info("Removed ambiguity {} at former index {}. New state size={}", key, rem_idx, getStateSize());
         return true;
@@ -2498,6 +2516,7 @@ namespace GnssProcessor {
 
     void StateManager::markAmbiguityPendingReseed(const std::string& amb_key) {
         pending_reseed_ambiguities_.insert(amb_key);
+        noteAmbiguityDiscontinuity(amb_key);
     }
 
     // ===================================================================

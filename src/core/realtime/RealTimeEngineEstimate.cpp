@@ -373,33 +373,17 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 // PAIRED per-epoch (level - state) difference, so the window's own sample sigma
 // is the noise of exactly the quantity tested.
 //
-// THE WINDOW-RESTART GUARANTEE (the spec's "a window that contains a
-// translation/carry epoch cannot trip") has two independent halves, and either
-// alone would be sufficient:
+// WINDOW CONTINUITY (ALC-ARC): StateManager assigns a new generation on birth,
+// reset/reseed request, translation and explicit recovery edits. Compare both
+// selected signals with the last sampled pair BEFORE pushing a sample. These
+// tokens survive reseeding and the measurement update, unlike reset variance,
+// which the update may already have contracted. They also survive missing pairs
+// and epochs without an update. An explicit satellite notification clears the
+// window immediately, so it cannot be lost at the next epoch boundary either.
+// A changed arc starts at sample 1 and needs window_ep fresh samples to be tested.
 //
-//   (1) EXPLICIT.  Every seam that WRITES an ambiguity value or variance for a
-//       key calls noteAmbLevelDisturbed_(sat): the reset path
-//       (RealTimeEngineSsrBreaks.cpp resetOnPhaseBiasDisc), the card-CC carry
-//       (carryOnPhaseBiasDisc_), the card-PBT translation
-//       (translatePhaseBiasStep_) and this seam's own refloat.  All of those run
-//       strictly BEFORE this seam in processEpoch (the three reactions sit
-//       pre-update, this seam sits post-AR), so the set is complete for the
-//       epoch by the time it is read.  The window is dropped before this epoch's
-//       sample is pushed, so the translated epoch becomes sample 1 of a NEW
-//       window and cannot be tested for another window_ep epochs.
-//
-//   (2) STRUCTURAL, and it also covers writers this card never touched (the
-//       slip seam's resetAmbiguity, a first sighting, a re-admission).
-//       StateManager::resetAmbiguity sets the ambiguity variance to exactly
-//       ambiguity_std^2 and marks the key pending re-seed; addAmbiguity births
-//       it at the same value.  So any key whose variance is >= ambiguity_std^2
-//       has NOT been updated since it was reset or born, and this seam restarts
-//       its window on that test alone.  It is an equality against the same
-//       constant the writer uses, not a tuned threshold.
-//
-// Consequence worth keeping: after a refloat, (2) holds the window shut until
-// the state has actually re-converged, so the check cannot enter a refloat
-// limit-cycle on one satellite.
+// The variance guard is retained as a conservative readiness check only. It does
+// not prove arc continuity or convergence; the generations establish continuity.
 //
 // MODE.  `act` refloats BOTH of the satellite's ambiguities through the existing
 // first-sighting/reset path (the same StateManager::resetAmbiguity call, at the
@@ -415,7 +399,7 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 
 void RealTimeEngine::noteAmbLevelDisturbed_(const std::string& sat) {
     if (!config_.ambLevelCheck() || sat.empty()) return;
-    amb_level_disturbed_.insert(sat);
+    amb_level_check_.restart(sat);
 }
 
 void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
@@ -503,12 +487,17 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
         if (!(std::fabs(f1 - f2) > 1.0)) continue;        // same band => no wide lane
         const double lambda_wl = Constants::SPEED_OF_LIGHT / (f1 - f2);
 
-        // --- The restart rule, both halves (see the banner) -------------------
+        // --- Arc identity survives resets followed by covariance contraction. ---
         const std::string amb1 = StateKeys::makeAmbiguityKey(sat, sig1);
         const std::string amb2 = StateKeys::makeAmbiguityKey(sat, sig2);
         const int i1 = state_manager_->getAmbiguityIndex(amb1);
         const int i2 = state_manager_->getAmbiguityIndex(amb2);
-        bool restart = (amb_level_disturbed_.count(sat) != 0);
+        const auto generations = std::make_pair(
+            state_manager_->getAmbiguityGeneration(amb1),
+            state_manager_->getAmbiguityGeneration(amb2));
+        const auto previous = amb_level_generations_.find(sat);
+        bool restart = (previous == amb_level_generations_.end()
+                        || previous->second != generations);
         if (i1 < 0 || i2 < 0) restart = true;
         else if (state_manager_->getStateVariance(i1) >= reset_var
                  || state_manager_->getStateVariance(i2) >= reset_var) restart = true;
@@ -516,6 +505,8 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
             amb_level_check_.restart(sat);
             if (i1 < 0 || i2 < 0) continue;   // no state to compare against at all
         }
+
+        amb_level_generations_[sat] = generations;
 
         const double ip1 = innov_of[sat + "|" + sig1];
         const double ip2 = innov_of[sat + "|" + sig2];

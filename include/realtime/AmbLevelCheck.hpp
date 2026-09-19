@@ -26,8 +26,8 @@
  * corrected phase / code the model actually formed, with the satellite clock, the
  * satellite code bias and the satellite phase bias already applied, referenced to
  * the current state.  Two classical combinations of those four innovations
- * (L1 phase, L2 phase, L1 code, L2 code) are therefore levels of the ambiguity
- * error and of NOTHING else:
+ * (L1 phase, L2 phase, L1 code, L2 code) measure ambiguity-level inconsistency
+ * together with any surviving bias, multipath and model errors:
  *
  *   WL (Melbourne-Wubbena), cycles — geometry-free AND ionosphere-free:
  *       mw = [ (f1*ip1 - f2*ip2)/(f1-f2) - (f1*ic1 + f2*ic2)/(f1+f2) ] / lambda_WL
@@ -39,13 +39,11 @@
  *             + noise
  *
  * Both are formed from the CONSUMER'S OWN corrected observations — the products
- * are never re-read — and both are exactly the spec's `state - level`, taken as a
- * PAIRED per-epoch difference so that the window's own sample sigma is the noise
- * of precisely the quantity being tested.  The receiver clock, the receiver
- * phase clock, the troposphere and the slant ionosphere all cancel by
- * construction (the WL/NL and IF coefficient sets each sum to 1 on the geometry
- * and to 0 on the first-order ionosphere), so no receiver-common constant is
- * left for the test to trip on.
+ * are never re-read — as PAIRED per-epoch level-minus-state differences.
+ * Common geometry, receiver clock and troposphere terms cancel, as does
+ * first-order slant ionosphere with the modeled frequency dependence. A
+ * PHASE-ONLY receiver clock does not cancel. Neither do arbitrary code/phase
+ * correction errors. A trip alone cannot identify ambiguity error as the cause.
  *
  * ## The test
  *
@@ -54,10 +52,13 @@
  *     |mean(mw)|  > k * sigma_WL     with sigma_WL = max(s_mw/sqrt(n), 0.02 cyc)
  *     |mean(ifd)| > k * sigma_IF     with sigma_IF = max(s_ifd/sqrt(n), 0.05 m)
  *
- * The floors exist so that an abnormally quiet window cannot manufacture an
- * arbitrarily tight bar; both sit a factor ~4 below the sigma a 20-epoch window of
- * 0.5 m code noise actually produces (MW ~0.4 cyc/epoch -> 0.09 cyc; IF ~1.5
- * m/epoch -> 0.34 m), so on real data the DATA sets the bar, not the floor.
+ * Here sigma is a FLOORED ESTIMATED standard error, not a calibrated ambiguity
+ * uncertainty. With independent Gaussian zero-mean samples and inactive floors,
+ * mean/(s/sqrt(n)) follows Student t(n-1), not a standard normal distribution.
+ * Temporal correlation, changing state estimates, shared WL/IF measurements,
+ * overlapping checks and data-dependent restarts need separate calibration.
+ * The floors bound the rejection bar; they do not model these uncertainties.
+ * See docs/refound/ALC-STAT_statistics_audit_2026-09-17.md for the audit.
  *
  * ## The window restart (invariant #7, and why a translated epoch cannot trip)
  *
@@ -65,9 +66,11 @@
  * and is where the guarantee lives — see
  * @c RealTimeEngine::checkAmbiguityLevel_ (RealTimeEngineEstimate.cpp).
  *
- * A trip also clears the window, in BOTH modes.  In @c act that is redundant
- * (the refloat re-inflates the variance, which the engine's rule already reads as
- * a restart); in @c observe it is what makes the census count distinct trip
+ * The engine checks persistent StateManager generations for both selected
+ * ambiguities: a reset remains visible even after reseeding and a KF update
+ * shrink its variance. Explicit satellite notifications clear windows immediately.
+ * A trip also clears the window, in BOTH modes. In @c act the refloat advances
+ * the ambiguity generations; in @c observe clearing counts distinct trip
  * EVENTS instead of one trip per epoch until the drift ages out of the window.
  *
  * Counter closure (standing invariant #4): every full-window evaluation is

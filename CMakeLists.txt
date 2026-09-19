@@ -411,7 +411,11 @@ add_executable(gnss_tests
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
     tests/test_pb_step_translate.cpp
+    tests/test_pb_translation_premise.cpp
     tests/test_amb_level_check.cpp
+    tests/test_amb_level_arc.cpp
+    tests/test_amb_level_statistics.cpp
+    tests/test_amb_level_band_scope.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
     tests/test_transforms.cpp
