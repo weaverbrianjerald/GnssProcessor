@@ -148,3 +148,27 @@ data_nobia/
 *.crx.gz
 
 vc140.pdb
+
+# -------------------------------------------------------------------
+# Repo-root cleanup, 2026-09-19 (chore/repo-cleanup).  Everything below
+# was relocated to D:\GnssProcessorSupport\ (MOVED, never deleted — see
+# D:\GnssProcessorSupport\MANIFEST.md).  These entries stop the same
+# classes of artifact from re-accumulating at the root.
+# -------------------------------------------------------------------
+# Additional Python virtualenvs (venv/ is already ignored above).
+venv-*/
+# gnss_processor.exe default output root when run from the repo root.
+out/
+# pytest / Qodo scratch caches (root and python/).
+.pytest_cache/
+.qodo/
+# Pre-refactor CMakeLists copy kept "just in case".
+backup/
+# Default --out-dir of scripts/field_*_census.py; regenerated on demand.
+fieldres/
+# Hand-copied runtime DLLs for the pybind11 module; the build supplies
+# these itself (CMake copies the .pyd + deps into python/).
+python/dll_backup/
+# Runtime log dirs written when a config is run with its cwd in config/.
+config/logs/
+config/test_suite/logs/
