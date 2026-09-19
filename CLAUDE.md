@@ -139,7 +139,7 @@ runs/                 Campaign run outputs.  ⚠️ RELOCATED OFF C: AGAIN on
                       2026-09-19 (the repo-root cleanup for onboarding): the
                       741 run dirs then in the tree (149 GB, incl. every RF-* /
                       ALC / PBT run cited by `docs/refound/`) are at
-                      D:\GnssProcessorSupport\runs\ — same names, so a cited
+                      D:\GnssProcessorSupport\runs\ (same names), so a cited
                       `runs/<name>` resolves there.  `reference_software/`
                       (M-PAGES, POINT, cssrlib), `val_out/`,
                       `test_suite_results/`, `out/`, `batch_results*/` and the
