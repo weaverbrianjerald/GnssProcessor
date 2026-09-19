@@ -176,3 +176,6 @@ config/test_suite/logs/
 # Onboarding scratch (docs/onboarding/03_worked_example.md, stage 8)
 /config/_my_*.json
 /logs_*/
+
+# Claude Code per-user state (settings.local.json, worktrees, caches).  CLAUDE.md stays tracked.
+/.claude/

@@ -1,31 +1,31 @@
-# 4 · Git workflow — branch, commit, merge request
+# 4 · Git workflow: branch, commit, merge request
 
-The short version: **never commit to `main`. One branch per change. Small commits.
-Open a merge request. Brian merges.**
+Summary: **no commits on `main`. One branch per change. Small commits. A merge request
+for every branch. A maintainer merges.**
 
-If you are new to git, that sentence plus the commands on this page are all you need
-for the first months.
+The commands on this page cover the first months of work, including for contributors
+new to git.
 
 ---
 
-## The loop, every time
+## The loop
 
 ```powershell
 # 1. Start from an up-to-date main
 git switch main
 git pull
 
-# 2. Make a branch for ONE change
+# 2. Create a branch for ONE change
 git switch -c feature/elevation-floor-model
 
-# 3. Work. Look at what you changed, often.
+# 3. Work. Inspect the changes often.
 git status
 git diff
 
-# 4. Stage the files you mean to commit — by name
+# 4. Stage the intended files by name
 git add include/model/StochasticModel.hpp src/core/model/StochasticModel.cpp
 
-# 5. Check what is staged, then commit
+# 5. Review what is staged, then commit
 git diff --cached --stat
 git commit
 
@@ -33,21 +33,21 @@ git commit
 git push -u origin feature/elevation-floor-model
 ```
 
-`git push` prints a GitLab link — open it to create the merge request (MR). Assign it
-to Brian. Push more commits to the same branch to update the MR.
+`git push` prints a GitLab link that creates the merge request (MR). The MR is assigned
+to a maintainer. Further commits pushed to the same branch update the MR.
 
 ## Branch names
 
-| Prefix | Use for | Example |
+| Prefix | Use | Example |
 | --- | --- | --- |
-| `feature/` | new capability | `feature/elevation-floor-model` |
-| `fix/` | bug fix | `fix/sp3-header-leap-second` |
-| `docs/` | documentation only | `docs/troposphere-section` |
-| `test/` | tests only | `test/klobuchar-edge-cases` |
+| `feature/` | New capability | `feature/elevation-floor-model` |
+| `fix/` | Bug fix | `fix/sp3-header-leap-second` |
+| `docs/` | Documentation only | `docs/troposphere-section` |
+| `test/` | Tests only | `test/klobuchar-edge-cases` |
 
 ## Commit messages
 
-Format: **`area: what changed`**, then a blank line, then a few lines on **why**.
+Format: **`area: what changed`**, a blank line, then a few lines on the **reason**.
 
 ```
 model: add ElevationFloor stochastic model (default OFF)
@@ -60,41 +60,41 @@ Selected with filter.stochastic_model = "elevation_floor"; the shipped default
 is unchanged.
 ```
 
-- `area` is where the change lives: `model`, `filter`, `config`, `realtime`, `rinex`,
-  `products`, `tests`, `docs`, `scripts`, `build`. Look at `git log --oneline` for the
-  house style.
-- Say whether behaviour changes for someone who does not opt in. Usually the answer
-  must be "no" — see [CONTRIBUTING rule 1](../../CONTRIBUTING.md#the-five-rules).
+- `area` names where the change lives: `model`, `filter`, `config`, `realtime`, `rinex`,
+  `products`, `tests`, `docs`, `scripts`, `build`. `git log --oneline` shows the
+  established style.
+- The message states whether behaviour changes for a run that does not opt in. The
+  answer is normally "no" ([CONTRIBUTING rule 1](../../CONTRIBUTING.md#the-five-rules)).
 - **No AI attribution lines** (`Co-Authored-By: Claude…`, "Generated with…"). The
-  `commit-msg` hook you enabled during setup strips them; this is a project rule.
+  `commit-msg` hook enabled during setup strips them. This is a project rule.
 
-## Good commits for one change
+## Commits for one change
 
-A change like the [worked example](03_worked_example.md) is three commits, in this order.
-Each one builds and passes the tests on its own.
+A change such as the [worked example](03_worked_example.md) is three commits, in this
+order. Each commit builds and passes the tests on its own.
 
-| # | Commit | Contains |
+| # | Commit | Contents |
 | --- | --- | --- |
-| 1 | `model: add ElevationFloor stochastic model (default OFF)` | headers, `.cpp`, config loader, sample-config comment |
-| 2 | `tests: ElevationFloor closed form, limits and loader contract` | the new test file + its `CMakeLists.txt` line |
-| 3 | `docs: ElevationFloor in the stochastic-model reference` | `.tex` + rebuilt `.pdf` |
+| 1 | `model: add ElevationFloor stochastic model (default OFF)` | Headers, `.cpp`, config loader, sample-config comment |
+| 2 | `tests: ElevationFloor closed form, limits and loader contract` | The new test file and its `CMakeLists.txt` line |
+| 3 | `docs: ElevationFloor in the stochastic-model reference` | `.tex` and rebuilt `.pdf` |
 
-## Things that go wrong
+## Common problems
 
-| Situation | What to do |
+| Situation | Resolution |
 | --- | --- |
-| `git status` shows files you did not touch (`*.aux`, `logs/`, `build/`) | They are outputs. Do not add them. If one is not ignored, tell Brian. |
-| You used `git add .` and staged too much | `git restore --staged <file>` un-stages it. Your edits are kept. |
-| You committed on `main` by accident | `git switch -c feature/my-change` (the commit comes with you), then ask before touching `main`. |
-| `main` moved on while you worked | `git switch main; git pull; git switch -; git merge main` — fix conflicts, build, test, commit. |
-| A merge conflict you do not understand | Stop. `git merge --abort` puts everything back. Ask. |
-| You want to undo local edits to one file | `git restore <file>` — this **discards** your edits to it. |
+| `git status` shows untouched files (`*.aux`, `logs/`, `build/`) | These are outputs and are not added. An output that is not ignored is reported to a maintainer. |
+| `git add .` staged too much | `git restore --staged <file>` un-stages a file. The edits are kept. |
+| A commit was made on `main` by accident | `git switch -c feature/my-change` moves the work to a branch. `main` is not touched further without asking. |
+| `main` advanced during the work | `git switch main; git pull; git switch -; git merge main`, then resolve conflicts, build, test, commit. |
+| A merge conflict that is not understood | `git merge --abort` restores the previous state. Then ask. |
+| Local edits to one file are to be discarded | `git restore <file>`. This **discards** the edits to that file. |
 
-**Never** use `git push --force`, `git reset --hard`, or `git clean` on this
-repository without asking first. They destroy work — possibly someone else's.
+`git push --force`, `git reset --hard` and `git clean` are **never** used on this
+repository without prior agreement. They destroy work, possibly someone else's.
 
-## Before you open the merge request
+## Before the merge request
 
-Run the checklist in [CONTRIBUTING.md](../../CONTRIBUTING.md#the-checklist). The MR
-description should say: what changed, how you tested it (paste the test summary line),
-and — if you ran data — one before/after number.
+The [checklist in CONTRIBUTING.md](../../CONTRIBUTING.md#the-checklist) is completed
+first. The MR description states what changed, how it was tested (with the test summary
+line), and, if data was run, one before/after number.
