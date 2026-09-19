@@ -1,6 +1,6 @@
 # GnssProcessor
 
-C++17 GNSS post-processor and real-time engine. Supports PPP and PPP-RTK (uncombined), optional IMU integration, integer ambiguity resolution (MLAMBDA), and a backward RTS smoother. Primary config: `src/core/config/gnss_config.json`.
+C++17 GNSS post-processor and real-time engine. Supports PPP and PPP-RTK (uncombined), optional IMU integration, integer ambiguity resolution (MLAMBDA), and a backward RTS smoother. Scenario configs: `config/*.json` (one file = one run; `config/ppp_internal.json` is the PPP starting point). New-contributor onboarding: `docs/onboarding/README.md` + `CONTRIBUTING.md`; worked example on the unmerged reference branch `example/stochastic-model`.
 
 ## Build
 
@@ -124,16 +124,29 @@ include/              All public headers, organized into subdirs mirroring
 
 src/core/             Implementation files mirror the include/ subdir layout
                       one-to-one (app/, common/, config/, logging/, math/,
-                      products/, slip/, etc.).  src/core/config/ also holds
-                      gnss_config.json — the primary user-edited config file.
+                      products/, slip/, etc.).  User-edited scenario configs
+                      live in the top-level config/ dir, not here.
 
 tests/                GoogleTest unit suite (1540 cases / 215 suites across 104
                       files) linked into `gnss_tests.exe`.  tests/sim/ is a
                       SEPARATE target, `gnss_simulator_selftest` (80 cases).
                       Note: docs/test_suite.md documents the real-data
                       truth-graded harness, NOT this unit suite.
-logs/                 Runtime CSV traces + spdlog files (under build tree)
-runs/                 Campaign run outputs.  ⚠️ ARCHIVED OFF C: on 2026-08-12
+logs/                 Runtime CSV traces + spdlog files.  Hard-coded `./logs`
+                      relative to the process CWD (`Application::log_dir_`);
+                      git-ignored, recreated by the next run.
+runs/                 Campaign run outputs.  ⚠️ RELOCATED OFF C: AGAIN on
+                      2026-09-19 (the repo-root cleanup for onboarding): the
+                      741 run dirs then in the tree (149 GB, incl. every RF-* /
+                      ALC / PBT run cited by `docs/refound/`) are at
+                      D:\GnssProcessorSupport\runs\ — same names, so a cited
+                      `runs/<name>` resolves there.  `reference_software/`
+                      (M-PAGES, POINT, cssrlib), `val_out/`,
+                      `test_suite_results/`, `out/`, `batch_results*/` and the
+                      stray root files moved with them;
+                      D:\GnssProcessorSupport\MANIFEST.md maps every old path.
+                      `runs/` is still the git-ignored default output dir — a
+                      new campaign recreates it.  Earlier: ARCHIVED on 2026-08-12
                       to D:\GnssProcessor_archive\2026-08-12\runs\ (619 dirs,
                       40.6 GB) along with the pre-VS2026 build/ trees, to
                       reclaim disk.  Both are git-ignored.  Reports that cite

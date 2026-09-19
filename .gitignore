@@ -172,3 +172,7 @@ python/dll_backup/
 # Runtime log dirs written when a config is run with its cwd in config/.
 config/logs/
 config/test_suite/logs/
+
+# Onboarding scratch (docs/onboarding/03_worked_example.md, stage 8)
+/config/_my_*.json
+/logs_*/
