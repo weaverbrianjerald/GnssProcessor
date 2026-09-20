@@ -429,3 +429,54 @@ eps 0, since the two are measurably the same operation.
 `runs/_pbh1_smoke_off`, `runs/_pbh1_ftc/{field,sim}_H_r3.txt`. Exe
 `gnss_processor_pbh1.exe` `F1D3BDDB65E554B7`. Wire sha256[:16] of arm H:
 `BBAA7FD66844CB3E` field, `EA3A646F8972AE44` sim.
+
+## 7. 2026-09-20: re-grade from the run directories, and the reading
+
+Re-graded independently from `runs/_pbh1_{field,sim}6_{H,HA,HP}`: the H table of
+section 6 reproduces to the digit; `closed_loop_trace.csv` of HP is byte-identical
+to H on both beds; `network_epoch_status.csv` of H is byte-identical to the
+baseline pair on both beds; the field wire carries 60 425 P records in 109
+(key, generation) groups with exactly one distinct value per group.
+
+**The hold is the zero-dead-band translation, moved to the producer.** H equals
+the eps 0 arm to 0.1 to 0.3 mm per epoch, so the consumer result of section 4 is
+now a property of the wire: any float consumer of `products.txt` gets it with no
+translation logic, and the truth-graded phase correction equals the clock
+(section 6, B4).
+
+**The level check is harmful under the hold.** With translations gone its window
+coverage doubles (field 0.197 to 0.418, sim 0.302 to 0.725), trips rise 106 to 158
+and 26 to 58, and the consumer loses in five of six hours on both beds (field
+1.10 / 0.69 / 0.51 / 0.22 / 0.12 / 0.16 m, sim 0.97 / 0.86 / 0.40 / 0.17 / 0.24 /
+0.18 m). This is the over-firing of the restart-policy arm
+([ALC2](ALC2_restart_policy_adoption_2026-09-19.md)) and of the statistics audit
+([ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md)) reproduced a third time: the
+check earned its place by repairing the dead-band leak, and with the leak closed
+at its source it has no population left. Under the hold it stays OFF.
+
+**What the field number is made of.** Arm H, hours 3 to 6, metres:
+
+| bed | east mean / std | north mean / std | up mean / std |
+| --- | --- | --- | --- |
+| field | +0.054 / 0.033 | +0.017 / 0.028 | -0.068 / 0.104 |
+| sim | +0.002 / 0.019 | -0.005 / 0.017 | +0.054 / 0.047 |
+
+The field 3D median of 0.11 m holds a quasi-constant offset of 0.089 m (the
+reference coordinate, antenna and frame budget of the hold-out station) next to
+a scatter of 3 cm horizontal and 10 cm vertical, on an epoch-wise (white-noise
+position) float solution. The consumer bar of the re-founding (first
+sub-decimetre epochs, then hours) is met on both beds from hour 3.
+
+**Owed, in order.** (1) The adoption decision for the RF-0hv working bases:
+`emit_pb_hold: true` with `pb_step_translate: false` and `amb_level_check: false`;
+hour 1 is 0.14 m worse than the present pair on both beds, hours 2 to 6 are 2 to
+5 times better. (2) `serialize_sbasis_contract` on a lineage, so the `pbhold=1`
+and `discdecom=` S-line tokens exist outside gtest. (3) The hold is not in the
+state snapshot: a warm resume cold-starts every generation (conservative,
+ungraded). (4) The 201 field marks naming clock and phase bias together reach
+held keys with a de-commoned clock step of p50 0.059 / p90 0.329 / max 1.334 m:
+with the phase correction now equal to the clock, the clock-anchor decouple
+excursion (EV6) is the largest remaining wire term on the field
+(clock-alone within-arc RMS 27 mm against 3 mm on the sim). (5) Why the
+estimator's phase bias wanders (section 2 leads); it no longer reaches a float
+consumer, and it bounds any integer add-back.
