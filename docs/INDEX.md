@@ -40,6 +40,10 @@ record the program is re-founding **on**.
 - [ALC-BAND](refound/ALC-BAND_window_scope_review_2026-09-17.md) — closed,
   2026-09-17: retain paired restarts; per-band dual-code levels need a separate
   statistical design; 44 focused tests pass, runtime unchanged.
+- [ALC2](refound/ALC2_restart_policy_adoption_2026-09-19.md): closed,
+  2026-09-19: the level-check restart policy refused on both beds and its
+  branch left unmerged; translate + level check + consumer-sat trace adopted
+  into the RF-0hv working bases; the pair re-based on post-ALC-ARC main.
 
 ---
 

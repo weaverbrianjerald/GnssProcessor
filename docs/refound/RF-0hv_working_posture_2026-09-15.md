@@ -186,3 +186,23 @@ Graders re-used unchanged: `scripts/rf2d_grade.py`, `scripts/rf_ign_level_read.p
 6. **RF-PD-fix's and RF-IGN's own open items are untouched** — the 9 residual non-finite-input `addStation` rejections, the carry rows
    still judged after the PD test, the W2 common-mode measurement, and the ~25 % of the LEVELING vehicle's loss that RF-IGN left
    unattributed.
+
+## 8. 2026-09-19: adoption and re-based pair
+
+The working bases now ARM three consumer-side or trace-only keys:
+`network.closed_loop.pb_step_translate` (card PBT), `network.closed_loop.amb_level_check`
+(card ALC) and `network.trace_consumer_sat` (card CST). The wire is unaffected, the goldens in
+`config/golden/` are untouched and the golden re-base stays DEFERRED per section 7 item 1. The
+restart-policy knob `amb_level_check_restart` was measured on this posture and is REFUSED; its
+branch `wip/alc2-restart-policy` (`f2b0325`) stays unmerged as the record.
+
+The BASELINE PAIR of section 5 is superseded. It is now `runs/_rf0hv2_field6` (consumer p50 by
+hour 0.43 / 0.16 / 0.31 / 0.49 / 0.68 / 0.49 m, p90 3.11 / 0.28 / 0.39 / 0.61 / 0.71 / 0.69,
+9 epochs under 0.10 m, IF dispersion p90 0.201 m, 720/720) and `runs/_rf0hv2_sim6`
+(0.46 / 0.28 / 0.25 / 0.15 / 0.16 / 0.14 m, p90 3.19 / 0.32 / 0.28 / 0.21 / 0.23 / 0.20,
+81 epochs under 0.10 m, WL(1,2) ref-free last-25 % at its own true integer 99.1 %, 720/720),
+exe `gnss_processor_rf0hv2.exe` sha256 `A3D62A242C04E545...C15A9A7`, source `main` `e437b6b`.
+Both reproduce the pre-ALC-ARC reference pair byte for byte, `products.txt` and every consumer
+trace included; the only counter that moved is the field level-check coverage, 0.204 to 0.197.
+
+Record: [ALC2](ALC2_restart_policy_adoption_2026-09-19.md).
