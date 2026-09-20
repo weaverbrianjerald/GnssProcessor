@@ -23,10 +23,17 @@ The build scripts assume the locations below. Using them avoids editing scripts.
 Install the C++ libraries (once, about 30 min):
 
 ```powershell
-C:\vcpkg\vcpkg.exe install eigen3 spdlog pybind11 gtest netcdf-c curl zlib --triplet x64-windows
+C:\vcpkg\vcpkg.exe install eigen3 spdlog nlohmann-json pybind11 gtest netcdf-c curl zlib --triplet x64-windows
 ```
 
-**Check:** `C:\vcpkg\installed\x64-windows\include\Eigen` exists.
+`nlohmann-json` is header-only and is not named in `CMakeLists.txt`, but the config loader
+includes it. Versions known to build (2026-09): eigen3 3.4.0, spdlog 1.15.3 (fmt 11.0.2),
+nlohmann-json 3.12.0, pybind11 2.13.6, gtest 1.17.0, netcdf-c 4.8.1, curl 8.14.1,
+zlib 1.3.1. A build failure inside a library header after a newer vcpkg install is
+reported to a maintainer together with the output of `vcpkg list`.
+
+**Check:** `C:\vcpkg\installed\x64-windows\include\Eigen` and
+`C:\vcpkg\installed\x64-windows\include\nlohmann\json.hpp` exist.
 
 ## Step 2: Clone the repository
 
