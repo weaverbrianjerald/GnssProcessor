@@ -80,3 +80,62 @@ present through every L1/L2 dropout.
   0.02 m of the sim's T3 in hours 3 to 6) where it is damaged without it.
 - **Not adopted by this card:** arming either knob in the working bases, and the
   triple posture itself, are separate decisions after the bars.
+
+## 4. 2026-09-20: GRS-1 result: built; the sim fault is repaired completely; the field triple arm is short of bar B1
+
+Build at main `9edc0ea`, exe `gnss_processor_grs.exe`. Every number below was re-read
+from the run directories by the manager.
+
+**G0 PASS, three controls.** Rider OFF, products and event ledgers byte-identical to
+the pre-build exe: the dual field base (`_rap_g0_field` against `_rf0hv3_field6`), the
+dual sim base (`_rap_g0_sim` against `_rf0hv3_sim6`), and the armed row-level arm
+(`_rap_g0_dc` against `_rap_dC_gapre`), which certifies the relocation of the
+responder body. New suite `GapReentryPerSignalQualify`, 9 of 9; `gnss_tests` 2305
+passed with the one known skip.
+
+**G1 PASS.** Field triple arm `gF_tri`: 149 per-signal re-entries, 117 shifted, 32
+measured and unshifted, none unmeasurable, 31 judged against a second-choice partner;
+125 judged slipped, 81 with a protectable carry, 81 freed (74 shifted, 7 LLI), the
+closure exact. The BSHM00ISR G14 return of TOW 268860 is there: `sig_resume` and
+`reentry_relevel` with `scope=signal` for L1C (GF step -57.86 m against L1L, which
+tracked through) and for L2W (shifted and flagged).
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | CLK_ANCHOR | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| dual field, row-level response (the working base) | 0.53 0.11 0.09 0.10 0.14 0.12 | 203 | 228 | 424 | 0.0107 / 0.0173 |
+| **`gD_dual`** (dual field, rider) | 0.53 0.11 0.10 0.11 0.12 0.11 | 162 | **92** | **232** | **0.0090 / 0.0128** |
+| `fM_gapre` (triple field, row-level) | 0.67 0.30 0.15 0.30 0.35 0.52 | 0 | 716 | 607 | 0.0269 / 0.0340 |
+| **`gF_tri`** (triple field, rider) | 0.69 0.31 0.15 0.14 0.12 0.17 | 6 | **219** | 325 | **0.0095** / 0.0175 |
+| `fN_holes_gapre` (triple field, the RINEX emulation) | 0.31 0.07 0.14 0.13 0.11 0.07 | 311 | 327 | 454 | 0.0126 / 0.0270 |
+| `sJ_ds_dual_on` (sim fault, dual, row-level) | 0.81 0.72 0.11 0.10 0.17 0.16 | 178 | 1940 | 2416 | 0.0670 |
+| **`gS_ds_dual`** (the same with the rider) | 0.59 0.11 0.10 0.06 0.05 0.05 | 439 | 61 | 127 | **0.0030** |
+| `sL_ds_tri_on` (sim fault, triple, row-level) | 0.50 0.23 0.28 0.24 0.22 0.22 | 1 | 2944 | 2893 | 0.0939 |
+| **`gS_ds_tri`** (the same with the rider) | 0.57 0.17 0.08 0.04 0.04 0.04 | 424 | 72 | 133 | **0.0029** |
+
+**B2 PASS** (dual field: `T4_attrib` 92 against a bar of 228, clock wire 0.0090 m
+against 0.0107). **B3 PASS**: `gS_dual` and `gS_tri` equal their bases to the printed
+digit (no per-signal re-entry occurs on the undisturbed sim); on the sim fault bed
+the rider takes both postures back to the level of the undisturbed runs, consumer,
+refloats and clock wire against truth (0.0670 to 0.0030 m, 0.0939 to 0.0029 m).
+
+**B1 FAILS on the consumer.** `T4_attrib` 219 (bar 400) and the clock wire 0.0095 m
+(bar 0.0150) pass, and hours 4 to 6 go from 0.30 / 0.35 / 0.52 to 0.14 / 0.12 / 0.17
+m. Against the dual baseline the arm is still 0.04 to 0.06 m short in hours 3, 4 and
+6, its first two hours are those of the unrepaired triple (0.69 / 0.31 m), and it has
+6 epochs below a decimetre against a bar of 250. The rider is not the cause (its
+control has none). The RINEX emulation of AB2 section 12 is much better than the
+rider exactly there (hours 1, 2 and 6 at 0.31 / 0.07 / 0.07 m, 311 epochs), and it
+differs from the rider in one respect: it deletes the epochs in which a satellite is
+present WITHOUT its primary phases, at the arc edges and inside the dropouts, where
+the rider only answers the return. The knob stays default OFF and unarmed.
+
+**GRS-2, pre-registered (RINEX only, on the rider posture, exe `gnss_processor_grs.exe`).**
+The `holes` op gains `where=edge|mid|all`. `hA_tri_edge` = `gF_tri` with the partial
+epochs at the arc edges removed (34 726 records of the day), `hB_tri_mid` = with those
+inside an arc removed (17 071), `hC_tri_all` = both (the control: it must reproduce
+the level of `fN_holes_gapre` on the new exe). Reading, frozen: the arm that brings
+hours 1 and 2 to within 0.05 m of 0.31 and 0.07 m with 250 or more epochs below a
+decimetre names the class of partial-signal epochs that still costs the triple
+network its ignition; the fix owed is then a rule for a satellite that is present
+without its primary pair (no fallback pair in the solve, or no rows at all), not a
+further slip response.

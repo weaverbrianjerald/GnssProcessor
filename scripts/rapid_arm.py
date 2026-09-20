@@ -29,10 +29,12 @@ Ops:
                                       a loss of lock: the listed types are blanked for `len` epochs
                                       (rate per arc-hour) and every listed PHASE type returns with
                                       its own integer-cycle step, while the other types track through
-  holes;bands=12;window=20            delete a satellite's whole record at an epoch where the
+  holes;bands=12;window=20;where=all  delete a satellite's whole record at an epoch where the
                                       primary phase of one of `bands` is missing inside an arc
                                       (a good epoch within `window` epochs), so that a
-                                      phase-only dropout becomes a full tracking gap
+                                      phase-only dropout becomes a full tracking gap;
+                                      where=mid keeps only epochs with a good epoch on BOTH
+                                      sides, where=edge only those with one on a single side
 An op on a phase type is given in metres and applied in cycles.  Every draw is keyed
 on (seed, station, satellite), so the same spec gives the same file in every arm.
 """
@@ -154,11 +156,16 @@ def apply_holes(lines, i0, codes, system, op):
             pres.setdefault(ln[:3], []).append((ep, all(q[3 + 16 * k: 17 + 16 * k].strip() for k in prim), j))
             owner[j] = head
         j += 1
-    kill = set()
+    kill, where = set(), op.get("where", "all")
     for v in pres.values():
         good = [e for e, ok, _ in v if ok]
         for e, ok, j in v:
-            if not ok and good and min(abs(g - e) for g in good) <= win:
+            if ok or not good:
+                continue
+            before = any(0 < e - g <= win for g in good)
+            after = any(0 < g - e <= win for g in good)
+            if (where == "all" and (before or after)) or (where == "mid" and before and after) \
+                    or (where == "edge" and (before != after)):
                 kill.add(j)
     nk = {}
     for j in kill:
@@ -503,6 +510,11 @@ def cmd_selftest(_):
     chk(nh == 1 and k[8].startswith("> 2024 05 08 00 01") and k[8][32:35] == "  2" and not k[9].startswith("G03"),
         f"holes {nh} {k[8]!r}")
     chk(sum(1 for x in k if x.startswith("G03")) == 3 and sum(1 for x in k if x.startswith("G05")) == 4, "holes scope")
+    n_mid = rewrite_rinex(d + "/j.rnx", d + "/k2.rnx",
+                          [dict(parse_op("holes;bands=12;window=3;where=mid"), _prio=["L1C", "L2W"])], "AAAA")
+    n_edge = rewrite_rinex(d + "/j.rnx", d + "/k3.rnx",
+                           [dict(parse_op("holes;bands=12;window=3;where=edge"), _prio=["L1C", "L2W"])], "AAAA")
+    chk(n_mid == 1 and n_edge == 0, f"holes where: mid {n_mid} edge {n_edge}")
     # 8: dropslip: the listed types vanish for `len` epochs and the phases return stepped by whole cycles
     long_body = []
     for e in range(12):
