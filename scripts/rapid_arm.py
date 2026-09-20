@@ -25,6 +25,10 @@ Ops:
   bias;types=C5?;per=station|sat;sigma=3.0;seed=1      constant, metres (N(0, sigma))
   slip;types=L5?;rate=1.0;max=5;seed=1                 integer-cycle steps, rate per arc-hour
   drift;types=L5?;amp_m=0.03;period_s=5400;per=station|sat|los;seed=1   sinusoid, metres
+  dropslip;types=L1?,L2?,C2?;rate=0.15;len=3;max=300;seed=1
+                                      a loss of lock: the listed types are blanked for `len` epochs
+                                      (rate per arc-hour) and every listed PHASE type returns with
+                                      its own integer-cycle step, while the other types track through
   holes;bands=12;window=20            delete a satellite's whole record at an epoch where the
                                       primary phase of one of `bands` is missing inside an arc
                                       (a good epoch within `window` epochs), so that a
@@ -65,7 +69,7 @@ def parse_op(text):
     for kv in parts[1:]:
         k, v = kv.split("=", 1)
         op[k.strip()] = v.strip()
-    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes"), op
+    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip"), op
     return op
 
 
@@ -217,6 +221,9 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
             for n_op, op in enumerate(rec_ops):
                 if not sat_selected(sat, op["sats"]):
                     continue
+                if op["op"] == "dropslip":
+                    dropslip(op, n_op, station, sat, codes, fld, sod, state, system)
+                    continue
                 for k in op["_idx"]:
                     if not fld[k][:14].strip():
                         continue
@@ -233,6 +240,31 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="ascii", newline="\n").write("\n".join(out) + ("\n" if out[-1] else ""))
     return n_holes
+
+
+def dropslip(op, n_op, station, sat, codes, fld, sod, state, system):
+    """A loss of lock on the listed types with a slip on each listed phase at the return."""
+    st = state.setdefault(("ds", n_op, sat), {"left": 0, "cyc": {}, "last": None, "n": 0,
+                                              "rng": draw(op.get("seed", "1"), n_op, "ds", station, sat)})
+    rng = st["rng"]
+    if st["left"] == 0 and st["last"] is not None and sod - st["last"] < 61.0:
+        if rng.random() < 1.0 - math.exp(-float(op.get("rate", 0.15)) * (sod - st["last"]) / 3600.0):
+            st["left"] = int(op.get("len", 3))
+    st["last"] = sod
+    if st["left"] > 0:
+        for k in op["_idx"]:
+            fld[k] = " " * 16
+        st["left"] -= 1
+        if st["left"] == 0:
+            st["n"] += 1
+            for k in op["_idx"]:
+                if codes[k][0] == "L":
+                    step = rng.randint(1, int(op.get("max", 300)))
+                    st["cyc"][k] = st["cyc"].get(k, 0) + (step if rng.random() < 0.5 else -step)
+        return
+    for k, cyc in st["cyc"].items():
+        if fld[k][:14].strip():
+            fld[k] = f"{float(fld[k][:14]) + cyc:14.3f}" + fld[k][14:16]
 
 
 def delta_m(op, n_op, station, sat, code, sod, state):
@@ -471,6 +503,20 @@ def cmd_selftest(_):
     chk(nh == 1 and k[8].startswith("> 2024 05 08 00 01") and k[8][32:35] == "  2" and not k[9].startswith("G03"),
         f"holes {nh} {k[8]!r}")
     chk(sum(1 for x in k if x.startswith("G03")) == 3 and sum(1 for x in k if x.startswith("G05")) == 4, "holes scope")
+    # 8: dropslip: the listed types vanish for `len` epochs and the phases return stepped by whole cycles
+    long_body = []
+    for e in range(12):
+        long_body.append(f"> 2024 05 08 00 {e:02d} 00.0000000  0  1")
+        long_body.append(rec("G03", [2.0e7, 2.0e7, 2.0e7, 1.0e8, 0.8e8, 0.7e8]))
+    open(d + "/m.rnx", "w", newline="\n").write("\n".join(hdr + long_body) + "\n")
+    rewrite_rinex(d + "/m.rnx", d + "/n.rnx", [parse_op("dropslip;types=L1?,L2?,C2?;rate=40;len=2;max=9;seed=5")], "AAAA")
+    g = [x for x in open(d + "/n.rnx").read().split("\n") if x.startswith("G03")]
+    blank = [k for k, x in enumerate(g) if not x.ljust(99)[3 + 48:3 + 62].strip()]
+    chk(len(blank) >= 2 and all(x.ljust(99)[3:3 + 14].strip() and x.ljust(99)[3 + 80:3 + 94].strip() for x in g),
+        f"dropslip keeps C1C and L5Q, blanks L1C at {blank}")
+    first = next(k for k in range(blank[0] + 1, len(g)) if g[k].ljust(99)[3 + 48:3 + 62].strip())
+    after = [float(g[first][3 + 48:3 + 62]) - 1.0e8]
+    chk(after and abs(after[0]) >= 1 and abs(after[0] - round(after[0])) < 1e-3, f"dropslip integer step {after}")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

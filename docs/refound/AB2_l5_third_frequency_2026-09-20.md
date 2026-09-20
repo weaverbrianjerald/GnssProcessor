@@ -572,8 +572,9 @@ dropout of the primary-pair phases during which anything else keeps the row aliv
 not a resumption: band 5 (a civil signal that tracks through a semi-codeless loss of
 lock) or a fallback signal such as L2L. The second divergence of the dual arm is
 such a case: at TOW 268980 the primary phases of G14 are missing for one epoch
-while L2L tracks, and no resumption row is written at TOW 269010. At the return epoch the adjacent-epoch step is then formed across a
-pair change, which the slip cards cannot convert. The slipped ambiguities are folded.
+while L2L tracks, and no resumption row is written at TOW 269010. At the return epoch
+any adjacent-epoch step is formed across a pair change (`:224-230`), and in the field
+instance nothing marks the arc slipped. The slipped ambiguities are folded.
 A third band makes this the rule instead of the exception: every satellite with L5
 stays present through every L1/L2 phase dropout, so the only response that covers a
 return epoch never fires for it. That is the mechanism by which adding L5 damages
@@ -590,3 +591,58 @@ BSHM00ISR criteria of section 10; `fN_holes_gapre` within 0.03 m of T3s in each 
 hours 3 to 6 with `T4_attrib` below 600, all 59 stations on three bands, means a
 per-signal re-entry response is the build that makes L5 adoptable, and its size is
 known before it is written; `dD_holes_gapre` is read against `dC_gapre`.
+
+## 12. 2026-09-20: the emulation arms: L5 on all 59 stations beats the dual baseline once the re-entry is seen
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | CLK_ANCHOR | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| dual baseline | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 457 | 598 | 0.0274 / 0.0281 |
+| `dC_gapre` (dual, response) | 0.53 0.11 0.09 0.10 0.14 0.12 | 203 | 228 | 424 | 0.0107 / 0.0173 |
+| **`dD_holes_gapre`** (dual, response, holes) | 0.47 0.15 0.10 0.12 0.13 0.09 | 155 | **117** | **271** | **0.0081 / 0.0111** |
+| T3s (band 5 off at 11 stations) | 0.55 0.20 0.09 0.09 0.14 0.15 | 204 | 516 | 742 | 0.0218 / 0.0361 |
+| `fM_gapre` (triple, response) | 0.67 0.30 0.15 0.30 0.35 0.52 | 0 | 716 | 607 | 0.0269 / 0.0340 |
+| **`fN_holes_gapre`** (triple, response, holes; all 59 on three bands) | **0.31 0.07** 0.14 0.13 0.11 **0.07** | **311** | 327 | 454 | **0.0126** / 0.0270 |
+
+**Reading.** Against T3s, `fN_holes_gapre` is +0.05, +0.04, -0.03 and -0.08 m in hours
+3 to 6 with `T4_attrib` at 327: by the letter of the frozen rule a near miss in hours 3
+and 4 (by 0.02 and 0.01 m) and a clear win in hours 5 and 6. Against the dual baseline
+it is within 0.03 m in every hour from 3, better in hours 1, 2 and 6, with 311 epochs
+below a decimetre against 167, and the clock wire on the consumer's satellites is 2.2
+times better (0.0126 against 0.0274 m) and equal on all satellites. It is the first
+three-band network with L5 at every station that serves the consumer better than the
+dual one. The question the arm was built for is answered: a re-entry response that
+sees a primary-pair phase dropout is the build that makes L5 adoptable. On the dual
+posture the same emulation takes the clock wire to 0.0081 / 0.0111 m (3.4 and 2.5
+times better than the baseline) and `T4_attrib` to 117. The emulation pays 2.8 % of
+the GPS records, code and third-band data included, which a per-signal response
+keeps, so these are lower bounds.
+
+**BSHM00ISR.** `CB:GPS_DCB` stays within 0.3 m (dual +0.90, triple +1.20 m) and the
+station's `T4_attrib` falls to 15 and 40; the code rows are disturbed between hours 2
+and 4.5 (half-hour RMS up to 13 m) and healthy again afterwards (0.2 to 0.7 m dual),
+where they used to stay at 6 to 40 m. The criterion of 2 m in every half hour is not
+met: a second, smaller fault at that station remains unread.
+
+**Sim neutrality of the response.** `sG_gapre_dual` and `sH_gapre_tri` have the
+consumer tables, the event counts and the clock grades (0.0030 / 0.0040 m) of their
+bases; the 74 shifted resumptions of the sim are fresh already.
+
+**Recommendation, for the author's decision.** Arm
+`network.cycle_slip.gap_reentry_relevel` in both working bases now: config only,
+legal on the posture, neutral on the sim, and on the field it halves the post-fit
+refloats and takes the clock wire on the consumer's satellites from 0.0274 to 0.0107
+m. It closes standing invariant 1 at the satellite level. The per-signal level is the
+build card [GRS](GRS_gap_reentry_per_signal_2026-09-20.md).
+
+**The sim gets the field's fault, pre-registered.** RINEX op `dropslip` of
+`scripts/rapid_arm.py` (selftest 15/15): L1C, L2W and C2W are blanked for three
+epochs and both phases return with their own integer step of 1 to 300 cycles, while
+C1C, C5Q and L5Q track through; 81 events at 10 of the 60 sim stations in six hours.
+Four arms: `sI_ds_dual_off` and `sJ_ds_dual_on` (the dual sim base without and with
+the response), `sK_ds_tri_off` and `sL_ds_tri_on` (the same on the sim's T3).
+Expectation, frozen: the dual arm is damaged without the response and healthy with
+it; both triple arms are damaged, because band 5 keeps the satellite present and the
+response never fires. If so the sim bed reproduces the field mechanism with truth,
+and `sL_ds_tri_on` with the GRS knob becomes the acceptance test of the build. An arm
+that is not damaged is reported as such: the injection is then too weak or the
+mechanism is not the one read from the field.

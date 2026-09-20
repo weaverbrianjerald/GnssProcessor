@@ -73,6 +73,11 @@ record the program is re-founding **on**.
   consumer on the triple wire reproduces it; the (L1, L5) IF-TD pairs and doubled
   post-fit refloats), the sim is neutral to better; an L5 phase-term model and a
   band-5 slip-tier calibration are owed.
+- [GRS](refound/GRS_gap_reentry_per_signal_2026-09-20.md): open, 2026-09-20: build card,
+  the gap re-entry response per SIGNAL; the satellite-level bookkeeping misses a
+  primary-pair loss of lock while band 5 or a fallback signal tracks through, which
+  is how L5 damages the L1/L2 wire (AB2 sections 10 to 12) and a defect of the dual
+  posture too; default OFF rider of `gap_reentry_relevel`, gates and bars frozen.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
