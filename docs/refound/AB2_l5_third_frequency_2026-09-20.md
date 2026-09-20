@@ -111,3 +111,67 @@ hold with per-band telemetry); otherwise the hold stays as it is on all bands.
 
 Nothing is adopted by this bench. Adoption of the triple posture into the working
 bases is a separate decision after AB2-0 and, if needed, AB2-1.
+
+## 4. 2026-09-20: AB2-0 result, and the attribution arm pre-registered
+
+Arms `runs/_ab2_{field,sim}6_{T3,T3n}`, exe `gnss_processor_pbh1.exe`, all exit 0 with
+720 consumer epochs; a triple arm takes about 13 minutes against 4 for dual.
+
+**Gates.** G0 PASS. G1 PASS: the field wire carries L5Q (10 884) and L5X (12 022)
+phase-bias records with the matching C5Q and C5X code-bias records, the field
+consumer tracks L5X on 44 % of its satellite-epochs (2549 of 5809 cells), the sim
+carries L5Q at full fill. The only receiver states are the clock and `CB:GPS_DCB`
+(42 454 rows): the receiver DCB state is live, and no receiver band-5 code bias is
+allocated on either side. G3 PASS: T3n's consumer table equals T3's.
+
+**B1 neutrality: FAIL on the field, mixed on the sim.** Consumer 3D p50 by hour, m:
+
+| arm | field | sub-dm | sim | sub-dm |
+| --- | --- | --- | --- | --- |
+| baseline pair (dual) | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 |
+| T3 (triple) | 0.67 0.30 0.14 0.62 0.68 1.11 | 0 | 0.56 0.16 0.08 0.04 0.04 0.04 | 430 |
+
+The field error is a ramp from hour 3 (per 30 min 1.62 0.40 0.30 0.26 0.13 0.46
+0.33 0.67 0.67 0.75 1.11 1.13) carried by the vertical (hours 4 to 6: up -0.672 m
+mean against -0.061, east +0.260 against +0.065). The sim is 0.06 m worse in hour 2
+and 0.01 to 0.02 m better from hour 3.
+
+**B2 the clock wire: FAIL on the field.** Within-arc RMS against COD, hours 2 to 6,
+difference-median: consumer-tracked 0.0274 to 0.0308 m (+12 %), all satellites
+0.0281 to 0.0420 m (+49 %). The slip tiers roughly double at three bands
+(`T4_attrib` 457 to 931, `T0_band_scope` 415 to 719, `T1_if_slip` 136 to 308,
+`CLK_ANCHOR` 598 to 777, `STRANSFORM` 151 to 221).
+
+**The L5 phase-bias read (T3n wire, hold OFF).** Per band the estimator's raw
+phase bias wanders by 0.5 to 1.5 m within an arc on the field on every band and
+every block, so a decimetre signal cannot be read per band. The instrument that can
+see it is the clock-free and ionosphere-free triple combination of the wire phase
+biases, -0.2851 PB1 + 1.5457 PB2 - 1.2606 PB5. On the sim it is flat (within-arc RMS
+p50 0.001 m, largest range 0.055 m): there the estimator's wander is purely
+clock-shaped and ionosphere-shaped. On the field it moves by decimetres to metres
+(p50 RMS 0.02 to 0.26 m, p90 to 0.82 m) on Block IIF and Block III alike, and the
+two independent receiver families disagree for the same satellite: G03 0.240 (X
+family) against 0.004 (Q family), G10 0.820 against 0.008, G25 1.437 against 0.021,
+G24 0.251 against 1.604, with the difference as large as the larger member. One
+family is always near zero, which is what three bands anchored at one station give
+by construction; the other family's L5 is anchored elsewhere. The movement is
+anchor-station-specific estimator error, not a common satellite signal, and no
+Block IIF excess is resolvable. By the rule of section 3 the hold stays on all
+bands; AB2-1 as a band scope is not warranted.
+
+This also names the lead for the open question of why the estimator's phase bias
+wanders at all ([PBH](PBH_phase_bias_hold_2026-09-19.md) section 2): the time
+variation of a (satellite, signal) phase bias follows its ANCHOR station, not the
+ensemble of stations that track the satellite.
+
+**Verdict of AB2-0.** L5 is not adoptable on the field as the posture stands. The
+regression is unattributed between the triple NETWORK (slip tiers, clock wire) and
+L5 inside the CONSUMER (unmodelled L5 phase behaviour against a frozen product).
+
+**AB2-0b, pre-registered: the attribution arm (config-only).** T3d = the triple
+network of T3 with the consumer fed a copy of its RINEX file from which the band-5
+observation types are removed, so the consumer is dual while the wire is the triple
+network's. Reading, frozen: T3d within 0.03 m of the baseline pair in hours 2 to 6
+means the triple wire serves a dual consumer and the loss is L5 inside the consumer;
+T3d reproducing T3's loss means the triple network damages the L1/L2 wire. Both
+beds.
