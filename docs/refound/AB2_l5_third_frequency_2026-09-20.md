@@ -438,3 +438,65 @@ section 8, and `fG_nobshm` is read against the dual diagnostic without that stat
 | `fH_nobshm_s10` | the same, and band 5 removed at the other ten | what the other ten are worth without it |
 | `fJ_bshm_slip5` | band 5 removed at BSHM00ISR and the five slip stations | is the last 0.10 m the real L5 slips |
 | `fK_bshm_sick4` | band 5 removed at BSHM00ISR, KIT300UZB, JPLM00USA, GAMB00PYF, MAC100AUS | or the chronically sick stations |
+
+## 10. 2026-09-20: BSHM00ISR is not a gross-code station: the estimator diverges there at one epoch; the trigger arms pre-registered
+
+Read of the dual baseline `runs/_rf0hv3_field6` (no new run). The post-fit code rows
+of BSHM00ISR are healthy for two and a half hours and gross from then on, RMS by half
+hour: 2.1 0.3 0.3 0.3 0.2 **40.6** 14.7 31.9 35.7 5.7 6.0 5.8 m (all other stations
+0.6 to 0.9 m). The raw data are clean through all six hours (section 9, and the raw
+C2W minus C1W of the station is 1.7 m median, the level of a healthy station with the
+same receiver). At TOW 268860 (02:41:00):
+
+- `network_rx_states.csv`: the station's `CB:GPS_DCB` goes from +41.238 m to -2.800 m
+  in one epoch and is carried from there with a shrinking sigma (0.116 to 0.050 m).
+- `network_events.csv`, same epoch: `PRIORRES family=rxcb label=RESPONDED
+  mech=innov_withhold folded=0 e=4.403838e+01`, which is exactly +41.238 minus -2.800.
+  The carried receiver code bias was withheld for the epoch and the state fell to what
+  the datum alone gives it.
+- Same epoch and station: `T0_gap arc_resume G14 ... L1C shifted_bridged ...
+  dGF=-57.0436` together with `L2L shifted_fresh`: after a three-epoch phase dropout
+  the band-2 signal of the arc came back as L2L in place of L2W (the fallback walk of
+  the priority list), and three arcs were refloated by `T4_attrib`.
+
+From that epoch the station's code bias is 44 m from the level its ionosphere states
+and ambiguities carry, which is 68 m of L1 slant ionosphere: the "gross slant
+ionosphere of BSHM00ISR" of AB1 section 4 (median 57 m) and the "gross code" of RF-0
+are this one event, not the data. With two bands the free slant ionosphere absorbs
+most of it; with three bands a code-bias error does not scale as the inverse square
+of the frequency and cannot be absorbed, which is the L5 loss. BSHM00ISR holds 12 of
+the 26 arc resumes of the run that name a non-primary band-2 signal. The receiver
+code-bias gate is an open item already ("frame-blind"); this is a field instance with
+its trigger, its epoch and its price (2.6 times on the dual clock wire, all of the L5
+loss).
+
+**Trigger arms, pre-registered (RINEX only).** `dA_bshm_noalt` = the dual baseline with
+the L1L and L2L observation types removed from the RINEX file of BSHM00ISR, so that no
+fallback signal exists there; `fL_bshm_noalt` = the same on T3. Reading, frozen: the
+trigger is confirmed when the station's `CB:GPS_DCB` stays within 1 m of its hour-2
+value through hour 6 and its code rows stay below 2 m RMS in every half hour; the
+arms are then graded like any other (consumer, `T4_attrib`, clock wire). A station
+that still diverges names a second trigger, and the event epoch is read again.
+
+**The hole is the gap re-entry, and its response exists unarmed.** The `arc_resume`
+row above reads `shifted_bridged ... pl=1;dd=0;slip=0`: the L1C arc returned after
+three missed epochs with its raw level moved (MW by 259 cycles, GF by 57 m), nothing
+marked it slipped, and the carried value was folded across the break. No detector
+covers a return epoch (the MW tier needs an adjacent predecessor, the IF-TD tier
+three consecutive epochs). The gap instrument counts 131 resumptions in the dual
+baseline, 88 of them shifted, and 41 arcs shifted AND bridged (BSHM00ISR 9 with a
+largest GF move of 277 m, BOGT00COL 8, GCGO00USA 5, SGOC00LKA 4, GAMB00PYF 3): the
+"shifted-and-bridged is about zero, so defer the response" ruling of the slip-QC
+card G does not hold on this posture. The response is built, default OFF, and legal
+here (phase-leveling lineage with `relevel_free_epoch` on):
+`network.cycle_slip.gap_reentry_relevel`. Standing invariant 1, open on the working
+bases.
+
+**Response arms, pre-registered (config only).** `dC_gapre` = the dual baseline with
+`network.cycle_slip.gap_reentry_relevel: true`; `fM_gapre` = the same on T3. Reading,
+frozen: the BSHM00ISR criteria of the trigger arms above; the run-end card-G line
+must show the response driving (re-entry refloats above zero, invariant 4); then the
+consumer, `T4_attrib` and the clock wire against the dual baseline (`dC_gapre`) and
+against T3s (`fM_gapre`). A `dC_gapre` that is better than the dual baseline on the
+clock wire is a posture fix in its own right; an `fM_gapre` that matches T3s with all
+59 stations on three bands makes L5 adoptable without a station screen.
