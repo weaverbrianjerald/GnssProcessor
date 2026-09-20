@@ -4,8 +4,8 @@
 
 - **id:** AB2
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Second add-back on the held-wire posture. Census findings and the config-only bench AB2-0 (does a triple arm stay healthy, is it neutral for the float consumer, and does the L5 phase bias carry signal that the hold must not freeze) are pre-registered here.
+- **status:** parked
+- **summary:** Second add-back on the held-wire posture, PARKED 2026-09-20 at KEEP_OFF on the field: a triple network damages the L1/L2 wire on real data (consumer hours 4 to 6 at 0.62 / 0.68 / 1.11 m against 0.10 / 0.13 / 0.11; a dual consumer on the triple wire reproduces it), the (L1, L5) IF-TD pairs are the largest destabilizer, the post-fit refloats stay doubled; the sim is neutral to better. An L5 phase-term model and a band-5 slip-tier calibration are owed.
 - **source:** [NETWORK_REFOUNDING](NETWORK_REFOUNDING_2026-09-14.md) (the add-back list); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 8 (the baseline pair and the L5 pre-flight note); code census of 2026-09-20
 - **knobs / posture:** `processing.frequency_mode: triple` plus band-5 entries in `processing.signal_priorities.GPS`; RF-0hv working bases at main `2b12b19`
 - **dates in the text:** 2026-09-20
@@ -213,3 +213,39 @@ to within 0.05 m of the baseline pair in hours 4 to 6 with `T4_attrib` back belo
 that arm is then run; if neither arm does, L5 is recorded KEEP_OFF on the field
 with this evidence, the open item becomes a band-5 calibration of the slip tiers,
 and the add-back sequence moves on.
+
+## 6. 2026-09-20: AB2-0c result, and the verdict: L5 PARKED, KEEP_OFF on the field
+
+Field arms `runs/_ab2_field6_{T3p,T3q}`, both exit 0, 720 consumer epochs.
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | T1_if_slip | T0_band_scope | CLK_ANCHOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline pair (dual) | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 457 | 136 | 415 | 598 |
+| T3 (triple) | 0.67 0.30 0.14 0.62 0.68 1.11 | 0 | 931 | 308 | 719 | 777 |
+| T3p (IF-TD on the (L1, L2) pair only) | 0.69 0.31 0.14 0.15 0.17 0.30 | 9 | 947 | 164 | 719 | 1053 |
+| T3q (T3p and band scope off) | 0.69 0.31 0.14 0.26 0.24 0.32 | 0 | 827 | 164 | 0 | 882 |
+
+Restricting the IF-TD tier to the (L1, L2) pair removes most of the loss (hours 4
+to 6 from 0.62 / 0.68 / 1.11 to 0.15 / 0.17 / 0.30 m), so the (L1, L5) IF-TD pairs
+are the largest single destabilizer. Neither arm meets the frozen reading: hour 6
+stays at 0.30 m against 0.11, hour 2 at 0.31 against 0.17, and the `T4_attrib`
+refloats stay doubled (947 and 827 against 457) with more clock-anchor decouples
+than T3. Turning the band-scope tier off does not help. The remaining stress is in
+the post-fit attribution tier, which says the L5 phase rows themselves carry model
+error at the stations on real data; scoping detectors cannot remove that.
+
+**Verdict.** On the field, GPS L5 in the NETWORK damages the L1/L2 wire and is
+KEEP_OFF on this posture. On the sim it is neutral to better (0.04 m settled
+against 0.05 to 0.06 m), which the sim earns by having no receiver band-5 bias, no
+inter-frequency clock variation and full L5 coverage. Nothing is adopted; the
+working bases stay dual.
+
+**Owed before L5 can return** (one build card, not config): a model for the
+L5-specific phase term (a per-satellite inter-frequency clock state common to the
+stations, and the receiver band-5 code bias `GPS_IFB5` that the key schema names and
+nothing allocates), a band-5 calibration of the IF-TD and post-fit attribution
+tiers, per-band telemetry on the hold, and a sim fixture that carries receiver
+band-5 biases and an inter-frequency clock variation, so that the sim bed can
+falsify the field behaviour. The inter-signal correction asserted at zero moves the
+L5 satellites' clock level by metres; a float consumer absorbs it, an integer
+consumer will not.

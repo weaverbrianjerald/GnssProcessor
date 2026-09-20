@@ -63,10 +63,12 @@ record the program is re-founding **on**.
   the SH VTEC field as a consumer product; the in-solve field is loader-refused on
   this posture, so a post-solve fit with per-satellite bias terms; the trace-only
   prototype AB1-0 and its decision rule are pre-registered.
-- [AB2](refound/AB2_l5_third_frequency_2026-09-20.md): open, 2026-09-20: add-back 2,
-  GPS L5 as a third frequency; a triple arm loads with two keys, band 5's only code
-  datum is an asserted zero inter-signal correction, the sim cannot falsify the hold
-  on L5; the config-only bench AB2-0 is pre-registered.
+- [AB2](refound/AB2_l5_third_frequency_2026-09-20.md): parked, 2026-09-20: add-back 2,
+  GPS L5 as a third frequency, KEEP_OFF on the field: the triple NETWORK damages the
+  L1/L2 wire on real data (consumer hours 4 to 6 at 0.6 to 1.1 m against 0.11; a dual
+  consumer on the triple wire reproduces it; the (L1, L5) IF-TD pairs and doubled
+  post-fit refloats), the sim is neutral to better; an L5 phase-term model and a
+  band-5 slip-tier calibration are owed.
 
 ---
 
