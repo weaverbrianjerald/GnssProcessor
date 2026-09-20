@@ -122,3 +122,90 @@ source.
 counter on `SsrPhaseBiasEntry`), graded with the translation OFF against the
 baseline pair, with and without the level check (whose window coverage, 20 %
 today, is expected to rise once translations stop restarting it).
+
+## 4. 2026-09-19: PBH-0 result, H-LEAK confirmed
+
+Eight arms, 6 h cold, exe `gnss_processor_rf0hv2.exe` (`A3D62A24...`), all exit 0,
+720/720 consumer epochs. G0 PASS: `products.txt` byte-identical to the baseline
+wire on every arm (`edaf96ce...` field, `2149cabd...` sim). G1 PASS: the 0.005
+arm reproduces the translate-only pair to the centimetre on both beds. G2 PASS:
+skipped-below-eps 9894 to 0 (field) and 8054 to 0 (sim) at eps 0, with the
+translated count rising from 1684 to 11 188 cells (field).
+
+Consumer 3D error, p50 by hour in metres (p90 is nearest-rank):
+
+| arm | field h1..h6 | sub-dm epochs | sim h1..h6 | sub-dm epochs |
+| --- | --- | --- | --- | --- |
+| eps 0 | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 |
+| eps 0.001 | 0.56 0.16 0.19 0.30 0.38 0.41 | 2 | 0.61 0.10 0.10 0.13 0.14 0.13 | 194 |
+| eps 0.005 (anchor) | 0.48 0.19 0.29 1.58 1.90 1.09 | 0 | 0.46 0.28 0.19 0.17 0.16 0.12 | 53 |
+| eps 0.02 | 4.96 2.62 0.93 1.66 1.83 4.32 | 0 | 2.35 1.91 0.84 0.49 0.25 0.21 | 0 |
+| baseline pair (eps 0.005 + level check) | 0.43 0.16 0.31 0.49 0.68 0.49 | 9 | 0.46 0.28 0.25 0.15 0.16 0.14 | 81 |
+
+Field eps 0: p90 by hour 3.31 0.20 0.14 0.12 0.26 0.18; hours 3 to 6 p50 0.113 m,
+p90 0.145 m, one excursion to 1.35 m; per 30 min 1.19 0.22 0.19 0.16 0.12 0.07
+0.09 0.10 0.12 0.13 0.11 0.11. Sim eps 0: hours 3 to 6 p50 0.059 m, p90 0.115 m,
+max 0.213 m.
+
+Against the predictions: field hours 4 and 5 are ordered as predicted
+(0.10 <= 0.30 < 1.58 < 1.66; 0.13 <= 0.38 < 1.90, with eps 0.02 at 1.83 in hour 5,
+inside 0.07 m of the anchor); eps 0 is below 1.0 m in both hours by a factor of
+eight; the sim at eps 0 is better than the anchor in every hour from 2 to 6.
+The falsifier did not occur. The 1 mm arm shows the leak is carried by steps
+below a millimetre per epoch: the wire phase bias drifts slowly and the dead
+band let all of it through.
+
+Two things the ladder does not show. Hour 1 is worse at eps 0 than at the
+anchor on both beds (field +0.09 m, sim +0.14 m): in ignition the phase bias
+moves with the clock (read 1: field hour 1 slope 1.42, r 0.73), so part of its
+movement is signal there. The level check was OFF in every ladder arm, so
+these numbers carry no re-validation edge; the level check repaired the leak in
+the baseline pair and is not needed for it at eps 0.
+
+## 5. PBH-1: the build, pre-registered 2026-09-19
+
+`network.emit_pb_hold` (bool, default OFF) and `network.emit_pb_hold_max_gap_s`
+(default 300). Emit-side only; the solve, the clock records and the code-bias
+records are byte-identical with the knob ON.
+
+**Producer.** Per emitted (satellite, signal): the first emitted value of a
+generation is held and written to the wire at every later epoch; the
+estimator's own value keeps evolving behind it. A new generation starts at a
+first sighting, or when the key was not emitted for longer than the gap. The
+hold is the last writer of the emitted value, ahead of the emitter's value-jump
+test. `SsrPhaseBiasEntry` gains `hold_generation` (0 = not held). Marks from
+the existing discontinuity sites are left untouched on the wire. Both edges are
+events with counters (invariant 7): `PB_HOLD` rows `gen_start` with cause
+`first` or `gap`; run-end counters for keys, generations, and the distribution
+of |estimate - held| (what the hold hides); the de-commoned clock step at every
+epoch where a mark naming the clock and the phase bias together is ignored
+(the cost of not transferring a coupled frame move, measured before any
+per-site delta is built).
+
+**Consumer.** For an entry with a nonzero `hold_generation`, a phase-bias
+discontinuity counter change is ignored and counted; a generation change
+resets that (satellite, signal) ambiguity through the existing reset path.
+
+**Wire text.** A `gen=` token on the phase-bias record and a `pbhold=1` token
+on the S line, with the legend extended by the rule at
+`NetworkProductIO.cpp:594-618`. If this part grows, it may be deferred, and the
+card then states that the hold is field-blocking for file consumers.
+
+**Arms.** Both beds, the RF-0hv bases: H = hold ON, translation OFF, level
+check OFF; HA = H with the level check ON; HP = H with the translation ON at
+eps 0 (must equal H).
+
+**Bars.** B0 Debug suite green, new suite `PbEmitHoldTest`. B1 knob OFF: the
+canonical smoke's `#`-stripped record stream identical before and after. B2
+knob ON: `network_epoch_status.csv`, the C and B records of `products.txt`
+identical to the baseline arm; every P record constant within a generation.
+B3 consumer H: p50 within 0.03 m of the eps 0 arm in hours 2 to 6 on both beds
+and within 0.10 m in hour 1; sub-dm epochs at least 150 (field) and 400 (sim);
+720/720. B4 wire truth grade (`scripts/ftc_step_attrib.py`, read 3): the full
+phase correction's within-arc RMS falls to the clock's (sim 0.0199 to about
+0.003 m, field 0.0693 to about 0.027 m). HA is report-only (window coverage,
+trips, consumer): the level check is uncalibrated ([ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md)).
+
+Nothing is promoted by this card: no loader default, no golden, no ledger row.
+Adoption of the hold, or of eps 0, into the RF-0hv working bases is a separate
+decision.

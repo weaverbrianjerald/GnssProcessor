@@ -47,8 +47,9 @@ record the program is re-founding **on**.
 - [PBH](refound/PBH_phase_bias_hold_2026-09-19.md): open, 2026-09-19: the wire's
   phase-bias movement is harmful error for a float consumer (sim 3.0 mm clock alone
   against 19.9 mm with the phase bias) and 0.2 % of the translated mass is a known
-  frame move; config-only dead-band ladder pre-registered as the premise test for an
-  emit-side phase-bias hold.
+  frame move; the config-only dead-band ladder PASSED (zero dead band: field hours
+  3 to 6 at 0.11 m with 167 sub-dm epochs, sim 0.06 m with 448); the emit-side
+  phase-bias hold build (PBH-1) is pre-registered.
 
 ---
 
