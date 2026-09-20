@@ -3278,7 +3278,8 @@ int networkTeardown(
                        o.fa_kept, tier_sum, o.fa_kept_mw, o.fa_kept_lli, o.fa_kept_iftd,
                        o.fa_kept_wusat, o.fa_kept_other);
     }
-    if (nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry) {
+    if (nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry
+        || nc.slip_qc.gap_reentry_per_signal) {
         const auto& qcc = slip_qc.counters;
         // ---- the RESPONSE clause (network.cycle_slip.gap_reentry_relevel) ----
         // Appended to the Card-G line rather than logged apart, because the G3
@@ -3359,6 +3360,61 @@ int networkTeardown(
                   qcc.d5_retaps, qcc.d5_retaps_stepped,
                   qcc.d5_retap_ambs, qcc.d5_retap_ambs_stepped,
                   response_clause);
+        // ---- Card GRS: the PER-SIGNAL tier ------------------------------
+        // Reported only when the rider is armed, so an unarmed run's Card-G
+        // line is unchanged.  Its populations are DISJOINT from the row-level
+        // ones above (a satellite reported there contributes nothing here), so
+        // the two are added, never reconciled.  Invariant #4: resumptions above
+        // zero with arcs at zero is dead wiring.
+        if (nc.slip_qc.gap_reentry_per_signal) {
+            const auto& sg = qcc.gap_sig;
+            log->info("Network (slip-QC card GRS / PER-SIGNAL gap re-entry): {} SIGNAL "
+                      "re-entry(ies) [unit: (station,satellite,signal) return after ≥1 missed "
+                      "epoch while the satellite's raw ROW survived, the population the "
+                      "row-level tier is blind to] = {} SHIFTED (geometry-free level against "
+                      "the partner moved beyond the empirical GF gate) + {} measured-and-"
+                      "unshifted + {} UNMEASURABLE (no partner present on both sides); {} of "
+                      "the measured ones used a partner that did NOT track through the gap "
+                      "(second-choice witness, so a shifted verdict there names the PAIR, not "
+                      "this signal).  RESPONSE (gates: shifted | LLI-on-this-signal {} | "
+                      "unmeasurable {}): {} judged SLIPPED, {} skipped at a gauge-pinned "
+                      "station; {} arc(s) reached with a PROTECTABLE carry, {} had none, {} "
+                      "of the reached had no ambiguity STATE yet = {} shifted + {} lli + {} "
+                      "unmeasurable FREED, {} cold-skipped, {} NOT ACTED (relevel_free_epoch "
+                      "off), {} answered by the C3c funnel alone; {} ambiguity(ies) fed that "
+                      "funnel.  BAND-SCOPED: only the returning signal is freed.{}{}",
+                      qcc.gap_sig_resumptions, qcc.gap_sig_shifted,
+                      qcc.gap_sig_resumptions - qcc.gap_sig_shifted
+                          - qcc.gap_sig_unmeasurable,
+                      qcc.gap_sig_unmeasurable, qcc.gap_sig_partner_broken,
+                      nc.slip_qc.gap_reentry_lli ? "ON" : "OFF",
+                      nc.slip_qc.gap_reentry_per_signal_unmeasurable ? "ON" : "OFF",
+                      sg.verdicts, sg.pivot_skipped, sg.arcs, sg.no_carry,
+                      sg.state_absent, sg.freed_shifted, sg.freed_lli,
+                      sg.freed_unmeas, sg.cold_skipped, sg.no_relevel, sg.dd_only,
+                      sg.dd_marked,
+                      !nc.slip_qc.gap_reentry
+                          ? "  ⚠ INERT BY CONFIGURATION: the rider is armed without "
+                            "cycle_slip.gap_reentry_relevel, so the RESPONSE cannot act, and "
+                            "with no row-level card armed at all nothing is even recorded (the "
+                            "de-duplication list is filled by that card)."
+                          : "",
+                      (nc.slip_qc.gap_reentry && qcc.gap_sig_resumptions == 0)
+                          ? "  ⚠ ARMED AND INERT: ZERO per-signal re-entries on a run with "
+                            "multi-signal tracking.  This is dead wiring, not a quiet run."
+                          : "");
+            // Closure, in ARCS (the row-level tier's precedent): every reached
+            // arc lands in exactly one bucket, so a reader never infers a
+            // missing cell.
+            const long long closure = sg.freed_shifted + sg.freed_lli + sg.freed_unmeas
+                                    + sg.cold_skipped + sg.no_relevel + sg.dd_only;
+            if (closure != sg.arcs)
+                log->error("Network (slip-QC card GRS): per-signal arc closure BROKEN: {} "
+                           "reached vs {} bucketed (shifted {} + lli {} + unmeas {} + cold {} "
+                           "+ no_relevel {} + dd_only {}).",
+                           sg.arcs, closure, sg.freed_shifted, sg.freed_lli,
+                           sg.freed_unmeas, sg.cold_skipped, sg.no_relevel, sg.dd_only);
+        }
     }
     if (nc.slip_qc.ref_gate) {
         IfPhaseSlipDetector::RefGateCounters rg;

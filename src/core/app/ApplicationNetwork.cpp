@@ -308,6 +308,11 @@ int Application::runNetwork() {
         sp.gap_reentry             = sq.gap_reentry;
         sp.gap_reentry_lli         = sq.gap_reentry_lli;
         sp.gap_reentry_unmeasurable = sq.gap_reentry_unmeasurable;
+        // Card GRS: the per-SIGNAL rider of the same response.  It also arms the
+        // per-signal half of the compute and qualify passes, so an OFF run never
+        // builds a per-signal list and never reads one.
+        sp.gap_reentry_per_signal  = sq.gap_reentry_per_signal;
+        sp.gap_reentry_per_signal_unmeasurable = sq.gap_reentry_per_signal_unmeasurable;
         // Bridge v3 E4: the GF-row capture needs the qualified raw verdicts.
         sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
         // CS-GF authority (iono_carry_source = smoothed_gf): same need.  The

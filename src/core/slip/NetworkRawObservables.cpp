@@ -45,7 +45,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                                   const std::vector<bool>& present,
                                   int n_sta_total,
                                   PppUtils& utils,
-                                  RawSlipEpoch& out) {
+                                  RawSlipEpoch& out,
+                                  bool per_signal) {
     for (int i = 0; i < n_sta_total; ++i) {
         if (i >= static_cast<int>(out.rows.size())) break;
         if (!present[i]) continue;
@@ -118,6 +119,28 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             r.lambda_wl_m = lam_wl;
             r.lli1        = lli1;
             r.lli2        = lli2;
+            // ---- Card GRS: the per-SIGNAL view of the same observation ------
+            // Everything above summarises the satellite through ONE pair.  The
+            // per-signal re-entry tier needs the signals the pair leaves out,
+            // because those are precisely what keeps the row alive across a
+            // primary-pair loss of lock.  `ph` is already the lowest-band-first
+            // list of phases WITH a matching code, so the two views can never
+            // disagree about which signals exist.  A signal whose wavelength
+            // does not resolve is dropped rather than carried in cycles: the
+            // level test differences metres.
+            if (per_signal) {
+                r.sigs.reserve(ph.size());
+                for (const auto& k : ph) {
+                    const double lam = utils.getWavelength(obs.system, k, obs.satellite);
+                    if (!(std::isfinite(lam) && lam > 0.0)) continue;
+                    RawSigObs s;
+                    s.sig     = k;
+                    s.phase_m = obs.raw_observed.at(k) * lam;
+                    s.code_m  = obs.raw_observed.at("C" + k.substr(1));
+                    s.lli     = obs.lli_flags.count(k) ? obs.lli_flags.at(k) : 0;
+                    r.sigs.push_back(std::move(s));
+                }
+            }
             dst.push_back(std::move(r));
         }
     }
@@ -314,11 +337,16 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // same records, and gating the response on the diagnostic would make
         // turning the diagnostic off silently disarm the fix.  With both off the
         // block is unreached and every Card-G behaviour is byte-identical.
+        // Satellites that produced a ROW-level resumption this epoch: the Card
+        // GRS tier's de-duplication key (5b).  Filled only under the rider, so
+        // an unarmed run pays for one empty container and nothing else.
+        std::set<std::string> row_resumed;
         if (p.gap_instrument || p.gap_reentry) {
             for (const auto& r : rows) {
                 const auto pit = h.prev.find(r.satellite);
                 if (pit == h.prev.end()) continue;                       // first sighting
                 if (pit->second.epoch_idx >= epoch_idx - 1) continue;    // adjacent (or same) — not a gap
+                if (p.gap_reentry_per_signal) row_resumed.insert(r.satellite);
                 GapResumption g;
                 g.station    = i;
                 g.satellite  = r.satellite;
@@ -347,11 +375,115 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
             }
         }
 
+        // ---- (5b) Card GRS: SIGNALS resuming while the ROW survived --------
+        // The row-level tier at (5) keys on the satellite, and a satellite that
+        // keeps ONE tracking signal keeps its row: a receiver losing lock on
+        // the semi-codeless L1/L2 phases while the civil L5 tracks through
+        // re-enters with an adjacent predecessor, so (5) sees nothing, no
+        // time-difference detector covers the return epoch, and the carried
+        // ambiguities of the returning phases fold across the break.  This tier
+        // keys on the SIGNAL instead.  Satellites already reported at (5) are
+        // skipped, so one break is counted once, by the tier that can see it.
+        //
+        // ⚠ The row-level card is a HARD prerequisite, not a preference: the
+        // de-duplication list `row_resumed` is filled at (5), so with (5)
+        // unreached a whole-satellite gap would be reported by BOTH tiers and
+        // answered twice.  The loader warns; here the tier simply does not run.
+        if (p.gap_reentry_per_signal && (p.gap_instrument || p.gap_reentry)) {
+            const double gate_gf_sig = std::max(p.k_gf * s_gf, p.gf_floor_m);
+            for (const auto& r : rows) {
+                if (row_resumed.count(r.satellite)) continue;   // (5) owns this break
+                const auto sit = h.sig_prev.find(r.satellite);
+                if (sit == h.sig_prev.end()) continue;          // first sighting of the satellite
+                const auto& was = sit->second;
+                // This epoch's levels by signal (the partner lookup's other half).
+                std::map<std::string, const RawSigObs*> now;
+                for (const auto& s : r.sigs) now[s.sig] = &s;
+                for (const auto& s : r.sigs) {
+                    const auto wit = was.find(s.sig);
+                    if (wit == was.end()) continue;                       // first sighting of the signal
+                    if (wit->second.last_epoch >= epoch_idx - 1) continue; // adjacent, not a gap
+                    SigResumption g;
+                    g.station    = i;
+                    g.satellite  = r.satellite;
+                    g.signal     = s.sig;
+                    g.gap_epochs = epoch_idx - wit->second.last_epoch - 1;
+                    g.lli        = s.lli;
+                    g.gate_gf    = gate_gf_sig;
+                    // --- the witness, in the card's priority order -----------
+                    // FIRST CHOICE: a partner that TRACKED THROUGH the gap,
+                    // continuously present from at or before the candidate's
+                    // last-seen epoch right up to now.  Its ambiguity is then
+                    // known constant across the break, so the differenced level
+                    // isolates the CANDIDATE's own step.  SECOND CHOICE: any
+                    // partner with a snapshot that is present now; it may carry
+                    // its own break, which is why that case is counted
+                    // separately rather than silently graded the same way.
+                    // std::map iteration is sorted, so both choices are
+                    // deterministic (the lexically lowest qualifying partner).
+                    const std::string* best = nullptr;
+                    bool best_through = false;
+                    for (const auto& kv : wit->second.gf_snap) {
+                        if (!now.count(kv.first)) continue;               // not present now
+                        const auto oit = was.find(kv.first);
+                        const bool through = oit != was.end()
+                                          && oit->second.run_start >= 0
+                                          && oit->second.run_start <= wit->second.last_epoch
+                                          && oit->second.last_epoch == epoch_idx - 1;
+                        if (through) { best = &kv.first; best_through = true; break; }
+                        if (best == nullptr) best = &kv.first;
+                    }
+                    if (best != nullptr) {
+                        g.partner         = *best;
+                        g.partner_through = best_through;
+                        g.measurable      = true;
+                        // d_gf = (this epoch's GF difference against the partner)
+                        //        − (the same difference at the candidate's own
+                        //           last-seen epoch).
+                        g.d_gf = (s.phase_m - now.at(*best)->phase_m)
+                               - wit->second.gf_snap.at(*best);
+                        g.shifted = (gate_gf_sig > 0.0)
+                                 && (std::abs(g.d_gf) > gate_gf_sig);
+                    }
+                    ++cnt.gap_sig_resumptions;
+                    if (!g.measurable)       ++cnt.gap_sig_unmeasurable;
+                    else if (g.shifted)      ++cnt.gap_sig_shifted;
+                    if (g.measurable && !g.partner_through)
+                        ++cnt.gap_sig_partner_broken;
+                    ep.sig_resumptions.push_back(std::move(g));
+                }
+            }
+        }
+
         // ---- (6) Advance the history -------------------------------------
         for (const auto& r : rows) {
             auto& slot = h.prev[r.satellite];
             slot.obs       = r;
             slot.epoch_idx = epoch_idx;
+        }
+        // Card GRS: …and the per-signal levels.  A signal whose predecessor is
+        // not the immediately-preceding processed epoch starts a NEW continuous
+        // run, which is the fact the partner test reads.  The snapshot is rebuilt
+        // epoch against every OTHER signal present now, so a re-entry always
+        // differences a level taken at its own last-seen epoch.  Advanced under
+        // the same prerequisite the detection has, so the two never disagree
+        // about which epochs the history covers.
+        if (p.gap_reentry_per_signal && (p.gap_instrument || p.gap_reentry)) {
+            for (const auto& r : rows) {
+                if (r.sigs.empty()) continue;
+                auto& smap = h.sig_prev[r.satellite];
+                for (const auto& s : r.sigs) {
+                    auto& rec = smap[s.sig];
+                    if (rec.last_epoch < 0 || rec.last_epoch != epoch_idx - 1)
+                        rec.run_start = epoch_idx;
+                    rec.last_epoch = epoch_idx;
+                    rec.phase_m    = s.phase_m;
+                    rec.lli        = s.lli;
+                    rec.gf_snap.clear();
+                    for (const auto& o : r.sigs)
+                        if (o.sig != s.sig) rec.gf_snap[o.sig] = s.phase_m - o.phase_m;
+                }
+            }
         }
     }
 }

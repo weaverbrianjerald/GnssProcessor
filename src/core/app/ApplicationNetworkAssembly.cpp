@@ -1502,7 +1502,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // when no consumer asked for them (qc.utils null ⇒ every card inert).
     qc.epoch.reset(stations.size());
     if (qc.armed()) {
-        networkComputeRawObservables(modeled, present, n_sta_total, *qc.utils, qc.epoch);
+        networkComputeRawObservables(modeled, present, n_sta_total, *qc.utils, qc.epoch,
+                                     qc.params.gap_reentry_per_signal);
         // The qualification pass (empirical step gates, LLI credibility, arc
         // resumptions) runs only for a DECISION card — with just the trace armed
         // the observables are pure output and nothing is adjudicated.
@@ -1777,6 +1778,24 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                qc.counters, se, traces, log,
                                relevel_ptr,
                                relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
+
+    // ---- Card GRS: the same response, keyed on the SIGNAL -------------------
+    // (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md.)  The drain above
+    // answers a raw ROW that went absent; a satellite that keeps one tracking
+    // signal through a primary-pair loss of lock keeps its row, so that tier is
+    // blind to it and the returning phases' carried ambiguities fold across the
+    // break.  Sited immediately after it, for the same two reasons (same epoch
+    // as the re-entry; before the lane observatory's PASS-A half), and handed
+    // the identical arguments.
+    // No-op unless network.cycle_slip.gap_reentry_per_signal (a rider of
+    // gap_reentry_relevel).
+    networkSlipDrainGapReentryPerSignal(stations, present, i_lo, n_sta_total,
+                                        carry_invariant, carry_warm, carry_slipped_ambs,
+                                        qc.epoch, qc.params,
+                                        local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
+                                        qc.counters, se, traces, log,
+                                        relevel_ptr,
+                                        relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
 
     // ---- EVENT HARNESS Study 1: the injected free_epoch arc response -------
     // (docs/SPEC_event_harness.md §9.)  An `arc_erase` event carrying

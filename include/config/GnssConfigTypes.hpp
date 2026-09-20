@@ -573,6 +573,36 @@ namespace GnssProcessor {
         /// unmeasurable-bridged population measured 24 arcs against 88 shifted).
         bool   gap_reentry_unmeasurable{ false };
 
+        // --- Card GRS: the RE-ENTRY keyed on the SIGNAL ---------------------
+        /**
+         * @brief Rider (@c network.cycle_slip.gap_reentry_per_signal) of
+         *        @ref gap_reentry (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+         *
+         * The row-level response answers a raw ROW that went absent, and the row
+         * is rebuilt each epoch from whichever phase signals carry a matching
+         * code.  A receiver that loses lock on the semi-codeless L1/L2 phases
+         * while a civil signal keeps tracking therefore keeps its row, re-enters
+         * with an adjacent predecessor, and is never a re-entry at all: no
+         * detector covers the return epoch and the returning phases' carried
+         * ambiguities fold across the break.  Measured on the field at
+         * BSHM00ISR / G14, TOW 268770 to 268860 (a 301-cycle L1C step with only
+         * L2W flagged).  @c raw_observed carries band 5 even on a dual-frequency
+         * run, so the hole is not confined to the triple posture.
+         *
+         * SOLVE-AFFECTING, default OFF ⇒ byte-identical.  Armed without
+         * @ref gap_reentry the loader WARNS and the tier stays inert: it
+         * de-duplicates against the row-level resumption list, which is not
+         * collected then, so the two tiers could count one break twice.
+         */
+        bool   gap_reentry_per_signal{ false };
+        /// Sub-gate (@c network.cycle_slip.gap_reentry_per_signal_unmeasurable,
+        /// default ON): free a per-signal re-entry with no usable partner to
+        /// difference the level against.  The OPPOSITE default to
+        /// @ref gap_reentry_unmeasurable, deliberately: a PARTIAL dropout with
+        /// no witness is the measured poison case, and unlike a whole-satellite
+        /// gap the carry of a satellite that never left is certain to be folded.
+        bool   gap_reentry_per_signal_unmeasurable{ true };
+
         // --- SIM-ONLY ORACLE slip response (the level-preserving ceiling) ----
         /**
          * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the

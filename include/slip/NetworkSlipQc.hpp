@@ -753,6 +753,72 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                          RelevelPend>* relevel_pend = nullptr);
 
 /**
+ * @brief Card GRS: the same response, keyed on the SIGNAL instead of the row
+ *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+ *
+ * ## The blind spot this closes
+ *
+ * @ref networkSlipDrainGapReentry answers a @ref GapResumption, and a
+ * resumption is the RAW ROW being absent for at least one processed epoch.  The
+ * row is rebuilt every epoch from whichever phase signals have a matching code,
+ * so a satellite that keeps ONE signal through a dropout keeps its row: a
+ * receiver losing lock on the semi-codeless L1/L2 phases while the civil L5
+ * tracks through re-enters with an ADJACENT predecessor.  No resumption is
+ * written, no time-difference detector covers the return epoch (MW needs an
+ * adjacent predecessor of the same pair, IF-TD three consecutive epochs), and
+ * the carried ambiguities of the returning phases fold across the break.
+ * Measured on the field: BSHM00ISR / G14, TOW 268770 to 268860, the L1C and L2W
+ * phases absent for three epochs, L1C returning with a 301-cycle step and only
+ * L2W carrying LLI.  With a third band present this is the RULE, not the
+ * exception, and @c raw_observed carries band 5 even on a dual-frequency run,
+ * so the hole is not a triple-posture artifact.
+ *
+ * ## What differs from the row-level tier
+ *
+ *  - the level evidence is a geometry-free PHASE difference against a PARTNER
+ *    signal, snapshotted at the candidate's own last-seen epoch (@ref
+ *    SigResumption), not the row's MW/GF pair step;
+ *  - the LLI read is the RETURNING SIGNAL's own, not the primary pair's;
+ *  - an UNMEASURABLE re-entry is freed BY DEFAULT here
+ *    (@c SlipQcParams::gap_reentry_per_signal_unmeasurable), because a partial dropout
+ *    with no witness is the poison case, and unlike a whole-satellite gap the
+ *    carry of a satellite that never left is certain to be folded;
+ *  - the response is BAND-SCOPED: only the returning signal is freed, because
+ *    the other bands demonstrably tracked through and freeing them would pay
+ *    the response-inflicted slip cost SPEC_lane_slip_response measures.
+ *
+ * Everything else is shared with the row-level tier, through the same per-arc
+ * responder: the `pl_bridged` protectable test on @p local_carry, the
+ * synthesised @c StateKeys::makeAmbiguityKey, the pending-reseed mark, the
+ * @c free_ambs latch with @c RelevelEpochState::kCauseGap, and the bridge-pend
+ * void.  Counters land in @c SlipQcCounters::gap_sig so the two tiers stay
+ * separately auditable and each closes on its own.
+ *
+ * Both edges are events (invariant #7): `T0_gap sig_resume` for EVERY
+ * per-signal re-entry (clean ones included, because a tier whose only rows are its own
+ * actions cannot be audited for what it declined) and `T0_gap reentry_relevel`
+ * carrying `scope=signal` for each freed signal.
+ *
+ * No-op unless BOTH @c SlipQcParams::gap_reentry and
+ * @c SlipQcParams::gap_reentry_per_signal.  Called from the slip-drain band of
+ * PASS A immediately after the row-level drain, for the same reasons.
+ *
+ * Parameters are the row-level drain's, with the same contracts.
+ */
+void networkSlipDrainGapReentryPerSignal(
+    std::vector<NetStation>& stations, const std::vector<bool>& present,
+    int i_lo, int n_sta_total, bool carry_invariant, bool carry_warm,
+    std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+    const RawSlipEpoch& raw, const SlipQcParams& qc,
+    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    double pl_now_s, double pl_max_gap_s, SlipQcCounters& qc_cnt,
+    const SyncedEpoch& se, NetworkRunTraces& traces,
+    const std::shared_ptr<spdlog::logger>& log,
+    RelevelEpochState* relevel = nullptr,
+    std::map<std::tuple<int, std::string, std::string>,
+             RelevelPend>* relevel_pend = nullptr);
+
+/**
  * @brief SPEC_slip_relevel_walk §6 — float 2×2 delta-bridge solve for one
  *        (MW, IF-TD) detector pair.
  *

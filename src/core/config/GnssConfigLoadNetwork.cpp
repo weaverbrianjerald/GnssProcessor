@@ -372,6 +372,41 @@ namespace GnssProcessor {
                           ? ", or no pre-gap dual-band level existed to check (conservative "
                             "reset)"
                           : "");
+        // Card GRS rider interlock (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+        // WARN-ONLY and inert, not warn-and-disarm: the per-signal tier skips any
+        // satellite that produced a ROW-level resumption in the same epoch, and
+        // that list is only collected when the row-level card is armed, so
+        // running the rider alone would let one break be counted (and responded
+        // to) twice.  Left armed so the run-end counters state the inertness
+        // rather than the knob vanishing silently (standing invariant #4).
+        if (network_config_.slip_qc.gap_reentry_per_signal
+            && !network_config_.slip_qc.gap_reentry) {
+            log->warn("Network (slip-QC card GRS): network.cycle_slip.gap_reentry_per_signal "
+                      "is armed WITHOUT network.cycle_slip.gap_reentry_relevel.  The per-signal "
+                      "RESPONSE is gated on it and cannot act; the per-signal COLLECTION also "
+                      "needs a row-level card armed (gap_instrument or gap_reentry_relevel), "
+                      "because it de-duplicates against the row-level resumption list and "
+                      "would otherwise answer a whole-satellite gap twice.  Every counter in "
+                      "the run-end Card-G per-signal clause will read 0: armed-and-inert, not "
+                      "a quiet run.  Arm network.cycle_slip.gap_reentry_relevel to make it act.");
+        }
+        if (network_config_.slip_qc.gap_reentry_per_signal
+            && network_config_.slip_qc.gap_reentry)
+            log->info("Network (slip-QC card GRS): PER-SIGNAL gap re-entry ON.  A phase signal "
+                      "that re-appears after ≥1 missed processed epoch is marked SLIPPED even "
+                      "when its satellite stayed present on another signal.  The row-level tier "
+                      "is blind to that case by construction (the raw row survives on a "
+                      "different pair, so the return epoch has an adjacent predecessor and no "
+                      "detector covers it), and it is how a third band damages the L1/L2 wire.  "
+                      "The level test is a geometry-free difference against a partner signal "
+                      "snapshotted at the candidate's own last-seen epoch, gated by the "
+                      "station's empirical GF scale; a re-entry with no usable partner is "
+                      "{}.  SOLVE-AFFECTING and BAND-SCOPED: only the returning signal is "
+                      "freed, never the bands that tracked through.",
+                      network_config_.slip_qc.gap_reentry_per_signal_unmeasurable
+                          ? "FREED (a partial dropout with no witness is the measured poison "
+                            "case)"
+                          : "left alone");
         // SIM-ONLY ORACLE slip response interlocks (include/slip/NetworkSlipOracle.hpp),
         // HERE for the same load-order reason as the two blocks above: carry_invariant
         // and phase_leveling both parse well after the cycle_slip block.
@@ -5566,6 +5601,15 @@ namespace GnssProcessor {
             sq.gap_reentry_unmeasurable =
                 jval<bool>(json, "network.cycle_slip.gap_reentry_relevel_unmeasurable",
                            "network_cycle_slip_gap_reentry_relevel_unmeasurable", false);
+            // Card GRS: the same response keyed on the SIGNAL.  A rider of the
+            // knob above: the row-level tier owns the de-duplication list this
+            // one skips against, so it is inert (and warns) without it.
+            sq.gap_reentry_per_signal =
+                jval<bool>(json, "network.cycle_slip.gap_reentry_per_signal",
+                           "network_cycle_slip_gap_reentry_per_signal", false);
+            sq.gap_reentry_per_signal_unmeasurable =
+                jval<bool>(json, "network.cycle_slip.gap_reentry_per_signal_unmeasurable",
+                           "network_cycle_slip_gap_reentry_per_signal_unmeasurable", true);
             // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp):
             // shift the carried level by the TRUE integer jump instead of freeing
             // the arc, to measure the CEILING of a level-preserving re-level.

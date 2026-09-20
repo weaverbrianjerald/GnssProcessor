@@ -2023,6 +2023,171 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
     }
 }
 
+namespace {
+
+/// The strongest evidence behind one gap re-entry verdict, in the PRIORITY the
+/// freed counters partition on (a single re-entry can satisfy several gates;
+/// the event's `cause` field keeps all of them).
+enum class GapCause { Shifted, Lli, Unmeas };
+
+/// The cause's label, for the event detail and the per-drain log line.
+const char* gapCauseName(GapCause c) {
+    return c == GapCause::Shifted ? "shifted" : (c == GapCause::Lli ? "lli" : "unmeas");
+}
+
+/// What one arc's gap re-entry response did: everything its event must state.
+struct GapArcOutcome {
+    bool        reached{false};     ///< A protectable carry existed (the arc entered the closure).
+    bool        pl_bridged{false};  ///< …a live leveling carry entry (false ⇒ the carry_invariant vehicle).
+    bool        state_live{false};  ///< The ambiguity column already existed at drain time.
+    const char* action{"none"};     ///< The event row's `action` field.
+};
+
+/**
+ * @brief Free ONE (station, satellite, signal) arc at a gap re-entry.
+ *
+ * The response body shared by the row-level tier (Card G) and the per-signal
+ * rider (Card GRS): both answer the same question about the same carry, and a
+ * second copy of this ladder is exactly how the two tiers would drift apart.
+ * Counters land in @p led so each tier keeps its own closed partition; the
+ * caller emits the event, because only it knows the tier's identity fields.
+ *
+ * @param i                  App station index (already screened against i_lo).
+ * @param satellite          Satellite id.
+ * @param sig                The one signal this call responds on (band-scoped).
+ * @param sm                 That station's state manager, MUTATED (pending-reseed mark).
+ * @param carry_invariant    Card-4 DD invariant carry vehicle armed.
+ * @param carry_warm         The legacy phase-leveling carry is warm.
+ * @param carry_slipped_ambs C3c funnel, INSERTED into under @p carry_invariant.
+ * @param local_carry        The leveling carry map, READ-ONLY (the "anything to protect?" oracle).
+ * @param pl_now_s           This epoch's continuous-GPS seconds.
+ * @param pl_max_gap_s       @c network.phase_leveling_max_gap_s.
+ * @param cause_bits         Free-cause bits for the lane observatory's histogram.
+ * @param primary            Strongest evidence (the freed buckets' partition key).
+ * @param led                This tier's ledger, accumulated into.
+ * @param qc_cnt             Run-end counters (only @c relevel_free_marked here).
+ * @param relevel            Free-epoch latch, or nullptr when relevel_free_epoch is off.
+ * @return The outcome; @c reached false means the arc had no carry to protect.
+ */
+GapArcOutcome gapReentryRespondArc(
+    int i, const std::string& satellite, const std::string& sig,
+    StateManager& sm, bool carry_invariant, bool carry_warm,
+    std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    double pl_now_s, double pl_max_gap_s,
+    std::uint8_t cause_bits, GapCause primary,
+    GapReentryLedger& led, SlipQcCounters& qc_cnt, RelevelEpochState* relevel) {
+    GapArcOutcome out;
+    // ⚠ THE KEY IS SYNTHESISED, NOT LOOKED UP — see the header banner.
+    // The first cut mirrored the MW/LLI drain's refloat_signal and
+    // walked the live ambiguity map.  That mirror is structurally wrong
+    // for a RE-ENTRY: the arc left the model set, so its ambiguity
+    // column was pruned with the gap and PASS B's measurement pre-pass
+    // (MeasurementModel::ensureRequiredStates) re-creates it only AFTER
+    // this drain.  The walk matched nothing, and a 12 h field arm came
+    // back byte-identical to its control with 396 SLIPPED verdicts and
+    // 0 freed.  This is the key format the PASS-B inject site reads and
+    // the one the Card-G arc classification synthesises, so a freed arc
+    // reads `shifted_fresh` there by construction.
+    const std::string amb_key = StateKeys::makeAmbiguityKey(satellite, sig);
+
+    // "Is there anything to protect?" is a question about the CARRY.
+    // A LocalCarry entry still inside the max-gap window is exactly
+    // what the PASS-B inject would fold across the break — the same
+    // `pl_bridged` predicate the Card-G classification applies, so the
+    // instrument and the response cannot disagree about the population.
+    {
+        const auto cit = local_carry.find(std::make_tuple(i, satellite, sig));
+        if (cit != local_carry.end()) {
+            const double gap_s = pl_now_s - cit->second.last_seen_s;
+            out.pl_bridged = (gap_s >= 0.0 && gap_s <= pl_max_gap_s);
+        }
+    }
+    // Under carry_invariant the DD chord test would need
+    // NetworkInvariantCarryDriver, a runNetwork local that does not
+    // reach this seam (ctx carries carry_sat_vertex / carry_group_id,
+    // not the driver).  So every re-entry is treated as PROTECTABLE
+    // there — the conservative direction: the C3c funnel insert is
+    // idempotent and an arc with no carried chord re-taps fresh, which
+    // is what it would have done anyway.  The cost is that
+    // gap_reentry_no_carry cannot separate the two on that vehicle; the
+    // DD ledger (gap_shifted_bridged / _fresh) still can, from the driver.
+    if (!(out.pl_bridged || carry_invariant)) {
+        ++led.no_carry;
+        return out;
+    }
+    ++led.arcs;
+    out.reached = true;
+
+    // Does the state exist YET?  Usually NOT — that IS the defect, so it
+    // is counted rather than assumed.  The free-epoch latch is keyed on
+    // the string and survives to the inject either way; only the
+    // pending-reseed mark needs a live state, because a mark on an
+    // absent key would sit in the set and be consumed by some later
+    // epoch's pre-pass — a response acting on history.
+    out.state_live = sm.getAmbiguities().count(amb_key) != 0;
+    if (!out.state_live) ++led.state_absent;
+
+    // Card 4 C3c: the DD invariant carry owns its own funnel and is
+    // live from epoch 1 (refloat_signal's contract, unchanged).
+    if (carry_invariant) {
+        carry_slipped_ambs.insert({i, amb_key});
+        ++led.dd_marked;
+    }
+    if (carry_warm) {              // cold: nothing stale to refloat (counted below)
+        if (out.state_live) sm.markAmbiguityPendingReseed(amb_key);
+        if (relevel) {
+            relevel->free_ambs.insert({i, amb_key});
+            relevel->free_cause[{i, amb_key}] |= cause_bits;
+            ++qc_cnt.relevel_free_marked;
+        }
+    }
+    if (!carry_warm) {
+        ++led.cold_skipped;
+    } else if (!relevel && carry_invariant) {
+        // The leveling local carry is superseded and structurally EMPTY
+        // under carry_invariant (the loader disarms relevel_free_epoch
+        // there for exactly that reason), so the C3c funnel insert above
+        // IS the whole response and nothing is missing.  A separate
+        // bucket from `no_relevel`: one is by design, the other is a
+        // response that could not land.
+        ++led.dd_only;
+    } else if (!relevel) {
+        // The mark alone never delivered the free epoch (PASS-B consumes
+        // it pre-inject) — say so instead of reporting a response that
+        // cannot land.
+        ++led.no_relevel;
+    } else if (primary == GapCause::Shifted) {
+        ++led.freed_shifted;
+    } else if (primary == GapCause::Lli) {
+        ++led.freed_lli;
+    } else {
+        ++led.freed_unmeas;
+    }
+    out.action = (carry_warm && relevel)
+                     ? "refloat"
+                     : (!carry_warm ? "cold"
+                                    : (carry_invariant ? "dd_only" : "no_relevel"));
+    return out;
+}
+
+/// Void any outstanding bridge pend on (station, satellite): a fresh mark makes
+/// its pre-slip capture STALE, so a later replace would re-inject a level from
+/// before the break.  The same rule the raw-slip drains apply, one helper.
+void gapReentryVoidPends(int i, const std::string& satellite,
+                         std::map<std::tuple<int, std::string, std::string>,
+                                  RelevelPend>* relevel_pend,
+                         SlipQcCounters& qc_cnt) {
+    if (!relevel_pend) return;
+    for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
+        if (std::get<0>(pit->first) == i && std::get<1>(pit->first) == satellite) {
+            ++qc_cnt.bridge_pend_voided;
+            pit = relevel_pend->erase(pit);
+        } else ++pit;
+}
+
+}  // namespace
+
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 const std::vector<bool>& present,
                                 int i_lo, int n_sta_total,
@@ -2042,6 +2207,10 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     if (raw.resumptions.empty()) return;
     int n_resp = 0;
     std::string detail_log;
+    // This tier's counters are accumulated here and folded into the historical
+    // flat fields at the end (the run-end Card-G line and the unit suite name
+    // them individually); the shared responder speaks the ledger shape.
+    GapReentryLedger led;
     // The resumption list is built station-ordered by the qualify pass, and this
     // walk touches only station i's own StateManager plus the two epoch-scoped
     // sets — serial, in that order, so it is deterministic.
@@ -2057,12 +2226,12 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         const bool lli_set  = qc.gap_reentry_lli && (g.lli1 != 0 || g.lli2 != 0);
         const bool unmeas   = qc.gap_reentry_unmeasurable && !g.measurable;
         if (!g.shifted && !lli_set && !unmeas) continue;   // clean re-entry: bridge it, as designed
-        ++qc_cnt.gap_reentry_verdicts;
+        ++led.verdicts;
         // The legacy pivot's ambiguities are GAUGE-PINNED: refloating one would
         // move the frame every emitted phase bias references, which is the
         // datum-slip re-reference path (MW drain), not this one.  Skipped and
         // counted rather than silently dropped.
-        if (i < i_lo) { ++qc_cnt.gap_reentry_pivot_skipped; continue; }
+        if (i < i_lo) { ++led.pivot_skipped; continue; }
         std::string cause_txt;
         std::uint8_t cause_bits = RelevelEpochState::kCauseGap;
         {
@@ -2074,97 +2243,18 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             if (lli_set)   add("lli");
             if (unmeas)    add("unmeas");
         }
-        const char* primary = g.shifted ? "shifted" : (lli_set ? "lli" : "unmeas");
+        const GapCause primary = g.shifted ? GapCause::Shifted
+                                           : (lli_set ? GapCause::Lli : GapCause::Unmeas);
         StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
         for (const std::string& sig : {g.sig1, g.sig2}) {
             if (sig.empty()) continue;
-            // ⚠ THE KEY IS SYNTHESISED, NOT LOOKED UP — see the header banner.
-            // The first cut mirrored the MW/LLI drain's refloat_signal and
-            // walked the live ambiguity map.  That mirror is structurally wrong
-            // for a RE-ENTRY: the arc left the model set, so its ambiguity
-            // column was pruned with the gap and PASS B's measurement pre-pass
-            // (MeasurementModel::ensureRequiredStates) re-creates it only AFTER
-            // this drain.  The walk matched nothing, and a 12 h field arm came
-            // back byte-identical to its control with 396 SLIPPED verdicts and
-            // 0 freed.  This is the key format the PASS-B inject site reads and
-            // the one the Card-G arc classification synthesises, so a freed arc
-            // reads `shifted_fresh` there by construction.
-            const std::string amb_key = StateKeys::makeAmbiguityKey(g.satellite, sig);
-
-            // "Is there anything to protect?" is a question about the CARRY.
-            // A LocalCarry entry still inside the max-gap window is exactly
-            // what the PASS-B inject would fold across the break — the same
-            // `pl_bridged` predicate the Card-G classification applies, so the
-            // instrument and the response cannot disagree about the population.
-            bool pl_bridged = false;
-            {
-                const auto cit = local_carry.find(std::make_tuple(i, g.satellite, sig));
-                if (cit != local_carry.end()) {
-                    const double gap_s = pl_now_s - cit->second.last_seen_s;
-                    pl_bridged = (gap_s >= 0.0 && gap_s <= pl_max_gap_s);
-                }
-            }
-            // Under carry_invariant the DD chord test would need
-            // NetworkInvariantCarryDriver, a runNetwork local that does not
-            // reach this seam (ctx carries carry_sat_vertex / carry_group_id,
-            // not the driver).  So every re-entry is treated as PROTECTABLE
-            // there — the conservative direction: the C3c funnel insert is
-            // idempotent and an arc with no carried chord re-taps fresh, which
-            // is what it would have done anyway.  The cost is that
-            // gap_reentry_no_carry cannot separate the two on that vehicle; the
-            // DD ledger (gap_shifted_bridged / _fresh) still can, from the driver.
-            if (!(pl_bridged || carry_invariant)) {
-                ++qc_cnt.gap_reentry_no_carry;
-                continue;
-            }
-            ++qc_cnt.gap_reentry_arcs;
-
-            // Does the state exist YET?  Usually NOT — that IS the defect, so it
-            // is counted rather than assumed.  The free-epoch latch is keyed on
-            // the string and survives to the inject either way; only the
-            // pending-reseed mark needs a live state, because a mark on an
-            // absent key would sit in the set and be consumed by some later
-            // epoch's pre-pass — a response acting on history.
-            const bool state_live = sm.getAmbiguities().count(amb_key) != 0;
-            if (!state_live) ++qc_cnt.gap_reentry_state_absent;
-
-            // Card 4 C3c: the DD invariant carry owns its own funnel and is
-            // live from epoch 1 (refloat_signal's contract, unchanged).
-            if (carry_invariant) {
-                carry_slipped_ambs.insert({i, amb_key});
-                ++qc_cnt.gap_reentry_dd_marked;
-            }
-            if (carry_warm) {              // cold: nothing stale to refloat (counted below)
-                if (state_live) sm.markAmbiguityPendingReseed(amb_key);
-                if (relevel) {
-                    relevel->free_ambs.insert({i, amb_key});
-                    relevel->free_cause[{i, amb_key}] |= cause_bits;
-                    ++qc_cnt.relevel_free_marked;
-                }
-            }
-            if (!carry_warm) {
-                ++qc_cnt.gap_reentry_cold_skipped;
-            } else if (!relevel && carry_invariant) {
-                // The leveling local carry is superseded and structurally EMPTY
-                // under carry_invariant (the loader disarms relevel_free_epoch
-                // there for exactly that reason), so the C3c funnel insert above
-                // IS the whole response and nothing is missing.  A separate
-                // bucket from `no_relevel`: one is by design, the other is a
-                // response that could not land.
-                ++qc_cnt.gap_reentry_dd_only;
-            } else if (!relevel) {
-                // The mark alone never delivered the free epoch (PASS-B consumes
-                // it pre-inject) — say so instead of reporting a response that
-                // cannot land.
-                ++qc_cnt.gap_reentry_no_relevel;
-            } else if (g.shifted) {
-                ++qc_cnt.gap_reentry_freed_shifted;
-            } else if (lli_set) {
-                ++qc_cnt.gap_reentry_freed_lli;
-            } else {
-                ++qc_cnt.gap_reentry_freed_unmeas;
-            }
+            const GapArcOutcome out =
+                gapReentryRespondArc(i, g.satellite, sig, sm, carry_invariant,
+                                     carry_warm, carry_slipped_ambs, local_carry,
+                                     pl_now_s, pl_max_gap_s, cause_bits, primary,
+                                     led, qc_cnt, relevel);
+            if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
             // One event per ARC reached (invariant #7's re-coupling edge needs
             // an identity, not just a count).  `statistic` is the raw ΔMW in
             // metres when the break was measurable and BLANK otherwise — a
@@ -2173,11 +2263,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite,
                              stations[static_cast<std::size_t>(i)].name,
                              g.measurable ? std::optional<double>(g.d_mw) : std::nullopt,
-                             std::nullopt,
-                             (carry_warm && relevel)
-                                 ? "refloat"
-                                 : (!carry_warm ? "cold"
-                                                : (carry_invariant ? "dd_only" : "no_relevel")),
+                             std::nullopt, out.action,
                              fmt::format("{};gap_ep={};dGF={};lli1={};lli2={};cause={};"
                                          "carry={};state={}",
                                          sig, g.gap_epochs,
@@ -2187,28 +2273,38 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                          // WHY this arc qualified as protectable, and
                                          // whether the column existed yet: the two facts
                                          // the first cut got wrong, per event.
-                                         pl_bridged ? "pl" : "dd",
-                                         state_live ? "live" : "absent"));
+                                         out.pl_bridged ? "pl" : "dd",
+                                         out.state_live ? "live" : "absent"));
             // A fresh mark on this (station, sat) makes any outstanding bridge
             // pend's pre-slip capture STALE — the same rule the raw-slip drains
             // apply, for the same reason (its replace would re-inject a level
             // from before the break).  Once per resumption, not per band.
-            if (carry_warm && relevel_pend && !voided_pends) {
+            if (carry_warm && !voided_pends) {
                 voided_pends = true;
-                for (auto pit = relevel_pend->begin(); pit != relevel_pend->end();)
-                    if (std::get<0>(pit->first) == i
-                        && std::get<1>(pit->first) == g.satellite) {
-                        ++qc_cnt.bridge_pend_voided;
-                        pit = relevel_pend->erase(pit);
-                    } else ++pit;
+                gapReentryVoidPends(i, g.satellite, relevel_pend, qc_cnt);
             }
             if (++n_resp <= 12)
                 detail_log += fmt::format("{}{}/{}/{} [{}]",
                                           detail_log.empty() ? "" : ", ",
                                           stations[static_cast<std::size_t>(i)].name,
-                                          g.satellite, sig, primary);
+                                          g.satellite, sig, gapCauseName(primary));
         }
     }
+    // Fold this tier's ledger into the historical flat fields.  They are the
+    // names the run-end Card-G line and the unit suite read, so the ledger is
+    // an internal shape only: no counter changes meaning here.
+    qc_cnt.gap_reentry_verdicts      += led.verdicts;
+    qc_cnt.gap_reentry_pivot_skipped += led.pivot_skipped;
+    qc_cnt.gap_reentry_arcs          += led.arcs;
+    qc_cnt.gap_reentry_no_carry      += led.no_carry;
+    qc_cnt.gap_reentry_state_absent  += led.state_absent;
+    qc_cnt.gap_reentry_freed_shifted += led.freed_shifted;
+    qc_cnt.gap_reentry_freed_lli     += led.freed_lli;
+    qc_cnt.gap_reentry_freed_unmeas  += led.freed_unmeas;
+    qc_cnt.gap_reentry_cold_skipped  += led.cold_skipped;
+    qc_cnt.gap_reentry_no_relevel    += led.no_relevel;
+    qc_cnt.gap_reentry_dd_only       += led.dd_only;
+    qc_cnt.gap_reentry_dd_marked     += led.dd_marked;
     if (n_resp > 0)
         log->info("Network[gap-reentry]: TOW {:.1f} marked {} arc(s) slipped at re-entry{} "
                   "— no time-difference detector can run on a return epoch, so this is the "
@@ -2217,6 +2313,121 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                   se.time.tow, n_resp,
                   carry_warm ? (relevel ? "" : " (relevel_free_epoch OFF; mark cannot deliver "
                                                "the free epoch — counted, not acted)")
+                             : " (carry cold; diagnostic)",
+                  detail_log);
+}
+
+// ---------------------------------------------------------------------------
+// Card GRS: the PER-SIGNAL gap re-entry response
+// ---------------------------------------------------------------------------
+void networkSlipDrainGapReentryPerSignal(
+    std::vector<NetStation>& stations, const std::vector<bool>& present,
+    int i_lo, int n_sta_total, bool carry_invariant, bool carry_warm,
+    std::set<std::pair<int, std::string>>& carry_slipped_ambs,
+    const RawSlipEpoch& raw, const SlipQcParams& qc,
+    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    double pl_now_s, double pl_max_gap_s, SlipQcCounters& qc_cnt,
+    const SyncedEpoch& se, NetworkRunTraces& traces,
+    const std::shared_ptr<spdlog::logger>& log, RelevelEpochState* relevel,
+    std::map<std::tuple<int, std::string, std::string>, RelevelPend>* relevel_pend) {
+    if (!qc.gap_reentry || !qc.gap_reentry_per_signal) return;
+    if (raw.sig_resumptions.empty()) return;
+    int n_resp = 0;
+    std::string detail_log;
+    GapReentryLedger& led = qc_cnt.gap_sig;   // this tier owns its own ledger
+    // Station-ordered by the qualify pass, and this walk touches only station
+    // i's own StateManager plus the two epoch-scoped sets, so it is
+    // deterministic.
+    for (const auto& g : raw.sig_resumptions) {
+        const int i = g.station;
+        if (i < 0 || i >= n_sta_total || i >= static_cast<int>(stations.size())) continue;
+        if (i < static_cast<int>(present.size()) && !present[i]) continue;
+        const std::string& sta_name = stations[static_cast<std::size_t>(i)].name;
+        // --- the verdict, the row-level ladder applied to ONE signal ---------
+        // `lli` is the LLI of THIS signal at the return epoch, not of the row's
+        // primary pair: on the field's measured case only the signal that never
+        // dropped carried the flag, so reading the pair would have attributed
+        // the receiver's verdict to the wrong band.
+        const bool lli_set = qc.gap_reentry_lli && (g.lli != 0);
+        const bool unmeas  = qc.gap_reentry_per_signal_unmeasurable && !g.measurable;
+        // THE DECOUPLING EDGE (invariant #7): every per-signal re-entry gets an
+        // event, clean ones included.  A tier whose only visible rows are its
+        // own actions cannot be audited for what it declined to act on.
+        const bool pl_bridged = [&] {
+            const auto cit = local_carry.find(std::make_tuple(i, g.satellite, g.signal));
+            if (cit == local_carry.end()) return false;
+            const double gap_s = pl_now_s - cit->second.last_seen_s;
+            return gap_s >= 0.0 && gap_s <= pl_max_gap_s;
+        }();
+        traces.emitEvent(se.time, "T0_gap", "sig_resume", g.satellite, sta_name,
+                         g.measurable ? std::optional<double>(g.d_gf) : std::nullopt,
+                         g.measurable ? std::optional<double>(g.gate_gf) : std::nullopt,
+                         g.shifted ? "shifted" : (g.measurable ? "clean" : "unmeas"),
+                         fmt::format("{};gap_ep={};partner={};through={};lli={};"
+                                     "carry={}",
+                                     g.signal, g.gap_epochs,
+                                     g.partner.empty() ? std::string("none") : g.partner,
+                                     g.partner_through ? 1 : 0, g.lli,
+                                     pl_bridged ? "bridged" : "fresh"));
+        if (!g.shifted && !lli_set && !unmeas) continue;   // clean re-entry: bridge it, as designed
+        ++led.verdicts;
+        if (i < i_lo) { ++led.pivot_skipped; continue; }   // gauge-pinned legacy pivot
+        std::string cause_txt;
+        {
+            const auto add = [&cause_txt](const char* t) {
+                if (!cause_txt.empty()) cause_txt += '|';
+                cause_txt += t;
+            };
+            if (g.shifted) add("shifted");
+            if (lli_set)   add("lli");
+            if (unmeas)    add("unmeas");
+        }
+        const GapCause primary = g.shifted ? GapCause::Shifted
+                                           : (lli_set ? GapCause::Lli : GapCause::Unmeas);
+        // BAND-SCOPED: only the signal that actually broke is freed.  The other
+        // bands of this satellite tracked through, so their carried levels are
+        // still valid and freeing them would inject exactly the response cost
+        // SPEC_lane_slip_response measures (the slip cost of a whole-satellite
+        // refloat is 100 % response-inflicted).
+        const GapArcOutcome out =
+            gapReentryRespondArc(i, g.satellite, g.signal,
+                                 *stations[static_cast<std::size_t>(i)].sm,
+                                 carry_invariant, carry_warm, carry_slipped_ambs,
+                                 local_carry, pl_now_s, pl_max_gap_s,
+                                 RelevelEpochState::kCauseGap, primary,
+                                 led, qc_cnt, relevel);
+        if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
+        // THE RE-COUPLING EDGE: `scope=signal` is what separates these rows from
+        // the row-level tier's in network_events.csv, so a grader can count the
+        // two populations apart without re-deriving them.
+        traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite, sta_name,
+                         g.measurable ? std::optional<double>(g.d_gf) : std::nullopt,
+                         g.measurable ? std::optional<double>(g.gate_gf) : std::nullopt,
+                         out.action,
+                         fmt::format("{};scope=signal;gap_ep={};dGF={};partner={};"
+                                     "through={};lli={};cause={};carry={};state={}",
+                                     g.signal, g.gap_epochs,
+                                     g.measurable ? fmt::format("{:.4f}", g.d_gf)
+                                                  : std::string{},
+                                     g.partner.empty() ? std::string("none") : g.partner,
+                                     g.partner_through ? 1 : 0, g.lli, cause_txt,
+                                     out.pl_bridged ? "pl" : "dd",
+                                     out.state_live ? "live" : "absent"));
+        if (carry_warm) gapReentryVoidPends(i, g.satellite, relevel_pend, qc_cnt);
+        if (++n_resp <= 12)
+            detail_log += fmt::format("{}{}/{}/{} [{}]",
+                                      detail_log.empty() ? "" : ", ",
+                                      sta_name, g.satellite, g.signal,
+                                      gapCauseName(primary));
+    }
+    if (n_resp > 0)
+        log->info("Network[gap-reentry/signal]: TOW {:.1f} marked {} arc(s) slipped at a "
+                  "PER-SIGNAL re-entry{}.  The satellite stayed present on another signal, "
+                  "so the row-level tier saw an adjacent predecessor and no detector covered "
+                  "the return epoch [{}]",
+                  se.time.tow, n_resp,
+                  carry_warm ? (relevel ? "" : " (relevel_free_epoch OFF; mark cannot deliver "
+                                               "the free epoch: counted, not acted)")
                              : " (carry cold; diagnostic)",
                   detail_log);
 }
