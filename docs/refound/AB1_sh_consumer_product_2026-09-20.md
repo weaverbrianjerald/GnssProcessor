@@ -176,3 +176,35 @@ earns a build when a consumer for it exists (a single-frequency user, or a regio
 densification at PPP-RTK spacing). Instrument notes: run the prototype with
 `OMP_NUM_THREADS=1` (multi-threaded BLAS is about 45 times slower on these small
 systems); grade b_s against the consumer, never against the truth slant.
+
+## 5. 2026-09-20: the diagnostic arm without BSHM00ISR
+
+`runs/_diag_field6_noBSHM`: the field working base with that one station removed
+from the roster (59 to 58), exe `gnss_processor_pbh1.exe`, exit 0, 720 consumer
+epochs. Not an add-back and not a posture proposal: a measurement of what the
+gross-code station costs today.
+
+| | baseline pair (59 stations) | without BSHM00ISR |
+| --- | --- | --- |
+| clock wire against COD, hours 2 to 6, consumer-tracked, within-arc RMS | 0.0274 m | **0.0106 m** |
+| the same, all satellites | 0.0281 m | 0.0196 m |
+| `T4_attrib` refloats / `CLK_ANCHOR` decouples / `T1_if_slip` | 457 / 598 / 136 | **252** / 400 / 129 |
+| consumer 3D p50 by hour | 0.57 0.17 0.11 0.10 0.13 0.11 m | 1.03 0.29 0.19 0.18 0.16 0.14 m |
+| consumer hours 3 to 6: east, north, up as mean / std | +0.054/0.033, +0.017/0.028, -0.068/0.104 | +0.049/0.034, +0.012/0.014, **-0.165**/0.070 |
+| epochs below 0.10 m | 167 | 33 |
+
+One station of 59 generates 45 % of the network's post-fit refloats and a third of
+its clock-anchor decouples, and without it the clock wire is 2.6 times closer to
+COD within arcs. The consumer's scatter improves with the wire (north 0.028 to
+0.014 m, up 0.104 to 0.070 m) while its 3D median gets WORSE, because the vertical
+offset grows from -0.068 to -0.165 m. The arm ignites worse (hour 1 at 1.03 m
+against 0.57 m) and is still converging through hour 6 (0.19, 0.18, 0.16, 0.14 m),
+so the offset reads as ignition history carried by the float ambiguities, not as
+settled wire quality.
+
+Two things follow. The code-row QC of RF-3 has a measured prize on the wire (2.6
+times on the clock) and its target is one station. And the 6 h cold consumer is a
+poor instrument for differences of a few centimetres: a one-station roster change
+moves hour 1 by a factor of two, and the ignition history lingers for hours. A
+consumer started cold on an already settled wire would separate the two; no such
+start offset exists for the closed-loop consumer today.
