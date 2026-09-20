@@ -25,6 +25,10 @@ Ops:
   bias;types=C5?;per=station|sat;sigma=3.0;seed=1      constant, metres (N(0, sigma))
   slip;types=L5?;rate=1.0;max=5;seed=1                 integer-cycle steps, rate per arc-hour
   drift;types=L5?;amp_m=0.03;period_s=5400;per=station|sat|los;seed=1   sinusoid, metres
+  holes;bands=12;window=20            delete a satellite's whole record at an epoch where the
+                                      primary phase of one of `bands` is missing inside an arc
+                                      (a good epoch within `window` epochs), so that a
+                                      phase-only dropout becomes a full tracking gap
 An op on a phase type is given in metres and applied in cycles.  Every draw is keyed
 on (seed, station, satellite), so the same spec gives the same file in every arm.
 """
@@ -61,7 +65,7 @@ def parse_op(text):
     for kv in parts[1:]:
         k, v = kv.split("=", 1)
         op[k.strip()] = v.strip()
-    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift"), op
+    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes"), op
     return op
 
 
@@ -123,12 +127,59 @@ def type_block(system, codes):
     return out
 
 
+def apply_holes(lines, i0, codes, system, op):
+    """Delete satellite records where a primary phase is missing inside an arc; fix the epoch counts."""
+    prio, prim = op.get("_prio") or [], []
+    for b in op.get("bands", "12"):
+        cand = [t for t in prio if t[0] == "L" and t[1] == b and t in codes] or \
+            sorted(t for t in codes if t[0] == "L" and t[1] == b)
+        if not cand:
+            return lines, 0
+        prim.append(codes.index(cand[0]))
+    win, width = int(op.get("window", "20")), 3 + 16 * len(codes)
+    pres, owner, ep, j, head = {}, {}, -1, i0, None
+    while j < len(lines):
+        ln = lines[j]
+        if ln.startswith(">"):
+            ep, head = ep + 1, j
+            flag = int(ln[31]) if len(ln) > 31 and ln[31].isdigit() else 0
+            j += 1 + (int(ln[32:35]) if flag > 1 else 0)
+            continue
+        if ln[:1] == system and len(ln) > 3:
+            q = ln.ljust(width)
+            pres.setdefault(ln[:3], []).append((ep, all(q[3 + 16 * k: 17 + 16 * k].strip() for k in prim), j))
+            owner[j] = head
+        j += 1
+    kill = set()
+    for v in pres.values():
+        good = [e for e, ok, _ in v if ok]
+        for e, ok, j in v:
+            if not ok and good and min(abs(g - e) for g in good) <= win:
+                kill.add(j)
+    nk = {}
+    for j in kill:
+        nk[owner[j]] = nk.get(owner[j], 0) + 1
+    out = []
+    for j, ln in enumerate(lines):
+        if j in kill:
+            continue
+        if j in nk:
+            ln = ln[:32] + f"{int(ln[32:35]) - nk[j]:3d}" + ln[35:]
+        out.append(ln)
+    return out, len(kill)
+
+
 def rewrite_rinex(src, dst, ops, station, hours=None):
-    """Apply `ops` (already selected for this station) to one RINEX 3 file."""
+    """Apply `ops` (already selected for this station) to one RINEX 3 file; returns the records deleted by `holes`."""
     lines = open(src, "r", encoding="ascii", errors="replace").read().split("\n")
     system = ops[0]["sys"]
     i, codes, blk = read_header(lines, system)
     assert codes, (src, "no type block for", system)
+    n_holes = 0
+    for op in ops:
+        if op["op"] == "holes":
+            lines, n = apply_holes(lines, i, codes, system, op)
+            n_holes += n
     new_codes, drop = list(codes), set()
     for op in ops:
         if op["op"] == "strip" and op["sats"] == "all":
@@ -139,7 +190,8 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
     keep = [k for k in range(len(codes)) if k not in drop]
     out = lines[:blk[0]] + type_block(system, [new_codes[k] for k in keep]) + lines[blk[1]:i]
     width = 3 + 16 * len(codes)
-    rec_ops = [op for op in ops if op["op"] != "relabel" and not (op["op"] == "strip" and op["sats"] == "all")]
+    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes")
+               and not (op["op"] == "strip" and op["sats"] == "all")]
     for op in rec_ops:
         op["_idx"] = match_types(codes, op["types"])
     state, sod = {}, 0.0
@@ -180,6 +232,7 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
         i += 1
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="ascii", newline="\n").write("\n".join(out) + ("\n" if out[-1] else ""))
+    return n_holes
 
 
 def delta_m(op, n_op, station, sat, code, sod, state):
@@ -227,7 +280,9 @@ def cmd_make(a):
         net["stations"] = [s for s in net["stations"] if s["name"] != name]
         assert len(net["stations"]) == n0 - 1, f"station {name} not in the roster"
     ops = [parse_op(t) for t in (a.rinex or [])]
-    touched = []
+    for op in ops:
+        op["_prio"] = base.get("processing", {}).get("signal_priorities", {}).get("GPS", [])
+    touched, n_holes = [], 0
     if ops:
         files = [(k, s["name"], s["rinex_path"], s) for k, s in enumerate(net["stations"])]
         cons = net.get("closed_loop", {}).get("station")
@@ -247,7 +302,7 @@ def cmd_make(a):
                     mine.append(dict(op))
             if mine:
                 dst = f"{rd}/rinex/{os.path.basename(path)}"
-                rewrite_rinex(path, dst, mine, name, hours=(a.hours + 0.05) if a.hours else None)
+                n_holes += rewrite_rinex(path, dst, mine, name, hours=(a.hours + 0.05) if a.hours else None)
                 node["rinex_path"] = dst
                 touched.append(name)
     for kv in a.set or []:
@@ -262,9 +317,10 @@ def cmd_make(a):
     json.dump(arm, open(rd + "/arm.json", "w"), indent=2)
     prov = {"base": a.base, "base_sha256": hashlib.sha256(open(a.base, "rb").read()).hexdigest(), "tag": a.tag,
             "hours": a.hours, "set": a.set or [], "drop_station": a.drop_station or [], "rinex": a.rinex or [],
-            "rinex_touched": touched}
+            "rinex_touched": touched, "holes_records_deleted": n_holes}
     json.dump(prov, open(rd + "/rapid.json", "w"), indent=2)
-    print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten, -> {rd}")
+    print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten"
+          + (f", {n_holes} record(s) deleted by holes" if n_holes else "") + f", -> {rd}")
 
 
 # ----------------------------------------------------------------------------- run
@@ -404,6 +460,17 @@ def cmd_selftest(_):
     # 6: truncation
     rewrite_rinex(src, d + "/i.rnx", [parse_op("strip;types=?5?")], "AAAA", hours=1.5 / 60.0)
     chk(sum(1 for x in open(d + "/i.rnx").read().split("\n") if x.startswith(">")) == 2, "truncate at the hour mark")
+    # 7: holes: a phase-only dropout inside an arc deletes the satellite's record and fixes the count
+    hb = list(hdr + body)
+    full = rec("G03", [2.0e7 + 1, 2.0e7 + 1, 2.0e7 + 1, 1.0e8, 0.8e8, 0.7e8])
+    hb[4 + 5] = full[:3 + 48] + " " * 16 + full[3 + 64:]          # epoch 2: G03 without its L1C
+    open(d + "/j.rnx", "w", newline="\n").write("\n".join(hb) + "\n")
+    nh = rewrite_rinex(d + "/j.rnx", d + "/k.rnx",
+                       [dict(parse_op("holes;bands=12;window=3"), _prio=["L1C", "L2W"])], "AAAA")
+    k = open(d + "/k.rnx").read().split("\n")
+    chk(nh == 1 and k[8].startswith("> 2024 05 08 00 01") and k[8][32:35] == "  2" and not k[9].startswith("G03"),
+        f"holes {nh} {k[8]!r}")
+    chk(sum(1 for x in k if x.startswith("G03")) == 3 and sum(1 for x in k if x.startswith("G05")) == 4, "holes scope")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

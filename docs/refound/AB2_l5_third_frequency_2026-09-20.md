@@ -500,3 +500,93 @@ consumer, `T4_attrib` and the clock wire against the dual baseline (`dC_gapre`) 
 against T3s (`fM_gapre`). A `dC_gapre` that is better than the dual baseline on the
 clock wire is a posture fix in its own right; an `fM_gapre` that matches T3s with all
 59 stations on three bands makes L5 adoptable without a station screen.
+
+## 11. 2026-09-20: the sim wave, the second field batch, the trigger and response arms; the hole is per SIGNAL
+
+**Sim wave (section 8): no L5 ingredient reproduces.** Sim T3 is 0.56 0.16 0.08 0.04
+0.04 0.04 m, 430 epochs below a decimetre, `T4_attrib` 0, `if_slip` 0.
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | if_slip (band 5) | note |
+| --- | --- | --- | --- | --- | --- |
+| `sA_rxb5` | 0.56 0.16 0.08 0.04 0.04 0.04 | 429 | 0 | 0 | the injected constant (6.253 m at S01000SIM) leaves the C5Q post-fit mean at +0.303 m, as in T3 |
+| `sB_isc` | 1.20 0.14 0.05 0.05 0.06 0.05 | 464 | 0 | 0 | a slower first hour only |
+| `sC_fam` | 1.06 0.23 0.07 0.06 0.07 0.05 | 442 | 1 | 0 | a slower ignition, `STRANSFORM` 145 to 188 |
+| `sD_cov` | 0.73 0.06 0.05 0.04 0.03 0.04 | 568 | 0 | 0 | better |
+| `sE_slip` | 0.52 0.14 0.07 0.04 0.03 0.04 | 452 | 13 | 1635 (1635) | every injected class is detected and scoped (`T0_mw_detect` 531, `T0_band_scope` 794); the consumer does not move |
+| `sF_drift` | 0.56 0.17 0.08 0.04 0.03 0.04 | 435 | 5 | 0 | harmless |
+
+Correction of sections 1 and 6: a receiver band-5 code bias IS estimated. A constant
+of metres per station on C5 is absorbed to 0.1 mm (`sA_rxb5`); the state is
+`GPS_IFB5`, allocated per station on a three-band lineage and not carried by the
+receiver code-bias carry (`NetworkRunContext.cpp:3039`), and it is not written to
+`network_rx_states.csv`, which is why the AB2-0 bench did not see it. It is removed
+from the list of owed items.
+
+**Second field batch (section 9).**
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib |
+| --- | --- | --- | --- |
+| dual without BSHM00ISR (the AB1 diagnostic) | 1.03 0.29 0.19 0.18 0.16 0.14 | 33 | 252 |
+| `fG_nobshm` (L5 at all 58) | 0.62 0.17 0.13 0.15 0.14 0.26 | 3 | 397 |
+| `fH_nobshm_s10` | 0.34 0.20 0.14 0.15 0.14 0.22 | 5 | 335 |
+| `fJ_bshm_slip5` | 0.63 0.23 0.09 0.09 0.10 0.21 | 219 | 653 |
+| `fK_bshm_sick4` | 0.55 0.21 0.08 **0.05 0.07** 0.18 | **350** | 590 |
+
+Without the sick station the triple network is better than the dual one on the same
+roster in hours 1 to 5. With band 5 off at BSHM00ISR and the four chronically sick
+stations the consumer reaches 0.05 and 0.07 m in hours 4 and 5 and 350 epochs below
+a decimetre, the best field result of the program. Every three-band arm loses some
+of hour 6 (0.13 to 0.26 m against 0.11 m); late re-entries of the kind described
+below are the candidate.
+
+**Trigger arms: the fallback signal is not the trigger.** `dA_bshm_noalt` has the
+consumer table of the dual baseline and `fL_bshm_noalt` that of T3, with event
+counts within 3; BSHM00ISR diverges at the same epoch. The raw data show the trigger: across the three-epoch dropout C1C minus
+L1C of G14 jumps by +57.3 m (301 cycles on L1C) and C2W minus L2W by -4.5 m, while
+L2L and L5Q track through; the receiver flags L2W and not L1C. It is an ordinary
+unflagged slip at a return epoch.
+
+**Response arms.**
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | CLK_ANCHOR | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| dual baseline | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 457 | 598 | 0.0274 / 0.0281 |
+| **`dC_gapre`** (dual, response armed) | 0.53 **0.11** 0.09 0.10 0.14 0.12 | 203 | **228** | **424** | **0.0107 / 0.0173** |
+| T3 | 0.67 0.30 0.14 0.62 0.68 1.11 | 0 | 931 | 777 | 0.0308 / 0.0420 |
+| `fM_gapre` (triple, response armed) | 0.67 0.30 0.15 0.30 0.35 0.52 | 0 | 716 | 607 | 0.0269 / 0.0340 |
+
+On the dual posture the response halves the post-fit refloats, removes every
+shifted-and-bridged arc (card-G line: 0 against 41) and brings the clock wire to
+0.0107 m on the consumer's satellites, which is the whole gain of removing
+BSHM00ISR (0.0106 m) without removing it; hour 2 of the consumer goes from 0.17 to
+0.11 m. It is a posture fix in its own right. It does not rescue the triple arm, and
+it does not keep BSHM00ISR healthy on either: the first re-entry (TOW 268860) is
+refloated on the dual arm, the station diverges at TOW 269010 instead, and on the
+triple arm no `reentry_relevel` row exists at all.
+
+**Why: the re-entry bookkeeping is per satellite, the fault is per signal.**
+`NetworkRawObservables.cpp:53-65` builds one raw row per (station, satellite) from
+whichever phase signals with a matching code are present, lowest band first;
+`:318-321` defines a resumption as that ROW being absent for at least one epoch. A
+dropout of the primary-pair phases during which anything else keeps the row alive is
+not a resumption: band 5 (a civil signal that tracks through a semi-codeless loss of
+lock) or a fallback signal such as L2L. The second divergence of the dual arm is
+such a case: at TOW 268980 the primary phases of G14 are missing for one epoch
+while L2L tracks, and no resumption row is written at TOW 269010. At the return epoch the adjacent-epoch step is then formed across a
+pair change, which the slip cards cannot convert. The slipped ambiguities are folded.
+A third band makes this the rule instead of the exception: every satellite with L5
+stays present through every L1/L2 phase dropout, so the only response that covers a
+return epoch never fires for it. That is the mechanism by which adding L5 damages
+the L1/L2 wire, and it is a defect of the two-band posture too.
+
+**Emulation arms, pre-registered (RINEX only, no build).** RINEX op `holes` of
+`scripts/rapid_arm.py` (selftest 13/13): a satellite's whole record is deleted at an
+epoch where its primary L1 or L2 phase is missing inside an arc, so that every
+primary-pair phase dropout becomes a full tracking gap which the existing
+per-satellite response can see. It removes 12 923 of 464 930 GPS records of the
+window (2.8 %; station median 1.9 %, maximum 9.3 %). `dD_holes_gapre` = `dC_gapre`
+with the op; `fN_holes_gapre` = `fM_gapre` with the op. Reading, frozen: the
+BSHM00ISR criteria of section 10; `fN_holes_gapre` within 0.03 m of T3s in each of
+hours 3 to 6 with `T4_attrib` below 600, all 59 stations on three bands, means a
+per-signal re-entry response is the build that makes L5 adoptable, and its size is
+known before it is written; `dD_holes_gapre` is read against `dC_gapre`.
