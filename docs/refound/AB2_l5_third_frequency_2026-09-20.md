@@ -324,3 +324,61 @@ bias per station, the two-family split of the band-5 signal, partial L5 coverage
 of 32 satellites), a satellite inter-signal correction. A partial recovery is
 reported as the fraction of the loss that is station-local, and both follow-ups are
 then owed.
+
+## 8. 2026-09-20: AB2-1 result (the consumer loss is station-local), and the two-bed one-change batch pre-registered
+
+Arms `runs/_ab2_field6_{T3s,T3sp}`, exe `gnss_processor_pbh1.exe`, exit 0, 720 consumer
+epochs, about 5 minutes each. The 11 stripped files were verified record by record
+against the rule (27 650 GPS records of one station, 0 mismatches).
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | if_slip (band 5) | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| baseline pair (dual) | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 457 | 117 (0) | 0.0274 / 0.0281 |
+| T3 (triple) | 0.67 0.30 0.14 0.62 0.68 1.11 | 0 | 931 | 259 (121) | 0.0308 / 0.0420 |
+| T3p (T3, IF-TD on the first pair) | 0.69 0.31 0.14 0.15 0.17 0.30 | 9 | 947 | 145 (0) | not graded |
+| **T3s** (band 5 removed at 11 stations) | 0.55 0.20 0.09 0.09 0.14 0.15 | **204** | 516 | 151 (24) | **0.0218** / 0.0361 |
+| T3sp (T3s, IF-TD on the first pair) | 0.56 0.21 0.09 0.09 0.14 0.32 | 165 | 557 | 128 (0) | 0.0287 / 0.0365 |
+
+**Reading, by the frozen rule: a partial recovery that is nearly complete.** T3s is
+within 0.03 m of the baseline pair in hours 3 to 5 and misses hour 6 by 0.01 m (0.15
+against 0.11 m); `T4_attrib` is below 600; the clock wire on the consumer's
+satellites is 20 % BETTER than the dual baseline, and on all satellites 28 % worse
+(T3 was 49 % worse). Of the consumer's loss in hours 4 to 6 (0.52 / 0.55 / 1.00 m)
+between 96 and 100 % is station-local. 48 triple stations with 11 dual ones serve
+the consumer as well as the dual network and give it more epochs below a decimetre
+than any arm so far (204 against 167). The section 6 verdict (an L5 phase-term model
+is owed before L5 can return) is superseded: what is owed is a per-station band-5
+health screen, and an account of the rest of the all-satellite clock loss.
+
+**The IF-TD pair scope is a wrong turn.** Both arms that restrict the IF-TD tier to
+the (L1, L2) pair lose hour 6 (0.30 and 0.32 m) where the matching arm with all
+pairs does not. The band-5 pairs detect real events; the scope removes the
+detection, not the event. `if_phase_td_pairs` stays at `all`.
+
+**AB2-2, pre-registered: one change per arm, both beds, one batch.** Tool:
+`scripts/rapid_arm.py` (arm factory with RINEX ops, parallel runner, scorecard;
+`selftest` 11/11). Field arms subtract from T3; sim arms add to the sim's T3. Run
+dirs `runs/_rap_<tag>`.
+
+| tag | bed | the one change | question |
+| --- | --- | --- | --- |
+| `fA_bshm` | field | band 5 removed at BSHM00ISR only | how much is the gross-code station |
+| `fB_kit3` | field | band 5 removed at KIT300UZB only | how much is the 0.23 m station |
+| `fD_rest9` | field | band 5 removed at the other nine | how much is the rest |
+| `fE_phase` | field | L5 phase removed at the 11 (C5 code kept) | is it the phase |
+| `fF_code` | field | C5 code removed at the 11 (L5 phase kept) | is it the code |
+| `sA_rxb5` | sim | constant C5 code bias per station, sigma 3 m, consumer too | the receiver band-5 code bias that no state takes |
+| `sB_isc` | sim | constant C5 code bias per satellite, sigma 2 m | the inter-signal correction asserted at zero |
+| `sC_fam` | sim | band 5 relabelled Q to X at every second station | the two-family split of the L5 columns |
+| `sD_cov` | sim | band 5 removed on the 15 satellites without L5 that day | partial coverage |
+| `sE_slip` | sim | L5-only integer slips at 5 stations, 2 per arc-hour | a station-local band-5 slip fault |
+| `sF_drift` | sim | L5 phase drift 0.05 m, 1.5 h period, per line of sight, at 5 stations | a station-local band-5 drift fault |
+
+Reading, frozen. Field: an arm "recovers" when its consumer p50 is within 0.03 m of
+the baseline pair in hours 3 to 6 with `T4_attrib` below 600; the smallest recovering
+subtraction names the fault. Sim: an arm "reproduces" when its consumer p50 in any of
+hours 4 to 6 is more than 0.05 m above the sim's T3 (0.04 m), or its `T4_attrib` or
+`if_slip` count leaves zero by more than 50 events. A sim arm that reproduces gives
+the sim bed its first L5 fault with truth, and the health screen is then developed
+against it. Sim ingredients that do not reproduce are recorded as harmless to this
+posture at the injected size.
