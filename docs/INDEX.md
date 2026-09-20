@@ -65,7 +65,9 @@ record the program is re-founding **on**.
   dual-frequency consumer's own ionosphere for 2 epochs only, sim with truth): the
   consumer constraint is KEEP_OFF, the field is specified as a product (degree 6,
   25 degree mask, per-satellite bias terms) and not built.
-- [AB2](refound/AB2_l5_third_frequency_2026-09-20.md): parked, 2026-09-20: add-back 2,
+- [AB2](refound/AB2_l5_third_frequency_2026-09-20.md): open (re-opened 2026-09-20,
+  section 7: the L5 rows fit at the typical station, the damage reads as station-local,
+  the station-scope arms T3s / T3sp are pre-registered); first verdict 2026-09-20: add-back 2,
   GPS L5 as a third frequency, KEEP_OFF on the field: the triple NETWORK damages the
   L1/L2 wire on real data (consumer hours 4 to 6 at 0.6 to 1.1 m against 0.11; a dual
   consumer on the triple wire reproduces it; the (L1, L5) IF-TD pairs and doubled

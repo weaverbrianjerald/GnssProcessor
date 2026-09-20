@@ -4,7 +4,7 @@
 
 - **id:** AB2
 - **topic:** network-vehicle
-- **status:** parked
+- **status:** open
 - **summary:** Second add-back on the held-wire posture, PARKED 2026-09-20 at KEEP_OFF on the field: a triple network damages the L1/L2 wire on real data (consumer hours 4 to 6 at 0.62 / 0.68 / 1.11 m against 0.10 / 0.13 / 0.11; a dual consumer on the triple wire reproduces it), the (L1, L5) IF-TD pairs are the largest destabilizer, the post-fit refloats stay doubled; the sim is neutral to better. An L5 phase-term model and a band-5 slip-tier calibration are owed.
 - **source:** [NETWORK_REFOUNDING](NETWORK_REFOUNDING_2026-09-14.md) (the add-back list); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 8 (the baseline pair and the L5 pre-flight note); code census of 2026-09-20
 - **knobs / posture:** `processing.frequency_mode: triple` plus band-5 entries in `processing.signal_priorities.GPS`; RF-0hv working bases at main `2b12b19`
@@ -249,3 +249,78 @@ band-5 biases and an inter-frequency clock variation, so that the sim bed can
 falsify the field behaviour. The inter-signal correction asserted at zero moves the
 L5 satellites' clock level by metres; a float consumer absorbs it, an integer
 consumer will not.
+
+## 7. 2026-09-20: AB2 re-opened: three reads of the existing arms, and the station-scope arms pre-registered
+
+Section 6 parked the card on an inference that was not measured: that the L5 phase
+rows carry model error at the stations in general. Three reads of the arms already on
+disk test it. No new run is used in this part.
+
+**Read 1: the sim bed never exercises the failing tiers.** `network_events.csv`: the
+sim dual and the sim triple arm both hold zero `if_slip` detections and zero
+`T4_attrib` events. The sim's `T1_if_slip` growth (59 to 177) is the reference-satellite
+reset row written for three pairs instead of one (59 times 3), all `diagnostic`. The
+sim's neutrality therefore certifies the three-band algebra, datum and wire on data
+that match the model, and says nothing about the field mechanism. The two-bed
+comparison isolates a fault only after the sim fixture is given the field ingredient
+that produces it.
+
+**Read 2: the L5 rows fit at the typical station.** `network_pf_rows.csv` of field T3,
+hours 2 to 6, within-arc RMS of the post-fit residual per station. Station median L5
+phase 0.0044 m (L5Q 0.0043, L5X 0.0046), the level of L2. Nine stations sit above
+0.010 m: KIT300UZB 0.230, BSHM00ISR 0.061, GAMB00PYF 0.050, ULAB00MNG 0.035,
+VOIM00MDG 0.032, JPLM00USA 0.023, BOGT00COL 0.022, YKRO00CIV 0.014, STHL00GBR
+0.011. The C5 code rows carry what the datum cannot place: per-satellite mean with a
+standard deviation of 1.03 m (C5Q) and 0.83 m (C5X), maximum 2.3 m, which is the
+inter-signal correction asserted at zero; per-station mean 0.45 m across the X
+family; BSHM00ISR at -11.7 m with 35.7 m within-arc.
+
+**Read 3: what the other stations see is mostly the spill.** The median station's
+L1 phase within-arc RMS goes from 0.0073 m (dual) to 0.0131 m (triple), L2 from
+0.0044 to 0.0068 m, with L5 at 0.0044 m. In the dual solve the L1 to L2 ratio (1.66)
+is exactly that of a range-like misfit after the free slant ionosphere is fitted
+(0.287 against 0.174 of its size): a misfit of 0.025 m. In the triple solve a
+range-like misfit lands on (L1, L2, L5) as (0.359, -0.056, -0.149) of its size, and an
+inconsistency of L5 against the other two bands, local to a line of sight, as
+(-0.259, -0.426, 0.536). The L1 growth (0.011 m in quadrature) is therefore mostly
+range-like, a misfit of about 0.035 m, consistent with damaged satellite clocks seen
+from every station. The L2 growth (0.005 m in quadrature) cannot be range-like: it
+indicates an inter-band inconsistency of the order of 0.01 m at the typical station,
+which a dual solve cannot see. `T4_attrib` by station:
+BSHM00ISR 109 to 283 (37 % of the growth), all others 348 to 648. Band-5 `if_slip`
+detections: 121 on 29 stations, 82 of them on six (MAC100AUS 25, GAMB00PYF 14,
+BSHM00ISR 12, LMMF00MTQ 11, YKRO00CIV 10, BOGT00COL 10); 96 of the 121 exceed their
+threshold by more than half, so they are not a marginal-threshold population.
+
+**Reading of the three.** The field damage is consistent with a handful of stations
+whose band-5 data (or all of whose code) are bad, converted by the armed tiers into
+refloats that damage the satellite clocks for every station. A mechanism for the
+asymmetry between two and three bands: with two bands and a free slant ionosphere a
+line of sight has no inter-band redundancy, so any phase discrepancy between the
+bands is absorbed silently by the ionosphere state; the third band over-determines
+it, and whatever does not scale as the inverse square of the frequency becomes
+post-fit stress. The list is dominated by low-latitude and high-latitude sites; a
+scintillation reading is a hypothesis and is not tested here.
+
+**AB2-1, pre-registered (config and RINEX only, field bed).** Station rule, applied to
+T3's own traces: within-arc L5 post-fit phase RMS above 0.010 m in hours 2 to 6, or
+ten or more band-5 `if_slip` detections. It selects 11 of 59 stations: the nine of
+read 2 plus MAC100AUS and LMMF00MTQ.
+
+- **T3s**: T3 with the GPS band-5 observation types removed from the RINEX files of
+  those 11 stations. They stay in the network as dual stations; the other 48 stay
+  triple; the consumer is unchanged (triple, WTZZ00DEU).
+- **T3sp**: T3s with `cycle_slip.if_phase_td_pairs: "first"`.
+
+Reading, frozen. An arm whose consumer p50 is within 0.03 m of the baseline pair in
+each of hours 3 to 6, with `T4_attrib` below 600 and the clock wire's within-arc RMS
+against COD within 10 % of the baseline's (0.0274 m consumer-tracked, 0.0281 m all
+satellites), means the field damage is station-local: L5 is adoptable behind a
+per-station band-5 health screen, the build owed is that screen, and the sim
+ingredient owed is a station-local band-5 fault so that the sim bed can falsify the
+screen. Neither arm meeting it means the loss is network-wide, and the sim injection
+ladder is run next, one ingredient per arm on the sim's T3: a receiver band-5 code
+bias per station, the two-family split of the band-5 signal, partial L5 coverage (17
+of 32 satellites), a satellite inter-signal correction. A partial recovery is
+reported as the fraction of the loss that is station-local, and both follow-ups are
+then owed.
