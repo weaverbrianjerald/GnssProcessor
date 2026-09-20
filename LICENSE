@@ -1,0 +1,49 @@
+GnssProcessor
+Copyright (c) 2025-2026 Oregon State University. All rights reserved.
+Principal author: Brian Weaver, Oregon State University.
+
+STATUS OF THIS LICENSE
+
+This is an interim, restrictive notice. Under Oregon State University Policy
+06-200 (Intellectual Property), software created by university employees, and
+by students employed by or conducting research directed by the university, is
+owned by the university. The policy does not itself provide for an open-source
+release. Until the OSU office that administers intellectual property
+(Intellectual Property Administration / OSU Advantage) approves a specific
+license for this software, the terms below apply. When a license is approved,
+this file is replaced by its text.
+
+TERMS
+
+1. Permitted use. Members of the Oregon State University research group that
+   maintains this software, and persons to whom the principal author or the
+   university has given access to this repository, may use, copy and modify the
+   software for research and education.
+
+2. No redistribution. The software, in source or binary form, modified or not,
+   may not be distributed, published or sublicensed to any other party, and
+   may not be used commercially, without prior written permission from Oregon
+   State University.
+
+3. Contributions. A contribution submitted to this repository is made under
+   these same terms and may be relicensed by Oregon State University together
+   with the rest of the software.
+
+4. Attribution. Any use of the software, or of results produced with it, in a
+   publication, presentation, report, thesis or derived software must credit
+   Brian Weaver and Oregon State University. Until a journal article describing
+   the software is published, the credit takes the form given in CITATION.cff.
+   After publication, that article is cited instead, and CITATION.cff names it.
+
+5. Third-party components. The directory third_party/ and the libraries
+   installed through vcpkg are distributed under their own licenses, which
+   remain in force. The IAU SOFA library in third_party/sofa/ is used under the
+   SOFA Software License; this software is not endorsed by the IAU SOFA Board.
+
+6. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+   EVENT SHALL THE AUTHORS OR OREGON STATE UNIVERSITY BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   SOFTWARE OR ITS USE. THE SOFTWARE IS A RESEARCH TOOL AND MUST NOT BE RELIED
+   UPON FOR NAVIGATION, SAFETY-OF-LIFE OR LEGAL-SURVEY PURPOSES.

@@ -243,6 +243,19 @@ JSON section is `processing` (loop-level toggles) or `estimation` (state-vector 
 
 **State-vector discipline.** `StateManager` is the single source of truth for state layout and dynamic key→index maps (ambiguities, per-sat iono, code biases, sat biases, system time offsets). `KalmanFilter` operates on state owned by `StateManager`. Don't add sibling classes that own parallel state; extend `StateManager`.
 
+**Documentation prose style (standing user directive, 2026-09-19).** New or edited
+Markdown (README, CONTRIBUTING, `docs/onboarding/`, new cards, summaries) uses an
+impersonal, concise, technical register. No second-person address ("changes to X are
+made in Y", not "you change X"); imperatives only inside numbered procedures. No em
+dashes: use a period, colon, comma or parentheses. No personal names as points of
+contact ("a maintainer"). Claims are verified against the code or a run before they
+are written. This does NOT license rewording the existing scientific record
+(`docs/cards/`, `docs/archive/`, `docs/refound/`, this file's older sections). AI
+assistants are permitted on this project under the rules in `CONTRIBUTING.md`
+(section "AI coding assistants"); licensing and credit are in `LICENSE` and
+`CITATION.cff` (interim OSU notice, credit to Brian Weaver, to be replaced by a
+journal citation).
+
 **Git commits — NO Claude attribution (standing user directive).** Commit messages
 carry subject + body only. Do **not** append `Co-Authored-By: Claude <model>
 <noreply@anthropic.com>` in any model/version variant, and no "Generated with

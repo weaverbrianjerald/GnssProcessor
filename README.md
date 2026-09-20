@@ -61,5 +61,8 @@ Run outputs, archives and reference software are kept outside the repository, in
 
 ## License
 
-No license file is present. All rights are reserved by the author; redistribution
-requires the author's permission.
+Copyright Oregon State University; principal author Brian Weaver. [LICENSE](LICENSE) is
+an interim, restrictive notice: use for research and education by persons with access
+to this repository, no redistribution without written permission, credit required. The
+form of the credit is given in [CITATION.cff](CITATION.cff) and will be replaced by a
+journal article citation.

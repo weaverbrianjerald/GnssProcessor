@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "gnssprocessor",
+  "version-string": "0",
+  "description": "Pinned C++ dependency list for GnssProcessor. The build itself runs vcpkg in classic mode (VCPKG_MANIFEST_MODE is forced OFF in CMakeLists.txt); this file is used once per machine to install the pinned versions. See docs/onboarding/01_setup.md, step 1.",
+  "builtin-baseline": "f9d77ef46dfe708b51db358acdea2b97615d5193",
+  "dependencies": [
+    "curl",
+    "eigen3",
+    "gtest",
+    "netcdf-c",
+    "nlohmann-json",
+    "pybind11",
+    "spdlog",
+    "zlib"
+  ]
+}

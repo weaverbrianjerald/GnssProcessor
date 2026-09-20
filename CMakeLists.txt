@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
+# vcpkg stays in CLASSIC mode (packages under C:/vcpkg/installed, shared by both
+# build trees and the IDE).  The repo-root vcpkg.json only pins the versions for the
+# one-time per-machine install (docs/onboarding/01_setup.md); without this line its
+# mere presence would flip the toolchain to manifest mode and rebuild every
+# dependency inside each build tree.  Must precede project().
+set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "vcpkg classic mode; vcpkg.json is an install list only")
 # C is REQUIRED (not optional): the vendored IAU SOFA library (third_party/sofa,
 # used by the CIO frame transform — see the sofa target below) is ANSI C and
 # will not build without the C language enabled.  Do not revert to "CXX" only.

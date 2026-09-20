@@ -15,25 +15,12 @@ The build scripts assume the locations below. Using them avoids editing scripts.
 | Tool | Required location | Notes |
 | --- | --- | --- |
 | Visual Studio **2026** Enterprise, "Desktop development with C++" workload | default install dir (`C:\Program Files\Microsoft Visual Studio\18\Enterprise`) | Provides MSVC, CMake 4.x and Ninja. A separate CMake is not needed. For the Community or Professional edition, `$vsRoot` at the top of `scripts\vs2026_build.ps1` is changed accordingly. |
-| [vcpkg](https://github.com/microsoft/vcpkg) | `C:\vcpkg` | C++ dependencies (installed below). |
+| [vcpkg](https://github.com/microsoft/vcpkg) | `C:\vcpkg` | A current, full `git clone` followed by `bootstrap-vcpkg.bat`. A vcpkg tool older than Visual Studio 2026 does not detect that compiler ("Unable to find a valid Visual Studio instance"). The libraries are installed in Step 3. |
 | Python **3.13** | `C:\Python313` | Used by the build (pybind11) and by every script. |
 | Git for Windows | any | Provides `git` and Git Bash. |
 | MiKTeX (or TeX Live) | any | Needed only for edits to the LaTeX reference. Can be installed later. |
 
-Install the C++ libraries (once, about 30 min):
-
-```powershell
-C:\vcpkg\vcpkg.exe install eigen3 spdlog nlohmann-json pybind11 gtest netcdf-c curl zlib --triplet x64-windows
-```
-
-`nlohmann-json` is header-only and is not named in `CMakeLists.txt`, but the config loader
-includes it. Versions known to build (2026-09): eigen3 3.4.0, spdlog 1.15.3 (fmt 11.0.2),
-nlohmann-json 3.12.0, pybind11 2.13.6, gtest 1.17.0, netcdf-c 4.8.1, curl 8.14.1,
-zlib 1.3.1. A build failure inside a library header after a newer vcpkg install is
-reported to a maintainer together with the output of `vcpkg list`.
-
-**Check:** `C:\vcpkg\installed\x64-windows\include\Eigen` and
-`C:\vcpkg\installed\x64-windows\include\nlohmann\json.hpp` exist.
+**Check:** `C:\vcpkg\vcpkg.exe version` prints a version, and Visual Studio starts.
 
 ## Step 2: Clone the repository
 
@@ -52,7 +39,32 @@ git -C C:\GnssProcessor config core.hooksPath .githooks
 
 **Check:** `git -C C:\GnssProcessor config core.hooksPath` prints `.githooks`.
 
-## Step 3: Create the Python environment
+## Step 3: Install the C++ libraries
+
+The repository root holds `vcpkg.json`, which lists the libraries and pins their
+versions through a vcpkg baseline. One command, run from the repository root, installs
+exactly those versions into the shared location `C:\vcpkg\installed` (once per machine,
+30 to 60 min because the libraries are compiled):
+
+```powershell
+cd C:\GnssProcessor
+C:\vcpkg\vcpkg.exe install --triplet x64-windows --x-install-root=C:\vcpkg\installed
+```
+
+Pinned versions: eigen3 3.4.0, spdlog 1.15.3 (fmt 11.0.2), nlohmann-json 3.12.0,
+pybind11 2.13.6, gtest 1.17.0, netcdf-c 4.8.1 (hdf5 1.14.6), curl 8.14.1, zlib 1.3.1.
+
+The build itself does not use manifest mode: `CMakeLists.txt` forces
+`VCPKG_MANIFEST_MODE` off, so both build trees and the IDE share the one install.
+On a machine whose `C:\vcpkg\installed` also serves other projects this command is not
+used, because it removes packages that are not in the list. There the libraries are
+installed by name: `vcpkg install eigen3 spdlog nlohmann-json pybind11 gtest netcdf-c
+curl zlib --triplet x64-windows`.
+
+**Check:** `C:\vcpkg\installed\x64-windows\include\Eigen` and
+`C:\vcpkg\installed\x64-windows\include\nlohmann\json.hpp` exist.
+
+## Step 4: Create the Python environment
 
 ```powershell
 cd C:\GnssProcessor
@@ -66,7 +78,7 @@ every new terminal before a project script is run.
 
 **Check:** `python -c "import hatanaka, pandas, plotly"` prints nothing.
 
-## Step 4: Build
+## Step 5: Build
 
 All builds go through the wrapper. A bare `cmake --build` fails on this machine setup,
 because the wrapper is what loads the compiler environment and selects the correct CMake.
@@ -84,7 +96,7 @@ Later builds recompile only what changed and take seconds to a minute.
 
 **Check:** `build\x64-Release\gnss_processor.exe` and `build\x64-Debug\gnss_tests.exe` exist.
 
-## Step 5: Download the test data
+## Step 6: Download the test data
 
 The repository does not store GNSS data. One script downloads a fixed set of IGS
 products and station files into `data\`.
@@ -106,7 +118,7 @@ The script can be re-run safely. Existing files are skipped.
 **Check:** `data\2024-129\products\` contains `.SP3`, `.CLK` and `.BIA` files, and
 `data\static\atx\igs20.atx` exists.
 
-## Step 6: Run a first PPP solution
+## Step 7: Run a first PPP solution
 
 ```powershell
 build\x64-Release\gnss_processor.exe config\ppp_internal.json
@@ -119,7 +131,7 @@ documentation and are worth reading.
 **Check:** the run ends without an error and writes trace files under `logs\`.
 [Page 2](02_code_tour.md) describes those files and how to plot them.
 
-## Step 7: Run the unit tests
+## Step 8: Run the unit tests
 
 ```powershell
 build\x64-Debug\gnss_tests.exe                                   # full suite, ~90 s
@@ -129,7 +141,7 @@ build\x64-Debug\gnss_tests.exe --gtest_filter=StochasticModel*   # one suite, < 
 **Check:** the last line reads `[  PASSED  ]`, and the only skipped test (if any) is
 `FixtureSmokeTest.Sp3HeaderTimeConversionMatches`.
 
-The development setup is complete. The next page is the [code tour](02_code_tour.md).
+The development setup is complete. IDE debugging is covered on [page 5](05_debugging.md). The next page is the [code tour](02_code_tour.md).
 
 ---
 
@@ -143,6 +155,6 @@ The development setup is complete. The next page is the [code tour](02_code_tour
 | Warnings `C4828` (illegal character) | Old mixed-encoding comments. | Ignore. |
 | `LNK1104: cannot open file ...gnss_processor.exe` | The exe is running, or another build is. | Close it, rebuild. |
 | Linker error `unresolved external symbol` after a new `.cpp` was added | The file is missing from `CMakeLists.txt`. Sources are listed explicitly. | Add it to the list ([worked example, stage 6](03_worked_example.md#stage-6-write-the-unit-test)). |
-| Bootstrap prints HTTP 401 | `_netrc` is missing or wrong. | Re-check Step 5. |
-| Test run reports a failure in `SetUpTestSuite` | A fixture threw, usually because `data\` is missing. | Run Step 5. |
+| Bootstrap prints HTTP 401 | `_netrc` is missing or wrong. | Re-check Step 6. |
+| Test run reports a failure in `SetUpTestSuite` | A fixture threw, usually because `data\` is missing. | Run Step 6. |
 | Build breaks after a Visual Studio update | Stale CMake cache. | `scripts\vs2026_build.ps1 -Config x64-Debug -Reconfigure` |

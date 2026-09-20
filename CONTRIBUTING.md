@@ -63,6 +63,41 @@ The first row is carried out step by step in
 - **One test suite name per file.** A new test file is preferred over extending an
   existing one.
 
+## Documentation style
+
+Markdown documents (README, onboarding pages, new cards) are written in an impersonal,
+concise, technical register:
+
+- No second-person address. "Changes to weighting are made in `model/`", not "you change
+  the weighting in `model/`". Imperatives are used only in numbered procedures.
+- No em dashes. A period, colon, comma or parentheses is used instead.
+- No personal names as points of contact. "A maintainer" is used.
+- Statements are checked against the code before they are written down: commands are
+  run, file names are confirmed to exist, numbers come from an actual run.
+
+Existing research records under `docs/cards/`, `docs/archive/` and `docs/refound/` are
+never reworded to fit this style; they are the scientific record.
+
+## AI coding assistants
+
+AI coding assistants may be used. The output is held to the same standard as
+hand-written work:
+
+- The contributor understands and can explain every line that is submitted, and is
+  responsible for it. "The assistant wrote it" is not an answer in review.
+- All five rules and the checklist apply unchanged: opt-in behaviour, a unit test that
+  fails without the change, the LaTeX reference, Doxygen, Release for data.
+- Generated code matches the surrounding code: naming, comment density, Doxygen style,
+  the include convention, explicit `CMakeLists.txt` entries. Generated prose follows the
+  documentation style above.
+- Numbers, test results and run outputs quoted in a merge request come from an actual
+  run by the contributor, never from the assistant's description of what would happen.
+- Commit messages carry no AI attribution lines. The `commit-msg` hook strips them.
+- `CLAUDE.md` is the instruction file that assistants read. A change to project
+  conventions is made there as well as here.
+- Credentials (`_netrc`, NTRIP passwords) and unpublished data are never pasted into an
+  external service.
+
 ## Out of scope for new contributors
 
 The repository also holds a multi-station network producer research program. Unless a
