@@ -69,6 +69,11 @@ record the program is re-founding **on**.
   consumer on the triple wire reproduces it; the (L1, L5) IF-TD pairs and doubled
   post-fit refloats), the sim is neutral to better; an L5 phase-term model and a
   band-5 slip-tier calibration are owed.
+- [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
+  lane layer as built is loader-refused on the posture (it needs the retired
+  invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
+  states; the readiness read AB3-0 (do wide-lane integers exist on the field) is
+  pre-registered as its gate.
 
 ---
 
