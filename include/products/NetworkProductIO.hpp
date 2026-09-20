@@ -155,6 +155,18 @@ struct SbasisContract {
     /// re-marks with the full satellite scope whatever this says; @c checkContract
     /// compares it so the divergence is NAMED rather than silent.
     bool              disc_mark_scope_channel{false};
+    /// Card PBH (@c network.emit_pb_hold): whether the producer HELD each
+    /// (satellite, signal) emitted phase bias at the first value of its generation.
+    /// Not a replay-emitter parameter but a READING RULE for the whole phase-bias
+    /// channel: held, a @c P record's @c bias_m is a generation constant rather than
+    /// a per-epoch estimate, each record carries a @c gen= token, and a
+    /// @c phase_disc bump WITHOUT a @c gen= change carries no value step — so a
+    /// consumer re-floats on @c gen= and ignores the counter.  Serialized as an
+    /// optional trailing @c pbhold=1 S-line field ONLY when armed, so every pre-PBH
+    /// producer writes the S line byte-for-byte; @c checkContract compares it in
+    /// both directions, since a @c gen= payload under a @c pbhold=0 contract (or the
+    /// reverse) is a file whose contract and records disagree.
+    bool              emit_pb_hold{false};
     /// Whether the producer's emitter maintained the per-satellite CLOCK
     /// discontinuity counter (A2).  Together with @c disc_threshold_m this fully
     /// determines the @c NetworkProductEmitter construction, so a consumer can

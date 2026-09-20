@@ -45,11 +45,13 @@
 #include "realtime/PbDiscCarryLedger.hpp"    // Card CC (A): declared-step ambiguity carry ledger
 #include "realtime/AmbLevelCheck.hpp"        // Card ALC: consumer ambiguity level re-validation
 #include "realtime/PbStepTranslateLedger.hpp"  // Card PBT (A): every-step ambiguity translation ledger
+#include "realtime/PbHoldLedger.hpp"         // Card PBH: held phase-bias generation ledger
 #include "realtime/ConsumerSatTrace.hpp"     // Card CST: per-satellite consumer readout row
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <memory>
@@ -417,6 +419,13 @@ public:
         return pb_step_translate_.counters();
     }
 
+    // --- Card PBH: consumer phase-bias HOLD reaction readout ------------------
+    /// Run-end counters of the reaction to a held phase bias.  All zero on an
+    /// unheld product, which is how a consumer reads back that the producer's hold
+    /// was INERT (invariant #4) — a clean wire with @c cells == 0 means nothing was
+    /// held, not that the hold worked.
+    const PbHoldLedger::Counters& pbHoldCounters() const { return pb_hold_.counters(); }
+
     // --- Card ALC: consumer ambiguity LEVEL check readout ---------------------
     /// True iff @c processing.amb_level_check is armed on this engine's config
     /// (the closed-loop harness derives it from
@@ -610,6 +619,14 @@ private:
 
         EpochMeasurement meas_update{};      ///< Committed measurement update (residual/DOP traces read it).
         bool update_applied{ false };        ///< A float update committed — gates AR and the trace "have_applied" flag.
+
+        /// Card PBH: the "sat|code" keys @ref RealTimeEngine::reactToPbHold_ already
+        /// reacted to this epoch.  Per-epoch by construction (a held key is re-judged
+        /// from scratch every epoch), so it belongs here and not in a member.  The
+        /// three phase-bias reactions skip these keys, which is the once-only
+        /// guarantee: exactly one seam reacts per (key, epoch).  EMPTY unless the
+        /// producer armed @c network.emit_pb_hold, so every unheld run is unchanged.
+        std::set<std::string> pb_hold_handled;
     };
 
     // --- Admission gates (RealTimeEngineAdmit.cpp) ------------------------
@@ -698,6 +715,21 @@ private:
     void translatePhaseBiasStep_(RtEpochContext& ctx);
     /// Card PBT (A): one INFO line with the translation counters; silent unless armed.
     void logPbStepTranslateSummary_(const char* tag);
+    /// Card PBH: the reaction to a HELD phase bias, dispatched ahead of all three
+    /// reactions above and keyed on the DATA, not on a consumer knob — a consumer
+    /// cannot know the producer armed @c network.emit_pb_hold, it can only see
+    /// @c SsrPhaseBiasEntry::hold_generation.  For a key whose entry carries a
+    /// nonzero generation the emitted bias is a generation CONSTANT, so a
+    /// discontinuity-counter change carries no value step and is consumed and
+    /// IGNORED, while a change of the generation itself re-floats the ambiguity
+    /// through the existing reset path.  Every key it handles is recorded in
+    /// @c RtEpochContext::pb_hold_handled and skipped by whichever of the three
+    /// reactions runs next, so each key is still visited exactly once per epoch.
+    /// With no held entries the set stays empty and all three are byte-identical.
+    void reactToPbHold_(RtEpochContext& ctx);
+    /// Card PBH: one INFO line with the hold-reaction counters; silent unless a held
+    /// entry was ever seen.
+    void logPbHoldSummary_(const char* tag);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
 
@@ -907,6 +939,13 @@ private:
     /// unchanged — the first cell per key after a restore has no (k−1, k) pair,
     /// so a declared one takes the reset and an undeclared one is a no-op).
     PbStepTranslateLedger pb_step_translate_;
+    /// Card PBH: per-(sat|signal) hold-generation memory + the ignore-vs-refloat
+    /// decision + counters.  Only touched by reactToPbHold_, and only for entries
+    /// carrying a nonzero generation, so an unheld product never reaches it.  NOT
+    /// part of the RT snapshot (v1 format unchanged — a restored consumer's first
+    /// held entry per key is a FIRST SIGHTING, so it re-seats the memory without a
+    /// reset, and the producer's own hold state cold-starts on ITS resume anyway).
+    PbHoldLedger pb_hold_;
 
     // --- Card ALC: the consumer's ambiguity LEVEL re-validation ---------------
     /// The windowed code levels + the two tests + the counters.  Configured once

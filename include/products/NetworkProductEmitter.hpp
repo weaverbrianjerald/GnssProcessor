@@ -73,6 +73,16 @@ struct NetworkPhaseBias {
     int    wide_lane_integer{0};  ///< Wide-lane integer indicator (2-bit, IGS-SSR).
     double sigma_m{0.0};          ///< B1b: formal 1σ (m) of this phase-bias correction; 0 unless the driver populated it (network.emit_phase_bias_sigma, gauge-exact shared-cov diagonal).
     double sigc_m{0.0};           ///< M4 (contract v2): formal 1σ (m) of the COMBINED PHASE correction (clock + phase bias, cross-cov included; NO iono); 0 unless network.emit_combined_sigma populated it. Serialized as the P-record sigc= token; consumed via SsrPhaseBiasEntry::combined_sigma_m.
+    /// Card PBH (@c network.emit_pb_hold): the HOLD GENERATION this emitted value
+    /// belongs to.  0 = not held (the knob is off, or this key is outside the hold's
+    /// scope) and the value is the estimator's own per-epoch estimate, exactly as
+    /// before.  Nonzero = @ref bias_m was overwritten with the first value of that
+    /// generation by @ref networkPbHold, which runs as the LAST writer before
+    /// @ref NetworkProductEmitter::emitToStore — so the emitter's value-jump test and
+    /// every downstream sink see the held value.  Stamped onto
+    /// @c SsrPhaseBiasEntry::hold_generation and serialized as the P-record @c gen=
+    /// token; a CHANGE of it is the declaration a consumer re-floats on.
+    std::uint32_t hold_generation{0};
 };
 
 /// One satellite's estimated satellite-side solution for a single epoch.
@@ -287,6 +297,28 @@ public:
 
     /// Card MS: whether the per-channel mark scope is armed on this emitter.
     bool discMarkScopeChannel() const { return disc_mark_scope_channel_; }
+
+    /**
+     * @brief Card PBH: the channel mask of the marks PENDING for one satellite.
+     *
+     * A pure read of the same two sources @c emitToStore's internal
+     * @c constForced / @c satForced lambdas consult, with none of their
+     * side effects (no tally, no @ref MarkScopeEvent row) — so a caller can ask
+     * "what is about to be declared for this satellite" before the emit without
+     * perturbing the card-MS census by a single count.
+     *
+     * @param sat RINEX satellite id ("G01").
+     * @return 0 when nothing is pending; otherwise the OR of @ref DiscChannel bits.
+     *         A constellation-scoped @ref markDatumChange (or the global bump)
+     *         contributes @ref kDiscChanAll because it re-declares every channel of
+     *         every satellite of that constellation; a @ref markSatDiscontinuity
+     *         contributes @ref kDiscChanAll under the legacy @c sat scope and the
+     *         mask the marking sites named under the @c channel scope.
+     *
+     * @note Valid between the marking calls of an epoch and the @ref emitToStore
+     *       that consumes them; @ref emitToStore clears the pending state.
+     */
+    unsigned pendingMarkChannels(const std::string& sat) const;
 
     /// Card MS: stable lowercase name of one channel ("clk" / "cb" / "pb"), for
     /// trace events and tests.

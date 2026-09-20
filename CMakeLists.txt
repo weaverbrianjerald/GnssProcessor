@@ -211,6 +211,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkPriorResidual.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
+    src/core/filter/NetworkPbHold.cpp
     src/core/filter/NetworkIonoDiag.cpp
     src/core/filter/NetworkDdFrac.cpp
     src/core/filter/NetworkSdEwlAr.cpp
@@ -417,6 +418,7 @@ add_executable(gnss_tests
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
     tests/test_pb_step_translate.cpp
+    tests/test_pb_emit_hold.cpp
     tests/test_pb_translation_premise.cpp
     tests/test_amb_level_check.cpp
     tests/test_amb_level_arc.cpp

@@ -18,6 +18,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
+#include "filter/NetworkPbHold.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -432,6 +433,19 @@ void networkEmitStore(
             ser_consts_use = &pb_ser_consts;
         }
     }
+    // Card PBH (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5): the emit-side
+    // phase-bias HOLD.  Deliberately the LAST writer of the emitted phase bias and
+    // the last statement before emitToStore, which buys three things at once: it
+    // freezes what the card-4 emission re-base and the PB emission filter produced
+    // rather than being overwritten by them; it sits AHEAD of the emitter's
+    // phase-bias value-jump test, so the declared population screens the value the
+    // consumer actually receives; and every marking site of the epoch has already
+    // run, so the seam's pendingMarkChannels read sees the complete set of channels
+    // about to be declared (which is what the coupled clock+phase-bias cost census
+    // needs).  The on-disk write below consumes the same `sol`, so the file and the
+    // in-process store carry the same held values.  OFF ⇒ immediate return ⇒
+    // byte-identical.
+    networkPbHold(ctx, config_, log, traces, emitter, se, sol);
     emitter.emitToStore(sol, network_store);
     // --- Card JT: drain the de-commoned jump test's classified cells ----------
     // Invariant #7 at BOTH edges with identities: the DECOUPLING edge is the

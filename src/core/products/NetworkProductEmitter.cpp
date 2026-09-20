@@ -141,6 +141,26 @@ void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& sa
     for (const auto& s : satellites) forced_bump_chan_[s] |= mask;
 }
 
+unsigned NetworkProductEmitter::pendingMarkChannels(const std::string& sat) const {
+    // Card PBH.  Read-only twin of emitToStore's constForced/satForced pair: same
+    // two sources, same precedence, and deliberately NOT a refactor of them — the
+    // lambdas carry the card-MS tally and the MarkScopeEvent census as side
+    // effects, and this probe must not move either (a caller runs BEFORE the emit,
+    // so a count here would be a double count there).
+    unsigned mask = 0u;
+    if (!sat.empty() && (force_all_bump_ || forced_bump_consts_.count(sat.front()) != 0))
+        mask |= kDiscChanAll;   // a datum change re-declares every channel it reaches
+    if (forced_bump_sats_.count(sat) != 0) {
+        if (!disc_mark_scope_channel_) {
+            mask |= kDiscChanAll;   // legacy scope: the mark names the whole satellite
+        } else {
+            const auto it = forced_bump_chan_.find(sat);
+            mask |= (it == forced_bump_chan_.end()) ? kDiscChanAll : it->second;
+        }
+    }
+    return mask;
+}
+
 std::map<char, NetworkProductEmitter::PbSeamConstTally>
 NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
     // Deliberately a read-only TWIN of the phase jump test in emitToStore rather than
@@ -570,6 +590,13 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 entry.discontinuity_counter = ctr;
                 entry.sigma_m               = npb.sigma_m;   // B1b: 0 unless emit_phase_bias_sigma populated it (gauge-exact); no wire record, in-process store only.
                 entry.combined_sigma_m      = npb.sigc_m;     // M4: combined phase-correction σ (clock+phasebias); 0 unless emit_combined_sigma populated it.
+                // Card PBH: the hold generation, stamped through from the emitted
+                // epoch.  0 unless networkPbHold held this key (knob OFF ⇒ every
+                // entry reads 0 ⇒ the consumer's pre-card path, byte-identical).
+                // The hold ran BEFORE this function, so the value-jump test above
+                // has already screened the HELD value, which is what the consumer
+                // receives — the declaration and the payload agree by construction.
+                entry.hold_generation       = npb.hold_generation;
                 rec.bias_per_signal[signal] = entry;
             }
             store.pushPhaseBias(rec, header);

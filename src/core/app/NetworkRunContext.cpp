@@ -232,6 +232,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // driver next to the PB-filter setup.
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
+    // Card PBH: the emit-side phase-bias hold.  The held values and generations live
+    // in NetworkCarryState (they must survive the epoch loop); this is only the knob
+    // snapshot the NetworkPbHold seam reads.
+    k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
+    k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
     // The guarded temporal clock
     // anchor.  `cta_on` is resolved against its clock_model interlock HERE, so
     // every downstream site reads one predicate: under the two-state oscillator

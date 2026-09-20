@@ -214,6 +214,9 @@ struct LineAssembler {
                         pb.sigma_m = std::stod(f[k].substr(6));
                     else if (f[k].rfind("sigc=", 0) == 0)   // M4: combined phase-correction σ
                         pb.sigc_m = std::stod(f[k].substr(5));
+                    else if (f[k].rfind("gen=", 0) == 0)    // Card PBH: hold generation
+                        pb.hold_generation =
+                            static_cast<std::uint32_t>(std::stoul(f[k].substr(4)));
                     else if (f[k].find('=') == std::string::npos)
                         cur.serialized_disc.phase[f[1] + "|" + f[2]] = std::stoi(f[k]);
                 }
@@ -331,6 +334,8 @@ struct LineAssembler {
                             c.disc_jump_test_decommon = (std::stoi(f[k].substr(10)) != 0);  // Card JT
                         } else if (f[k].rfind("discscope=", 0) == 0) {
                             c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // Card MS
+                        } else if (f[k].rfind("pbhold=", 0) == 0) {
+                            c.emit_pb_hold = (std::stoi(f[k].substr(7)) != 0);  // Card PBH
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // H-rider: sigma0 statistic id
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -550,6 +555,17 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // producer writes the S line byte-for-byte.
     if (contract.disc_mark_scope_channel)
         out_ << ",discscope=channel";
+    // Card PBH (network.emit_pb_hold): the emitted phase bias is HELD at the first
+    // value of its generation, so a P record's bias_m is a GENERATION CONSTANT and
+    // not a per-epoch estimate.  That is a statement about how the whole phase-bias
+    // channel must be read, so it belongs on the contract line and not only on the
+    // per-record gen= token: a reader that sees pbhold=1 knows a phase_disc bump
+    // without a gen= change carries no value step, and a reader that sees a gen=
+    // token WITHOUT pbhold=1 is reading a file whose contract and payload disagree
+    // (checkContract names exactly that).  ONLY when armed, so every pre-PBH
+    // producer writes the S line byte-for-byte.
+    if (contract.emit_pb_hold)
+        out_ << ",pbhold=1";
     out_ << '\n';
 }
 
@@ -623,7 +639,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed[,datum_consts]\n"
             "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]]\n"
             "# B,sat,signal,code_bias_m[,code_disc][,isc=obs]\n"
-            "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>]\n"
+            "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>][,gen=<n>]\n"
             "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
             "# I,generation_id               (RTA-3 solution-generation id)\n"
             "# R,retro_sat[,retro_sat...]    (B1 per-satellite discontinuity bump)\n"
@@ -637,7 +653,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
             "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>][,discdecom=1]"
-            "[,discscope=channel]"
+            "[,discscope=channel][,pbhold=1]"
             "   (B6 S-basis contract)\n";
 }
 
@@ -756,6 +772,15 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             // sigc = σ of clock + phase bias combined.
             if (pb.sigc_m > 0.0 && std::isfinite(pb.sigc_m))
                 out_ << ",sigc=" << fmt::format("{}", pb.sigc_m);
+            // Card PBH: the HOLD GENERATION as a key=value token beside sigma= /
+            // sigc=, following the discdecom= precedent of self-describing tokens.
+            // pb.hold_generation is 0 unless network.emit_pb_hold held this key ⇒ an
+            // OFF run emits no token ⇒ byte-identical.  A CHANGE of gen= is the
+            // declaration a file consumer re-floats on; its presence at all is the
+            // statement that bias_m is CONSTANT for the life of that generation, so
+            // a phase_disc bump on the same record carries no value step.
+            if (pb.hold_generation != 0)
+                out_ << ",gen=" << pb.hold_generation;
             out_ << '\n';
         }
         if (s.has_ura)   // B1: per-sat URA (emitted only when network.emit_ura on → no U lines otherwise)
@@ -994,6 +1019,14 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_mark_scope_channel != expected.disc_mark_scope_channel)
         note(fmt::format("disc_mark_scope_channel: file {} vs expected {}",
                          file.disc_mark_scope_channel, expected.disc_mark_scope_channel));
+    // Card PBH: the emit-side phase-bias hold.  This is not a replay-emitter
+    // parameter but a statement about how the P records must be READ — held, a
+    // bias_m is a generation constant and a phase_disc bump carries no value step,
+    // so a consumer that assumes the pre-PBH semantics will either ignore a real
+    // re-float signal or invent a step that is not there.  Named in both directions.
+    if (file.emit_pb_hold != expected.emit_pb_hold)
+        note(fmt::format("emit_pb_hold: file {} vs expected {}",
+                         file.emit_pb_hold, expected.emit_pb_hold));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));

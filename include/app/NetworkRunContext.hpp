@@ -422,6 +422,8 @@ namespace GnssProcessor {
         bool emit_epoch_status{};
         bool clk_frame_hold{};  ///< Card CLK-R stage 1 (network.emit_clock_frame_hold): emit satellite clocks in the per-constellation HELD frame.  Engine = run-TU local (banner rule), like NetworkPbEmitFilter.
         bool clk_jump_test{};   ///< Card CLK-R stage 2 (network.clock_disc_jump_test): mark per-sat common-removed clock steps via the R-record retro-bump.
+        bool   emit_pb_hold{};             ///< Card PBH (network.emit_pb_hold): HOLD each (sat, signal) emitted phase bias at the first value of its generation; state in NetworkCarryState::pb_hold.
+        double emit_pb_hold_max_gap_s{};   ///< Card PBH (network.emit_pb_hold_max_gap_s): arc gap (s) beyond which a returning key starts a NEW generation.  INERT unless emit_pb_hold.
         // --- Card Q3, the guarded temporal clock anchor ---
         // SOLVE-AFFECTING and FINGERPRINTED.  `cta_on` is the single "does this run
         // touch the clock carry at all" predicate every site reads, so an OFF run
@@ -1380,6 +1382,33 @@ namespace GnssProcessor {
         /// byte-identical.  Never serialized: each resume is its own seam, and a leg
         /// that resumes twice would be two seams.
         bool resume_pb_seam_pending{false};
+        /// Card PBH: one (satellite, signal) key's emit-side phase-bias HOLD state.
+        struct PbHoldKey {
+            double        held_m{0.0};       ///< The value every emission of this generation writes.
+            std::uint32_t generation{0};     ///< 1-based; 0 never appears on a live entry.
+            double        last_emit_s{0.0};  ///< Product CONTENT time (s) of this key's last emission.
+        };
+        /// Card PBH (@c network.emit_pb_hold): "SAT|SIGNAL" -> the held value and its
+        /// generation.  Owned here rather than in the seam because it must survive the
+        /// epoch loop; empty and never touched when the knob is off.  NOT snapshotted:
+        /// a warm resume cold-starts every key as a FIRST sighting, which advances the
+        /// generation the consumer sees and therefore RE-FLOATS rather than silently
+        /// re-seating a stale held value — the conservative direction, and the same
+        /// choice the slant-iono carry above makes.
+        std::map<std::string, PbHoldKey> pb_hold;
+        /// Card PBH: |estimate - held| (m) over every held emission — the DECOUPLING
+        /// edge's cost, measured rather than asserted (invariant #7).  Read at run end
+        /// for p50 / p90 / max; empty on an OFF run.
+        std::vector<double> pb_hold_dev_abs_m;
+        /// Card PBH: the de-commoned satellite clock step (m) at every epoch where a
+        /// mark naming BOTH the clock and the phase-bias channel reaches a held key.
+        /// This is the one move the hold deliberately does NOT transfer, so its size is
+        /// the measured cost of the identity-passing contract; empty on an OFF run.
+        std::vector<double> pb_hold_coupled_step_m;
+        /// Card PBH: satellite -> the clock (m) this producer EMITTED at that
+        /// satellite's previous emission, the baseline the coupled-mark step above is
+        /// differenced against.  Maintained only while the hold is armed.
+        std::map<std::string, double> pb_hold_prev_clock_m;
         /// Per-LOS slant-iono carry (QUEUE 8b): persistent across epochs, keyed
         /// (station index, sat).  Diagonal-only (rx-CB rationale — no shared-border
         /// footprint; the coupling variant is deliberately deferred).  NOT snapshotted:
@@ -3088,6 +3117,19 @@ namespace GnssProcessor {
         long long n_mark_suppressed_by_scope_clk = 0;  ///< …of which the CLOCK channel
         long long n_mark_suppressed_by_scope_cb  = 0;  ///< …of which the CODE-BIAS channel
         long long n_mark_suppressed_by_scope_pb  = 0;  ///< …of which the PHASE-BIAS channel
+        // --- Card PBH (network.emit_pb_hold): the emit-side phase-bias hold -------
+        // Invariant #4's ON-path telemetry and invariant #7's two edges.  All zero on
+        // an OFF run, so a run reporting 0 held emissions has an INERT hold no matter
+        // how clean the log reads.  The DECOUPLING edge's cost is not a count but a
+        // distribution (ctx.carry.pb_hold_dev_abs_m, |estimate - held| over every held
+        // emission) and the coupled-mark clock step (pb_hold_coupled_step_m); the
+        // RE-COUPLING edge is n_pbh_gen_first + n_pbh_gen_gap, one PB_HOLD/gen_start
+        // event each.
+        long long n_pbh_keys           = 0;  ///< distinct (sat, signal) keys the hold ever held
+        long long n_pbh_gen_first      = 0;  ///< generations started by a FIRST sighting
+        long long n_pbh_gen_gap        = 0;  ///< generations started by a gap > emit_pb_hold_max_gap_s
+        long long n_pbh_held_emissions = 0;  ///< emissions whose value the hold OVERWROTE
+        long long n_pbh_coupled_marks  = 0;  ///< coupled clock+phase-bias marks reaching a held key
         // Prioritized-datum drop-and-heal observability: epochs where the gate threw and the
         // near-null phase-bias soft-anchor recovered it, and total columns anchored.  A run
         // that heals every epoch "succeeds" silently otherwise (the heal-success log is debug).

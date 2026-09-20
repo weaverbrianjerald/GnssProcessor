@@ -209,3 +209,223 @@ trips, consumer): the level check is uncalibrated ([ALC-STAT](ALC-STAT_statistic
 Nothing is promoted by this card: no loader default, no golden, no ledger row.
 Adoption of the hold, or of eps 0, into the RF-0hv working bases is a separate
 decision.
+
+## 6. 2026-09-19: PBH-1 result, the hold BUILT and all five bars PASS
+
+The build is in the tree, default OFF. Exe `build/x64-Release/gnss_processor_pbh1.exe`
+sha256[:16] `F1D3BDDB65E554B7` (main `28f9735` plus this card's diff). All six arms exit 0
+and emit 720 / 720.
+
+### 6.1 What was built
+
+| piece | file |
+| --- | --- |
+| the seam, its ordering contract and the coupled-mark census | `include/filter/NetworkPbHold.hpp`; `src/core/filter/NetworkPbHold.cpp` |
+| the call site, LAST writer of the emitted phase bias, immediately before `emitToStore` | `src/core/filter/NetworkEmitStore.cpp` |
+| the read-only probe of the epoch's pending marks (no card-MS side effects) | `NetworkProductEmitter::pendingMarkChannels`, `src/core/products/NetworkProductEmitter.cpp` |
+| the generation on the producer struct and its stamp onto the store entry | `include/products/NetworkProductEmitter.hpp` `NetworkPhaseBias::hold_generation`; `src/core/products/NetworkProductEmitter.cpp` |
+| the generation on the consumer struct | `include/rtcm/RtcmTypes.hpp` `SsrPhaseBiasEntry::hold_generation` |
+| carried state, counters, knob snapshot | `include/app/NetworkRunContext.hpp` (`NetworkCarryState::pb_hold` / `pb_hold_dev_abs_m` / `pb_hold_coupled_step_m` / `pb_hold_prev_clock_m`, five `n_pbh_*` counters, two `NetworkKnobs` fields); `src/core/app/NetworkRunContext.cpp` |
+| knobs, Doxygen and the arming log line | `include/config/GnssConfigTypes.hpp` (`emit_pb_hold`, `emit_pb_hold_max_gap_s`); `src/core/config/GnssConfigLoadNetwork.cpp` |
+| the consumer decision, isolated the way cards CC and PBT isolate theirs | `include/realtime/PbHoldLedger.hpp` (header-only) |
+| the consumer seam, dispatched first and skipped by the other three | `src/core/realtime/RealTimeEngineSsrBreaks.cpp` `reactToPbHold_`; `RtEpochContext::pb_hold_handled` |
+| wire text: `gen=` on P, `pbhold=1` on S, legend, parser, `checkContract` | `src/core/products/NetworkProductIO.cpp` |
+| run-end telemetry, producer and consumer | `src/core/filter/NetworkTeardown.cpp` |
+| gtest, 9 cases in 1 new suite | `tests/test_pb_emit_hold.cpp` (`PbEmitHoldTest`) |
+
+Three design points worth recording, because each was a choice and not a default.
+
+**The hold sits at the very end of the emit block, not next to the re-base.** That
+position buys three things at once: it freezes what the card-4 emission re-base and
+the PB emission filter produced rather than being overwritten by them; it is ahead of
+the emitter's phase-bias value-jump test, so the declared population screens the value
+the consumer receives; and every marking site of the epoch has already run, so the
+coupled clock plus phase-bias census sees the complete mark set.
+
+**The consumer keys on the DATA, never on a knob.** A consumer cannot know that the
+producer armed `emit_pb_hold`; it can only read a nonzero `hold_generation`. Zero means
+an unheld product, which is every RTCM stream, every pre-PBH file and every OFF run, and
+the three existing reactions then run unchanged. Keys the hold reaction handles are
+recorded in the per-epoch context and skipped downstream, which preserves the once-only
+guarantee: exactly one seam reacts per (key, epoch).
+
+**The A5 freshness flip is deliberately not suppressed.** It is a step in the APPLIED
+correction, a bias gated out and back in, which the hold does not touch. It is also
+unreachable on these postures, where `processing.enable_ssr_bias_max_age` is off.
+
+### 6.2 Bars
+
+| bar | result | numbers |
+| --- | --- | --- |
+| **B0** Debug suite green with the new suite | **PASS** | `2297 tests from 303 test suites ran`, `2296 passed`, `1 skipped` (`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, the standing bootstrap-gated skip). That is the 2287-passing baseline plus this card's 9 cases in 1 new suite. |
+| **B1** knob OFF, canonical smoke | **PASS** | `runs/_pbh1_smoke_pre` (pre-change exe `A3D62A242C04E545`) and `runs/_pbh1_smoke_off` (new exe): the hash-stripped record stream is **`333DCB0871E1F5BC`** over **6 596** record lines on both, the canonical value. Whole file `B05F26B1CD0540DB` to `6BCE6BAC94063FCF`; the entire difference is TWO legend comment lines (`gen=<n>` on the P grammar, `pbhold=1` on the S grammar), required by the frozen rule in `NetworkProductIO::writeHeader_` and pinned by `HeaderLegendDeclaresEveryEmittedField`. |
+| **B2** knob ON, solve and non-phase wire identical | **PASS** | Arm H against `runs/_rf0hv2_*`, both beds. `logs/network_epoch_status.csv` IDENTICAL (`939727D60970F6B5` field, `E4FC04F44D51F1EE` sim). Of `products.txt`: **C records IDENTICAL** (`AC57C356BC666B0E` / `7E4895C5B3E879E3`, 22 586 lines each bed), **B records IDENTICAL** (`956B1F24CD4EE7C7` / `D6292D389CDD194C`), and so are the **E** and **R** records (720 E, 36 field / 10 sim R). Only the P records move, as designed. Every P value is **constant within its generation: max change exactly 0.0, one distinct value per generation**, on both beds. |
+| **B3** consumer, arm H | **PASS** | See 6.3. Field and sim H reproduce the eps-0 reference **to 0.0000 m in every hour** (bar: 0.03 m hours 2 to 6, 0.10 m hour 1); sub-dm epochs **167** field (bar 150) and **448** sim (bar 400); **720 / 720** both. HP is **byte-identical to H**, `closed_loop_trace.csv` and `closed_loop_sat_trace.csv` included. |
+| **B4** wire truth grade, arm H | **PASS** | See 6.4. Field `e_phi` **0.0693 to 0.0274 m**, exactly the clock alone (expected about 0.027); sim `e_phi` **0.0199 to 0.0030 m**, exactly the clock alone (expected about 0.003). `e_pb` goes to **0.0000 m** on both. |
+
+`python scripts/docs_index_check.py` and `python scripts/make_golden_config.py --verify`
+both PASS. `scripts/rt_seam_verify.py` reports **22 verbatim / 8 FAILED**, which is
+**unchanged**: the identical eight seams fail on `28f9735` without this diff (measured by
+restoring the three touched files and re-running), so this card adds **0 new** ones. The
+verifier needs `runs/rtseam_goldens/pre/src/*.frozen`, which the repo-root cleanup moved
+to `D:\GnssProcessorSupport\runs\`; it was copied back to run this check.
+
+### 6.3 B3: the consumer, 6 h cold, p50 by hour in metres
+
+The graded column is METRES throughout (`pos_err_3d_m` of `logs/closed_loop_trace.csv`,
+median per hour; p90 is nearest-rank).
+
+| arm | field h1..h6 | sub-dm | sim h1..h6 | sub-dm |
+| --- | --- | --- | --- | --- |
+| **H** (hold ON, translate OFF, level check OFF) | **0.57 0.17 0.11 0.10 0.13 0.11** | **167** | **0.60 0.10 0.10 0.06 0.06 0.05** | **448** |
+| **HP** (H plus translate at eps 0) | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 |
+| **HA** (H plus level check) | 1.10 0.69 0.51 0.22 0.12 0.16 | 1 | 0.97 0.86 0.40 0.17 0.24 0.18 | 14 |
+| eps-0 reference (`_pbh0_*_e0`) | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 |
+| baseline pair (`_rf0hv2_*`) | 0.43 0.16 0.31 0.49 0.68 0.49 | 9 | 0.46 0.28 0.25 0.15 0.16 0.14 | 81 |
+
+H p90 by hour: field 3.31 0.20 0.14 0.12 0.26 0.18; sim 3.38 0.16 0.15 0.10 0.09 0.10.
+Both reproduce the eps-0 reference digit for digit.
+
+**The emit-side hold and the zero-dead-band consumer translation are the same
+operation, and the run proves it numerically rather than by argument.** Matched
+epoch by epoch against `_pbh0_*_e0`, the maximum absolute difference in 3D error over
+all 720 epochs is **0.0001 m on the field and 0.0003 m on the sim**, with a median
+difference of exactly 0. Section 3 predicted this, that translating every change of the
+applied phase bias with a zero dead band is mathematically the hold; PBH-1 measures it
+at 0.1 to 0.3 mm. The residual is not a discrepancy in the mechanism, it is where the
+two differ in principle: the consumer translation cannot act before it has a (k-1, k)
+pair and it works on the 6 to 10 satellites the consumer TRACKS, while the producer hold
+freezes from the generation's first emitted epoch across all 95 (field) or 64 (sim)
+emitted keys.
+
+**HP is the consistency check and it passes in the strongest available form.** With
+the hold ON the applied phase bias is constant inside a generation, so the
+translation's step is identically zero: the PBT ledger reports
+`sum_abs_translate_m 0.000 (max |d| 0.000 m)`, `skipped_eps 0`, `no_pair 0`,
+`closure HOLDS`, and both consumer traces are byte-identical to H on both beds. A
+translator downstream of a hold is a no-op, which is the arithmetic the card claimed.
+
+**HA is report-only, and it is WORSE, on both beds.** The level check's coverage rises
+exactly as section 5 predicted, and the consumer still loses:
+
+| bed | window restarts | checks / samples | coverage | trips (wl / if) | refloats | consumer p50 h1..h6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| field, baseline `_rf0hv2` | 1163 | 1145 / 5799 | 0.197 | 106 (27 / 79) | 106 | 0.43 0.16 0.31 0.49 0.68 0.49 |
+| field, **HA** | **9** | **2424 / 5799** | **0.418** | 158 (35 / 123) | 158 | 1.10 0.69 0.51 0.22 0.12 0.16 |
+| sim, baseline `_rf0hv2` | 1508 | 1626 / 5387 | 0.302 | 26 (2 / 24) | 26 | 0.46 0.28 0.25 0.15 0.16 0.14 |
+| sim, **HA** | **18** | **3906 / 5387** | **0.725** | 58 (5 / 53) | 58 | 0.97 0.86 0.40 0.17 0.24 0.18 |
+
+Window restarts collapse by two orders of magnitude, because under a hold nothing
+writes the ambiguity: there is no translation, no carry and no declared reset to
+restart the window with. Coverage roughly doubles on both beds and the check fires 1.5
+to 2.2 times as often. The consumer nonetheless goes from 167 sub-dm epochs to 1 on the
+field and from 448 to 14 on the sim, and is worse in five of six hours on both beds.
+The reading is that a re-validation designed against a MOVING wire is re-levelling from
+code an ambiguity that no longer has anything to be re-validated against, so its own
+code-level noise becomes the dominant error. The check is uncalibrated
+([ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md)); this is a measurement on a
+posture it was not tuned for, not a verdict on the check.
+
+### 6.4 B4: the wire against truth
+
+`python scripts/ftc_step_attrib.py <run_dir> --r3`, consumer-tracked satellites,
+difference-median de-commoning, within-arc RMS after removing the arc mean, hours 2 to 6,
+metres. The sim run takes
+`--truth runs/simnet60_quiet_wu93_24h/SZZ000SIM/truth_bias.csv`.
+
+| bed | channel | baseline `_rf0hv2` | arm **H** |
+| --- | --- | --- | --- |
+| sim (truth) | `e_phi` full phase correction | 0.0199 | **0.0030** |
+| sim | `e_clk` clock alone | 0.0030 | 0.0030 |
+| sim | `e_pb` phase bias alone | 0.0227 | **0.0000** |
+| field (COD final clock plus OSB) | `e_phi` | 0.0693 | **0.0274** |
+| field | `e_clk` | 0.0274 | 0.0274 |
+| field | `e_pb` | 0.0467 | **0.0000** |
+
+The graded population is unchanged (18 arcs / 4359 points sim, 18 arcs / 4882 points
+field), so this is the same satellites over the same epochs. `e_pb` is **exactly**
+0.0000 at p50, p90 and max, because within an arc the held bias is a constant and the
+per-arc de-mean removes a constant exactly. `e_phi` therefore collapses onto `e_clk` row
+for row, including p90 and max: sim 0.0030 / 0.0037 / 0.0042, field 0.0274 / 0.0655 /
+0.0865. The correlation of the first differences is undefined because one series is
+identically zero. The ALL-hours rows behave the same way (sim `e_phi` 0.0532 to 0.0041,
+field 0.0780 to 0.0402).
+
+This is what identity-passing buys, stated at its limit: the phase-bias channel of the
+wire now contributes NOTHING to the within-arc error of the phase correction, and the
+product's phase quality is the clock's quality. The per-epoch-median rows of the same
+read still show large numbers (field `e_phi` 1.548 to 0.859, sim 0.634 at hours 2 to 6),
+which is the instrument's own inflation through the rotating satellite set that section 1
+already flagged; the difference-median rows are the trustworthy ones.
+
+### 6.5 Telemetry, both edges
+
+Producer, arm H, from the run-end summary:
+
+| quantity | field | sim |
+| --- | --- | --- |
+| keys held | 95 | 64 |
+| generations (first / gap) | 109 (95 / 14) | 74 (64 / 10) |
+| held emissions | 60 316 | 45 098 |
+| abs(estimate minus held) p50 / p90 / max (m) | 0.7167 / 3.6388 / 74.8122 | 5.8591 / 16.3906 / 93.2241 |
+| coupled clock plus phase-bias marks reaching a held key | 201 | 36 |
+| de-commoned satellite clock step at those epochs, p50 / p90 / max (m) | 0.0591 / 0.3290 / 1.3337 | 0.0014 / 0.0063 / 1.5531 |
+
+Consumer, arm H: field **11 618 cells over 40 held keys, 40 first sightings, 11 578 held,
+0 refloats, 114 discontinuity-counter changes IGNORED**, closure HOLDS; sim **10 800 cells
+over 38 keys, 38 first sightings, 10 758 held, 4 refloats, 22 ignored**, closure HOLDS. The
+producer holds 95 and 64 keys against the consumer's 40 and 38 because the hold-out station
+tracks a subset of the emitted sky.
+
+Two readings.
+
+**What the hold hides is large, and that is the point rather than a caveat.** A median
+0.72 m (field) and 5.86 m (sim) of estimator motion is suppressed per emission, with
+maxima of 75 and 93 m over a six-hour generation. Section 1 read 3 established that this
+motion is error on the sim by construction, and B4 now shows that removing all of it
+takes the phase correction's within-arc error down to the clock's exactly. The number is
+the decoupling edge's cost, measured on every emission rather than sampled, and it is what
+a future card must beat if it wants to transfer any part of that motion instead.
+
+**The one move the hold refuses to transfer is small on the sim and not small on the
+field.** 201 field epochs carry a mark naming the clock and the phase bias together on a
+held key, and the de-commoned satellite clock step at those epochs runs to 1.33 m with a
+p50 of 5.9 cm; the sim's 36 sit at a p50 of 1.4 mm. The consumer nonetheless shows 0 field
+refloats and a better trajectory than every prior arm, so on this posture the refusal
+costs nothing measurable. The field number is the one to watch if a coupled frame-transfer
+contract is ever built.
+
+### 6.6 Deferred and limitations
+
+- **Nothing is deferred from the build.** The wire text was carried: the `gen=` P-record
+  token, the `pbhold=1` S-line token, the legend extension by the frozen rule in
+  `writeHeader_`, the reader's `gen=` parse into `hold_generation`, and `checkContract`
+  naming a `pbhold=` disagreement in both directions. All are pinned by `PbEmitHoldTest`.
+- **The `pbhold=1` token never appears on this lineage**, because
+  `network.serialize_sbasis_contract` is off and the header is v1, so no S line is
+  written at all. This is exactly JT's trap with `discdecom=`: the token is pinned only
+  by the gtest, and any arm that wants a file consumer to read the contract must arm the
+  contract serializer. The per-record `gen=` token IS present on every P record of both
+  arms (60 425 field, 45 172 sim, none missing).
+- **Warm resume is out of scope and cold-starts the hold.** The held values and
+  generations are not snapshotted, so a resumed producer treats every key as a first
+  sighting and restarts at generation 1. A consumer holding generation 2 then sees a
+  change and re-floats, which is the conservative direction and the same choice the
+  slant-iono carry makes, but it is a seam nobody has graded. The arms here are 6 h cold.
+- **The 300 s gap rule is untuned.** It fired on 14 field and 10 sim keys. Those
+  re-seedings are not visible in the B4 arc census, whose arc counts are identical to the
+  baseline, which suggests they fall at arc boundaries the grader already splits on; that
+  was not tested directly.
+- **A one-generation-per-arc hold is a ceiling, not a policy.** Nothing here answers when
+  a generation SHOULD restart on evidence rather than on a gap. B4 measures the best case
+  a restart policy has to beat.
+
+Nothing is promoted by this card: no loader default, no golden, no ledger row,
+`config/refound/*_rf0hv.json` untouched. Adoption of `network.emit_pb_hold` into the
+RF-0hv working bases is a separate decision, and it is the same decision as adopting
+eps 0, since the two are measurably the same operation.
+
+**Runs.** `runs/_pbh1_{field,sim}6_{H,HA,HP}`, `runs/_pbh1_smoke_pre`,
+`runs/_pbh1_smoke_off`, `runs/_pbh1_ftc/{field,sim}_H_r3.txt`. Exe
+`gnss_processor_pbh1.exe` `F1D3BDDB65E554B7`. Wire sha256[:16] of arm H:
+`BBAA7FD66844CB3E` field, `EA3A646F8972AE44` sim.

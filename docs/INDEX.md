@@ -49,7 +49,15 @@ record the program is re-founding **on**.
   against 19.9 mm with the phase bias) and 0.2 % of the translated mass is a known
   frame move; the config-only dead-band ladder PASSED (zero dead band: field hours
   3 to 6 at 0.11 m with 167 sub-dm epochs, sim 0.06 m with 448); the emit-side
-  phase-bias hold build (PBH-1) is pre-registered.
+  phase-bias hold is now BUILT as `network.emit_pb_hold` (default OFF,
+  identity-passing `gen=` wire contract) and all five PBH-1 bars PASS on both beds:
+  the solve, the clock records and the code-bias records are byte-identical, every
+  emitted phase bias is constant within its generation, the phase-bias channel's
+  contribution to the within-arc error of the phase correction goes to exactly
+  0.0000 m so the product's phase quality IS its clock quality (field 0.0693 to
+  0.0274 m, sim 0.0199 to 0.0030 m), and the consumer reproduces the zero dead band
+  to 0.3 mm, which measures the two as the same operation. Nothing promoted;
+  adoption into the RF-0hv bases is the author's call.
 
 ---
 

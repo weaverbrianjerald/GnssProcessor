@@ -2408,6 +2408,33 @@ namespace GnssProcessor {
                       "NetworkProductIO REPLAY re-marks with the full satellite scope — the S "
                       "contract carries discscope= so checkContract names the divergence.");
         }
+        // Card PBH: the emit-side phase-bias HOLD.  EMIT-side only (no estimate, no
+        // datum, no row of the normal equations), but it changes the emitted VALUE,
+        // so it is fingerprinted and travels in the S contract as pbhold=.
+        network_config_.emit_pb_hold =
+            jval<bool>(json, "network.emit_pb_hold", "emit_pb_hold", false);
+        network_config_.emit_pb_hold_max_gap_s =
+            jval<double>(json, "network.emit_pb_hold_max_gap_s", "emit_pb_hold_max_gap_s", 300.0);
+        if (network_config_.emit_pb_hold) {
+            log->info("Network (card PBH): network.emit_pb_hold = true — the emitted phase bias "
+                      "of each (satellite, signal) is HELD at the first value of its generation "
+                      "and a new generation is DECLARED on the wire (gen= token, "
+                      "SsrPhaseBiasEntry::hold_generation), with max_gap_s = {:.1f}.  PBH read 3 "
+                      "graded the wire against truth: the phase bias ALONE carries 0.0227 m "
+                      "(sim) / 0.0467 m (field) of within-arc RMS against the clock's 0.0030 / "
+                      "0.0274 m, and the first differences of the two errors correlate at +0.006 "
+                      "— the phase bias does not compensate the clock, it adds to it, and on the "
+                      "simulator the true bias is constant so every movement is error.  The hold "
+                      "is the LAST writer of the emitted value and sits AHEAD of the emitter's "
+                      "phase-bias value-jump test, so the declared population screens what the "
+                      "consumer receives.  The estimator is untouched: the solve, the C records "
+                      "and the B records are byte-identical to the OFF run.  Both edges are "
+                      "events with counters (invariant #7): PB_HOLD/gen_start rows with cause "
+                      "'first' or 'gap', the |estimate - held| distribution the hold hides, and "
+                      "the de-commoned clock step at every coupled clock+phase-bias mark that "
+                      "reaches a held key (the cost of not transferring a coupled frame move).",
+                      network_config_.emit_pb_hold_max_gap_s);
+        }
         // Card RF-PD-fix: install the station's own DATUM rows BEFORE the PD test.
         // SOLVE-AFFECTING (it changes which stations are in the network) — the
         // rx_code_bias_datum cross-check is deferred to that knob's own block, which

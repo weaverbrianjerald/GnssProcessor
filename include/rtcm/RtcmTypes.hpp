@@ -17,6 +17,7 @@
 #include "common/GnssTypes.hpp"
 #include "math/TimeUtils.hpp"
 #include <Eigen/Dense>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -234,6 +235,17 @@ struct SsrPhaseBiasEntry {
     /// URA + @c sigma_m RSS — mm-level for a fresh satellite where the individual σ
     /// are cm-level, so a reconverging satellite is no longer deweighted off.
     double combined_sigma_m{0.0};
+    /// Card PBH (@c network.emit_pb_hold): the producer's HOLD GENERATION for this
+    /// (sat, signal).  0 = not held — @ref bias_m is a per-epoch estimate and the
+    /// consumer's reaction is exactly the pre-card one, so every RTCM/IGS-SSR-decoded
+    /// bias and every product from a producer without the knob reads 0 and behaves
+    /// unchanged.  Nonzero = @ref bias_m is CONSTANT for the life of that generation
+    /// (the producer froze it at the generation's first emitted value and kept
+    /// estimating behind it), so a change of @ref discontinuity_counter carries no
+    /// value step and is IGNORED, while a change of THIS field is the declaration
+    /// that re-floats the ambiguity.  Carried on the P-record @c gen= wire token and
+    /// stamped in-process at @c NetworkProductEmitter.cpp's phase-bias entry build.
+    std::uint32_t hold_generation{0};
 };
 
 /**

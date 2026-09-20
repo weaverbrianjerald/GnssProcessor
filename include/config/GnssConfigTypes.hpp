@@ -2488,6 +2488,49 @@ namespace GnssProcessor {
          */
         std::string disc_mark_scope{ "sat" };
         /**
+         * @brief Card PBH: HOLD the emitted phase bias of a (satellite, signal) at
+         *        the first value of its generation (@c network.emit_pb_hold).
+         *
+         * PBH read 3 measured the wire's phase-bias movement against truth on both
+         * beds: within-arc RMS of the phase bias ALONE is 0.0227 m (sim) and
+         * 0.0467 m (field) while the clock alone is 0.0030 / 0.0274 m, and the
+         * correlation between the first differences of the two errors is +0.006 —
+         * the phase bias does not compensate the clock, it ADDS to it.  On the
+         * simulator the true satellite phase bias is constant in time, so every
+         * movement of the emitted value is error by construction.
+         *
+         * The contract that follows is IDENTITY-PASSING, in the manner of the
+         * @c iode= ephemeris cutover rather than of a signed frame delta: the
+         * emitted value of a key is frozen at the first value of its generation and
+         * a new generation is DECLARED (@ref SsrPhaseBiasEntry::hold_generation, the
+         * @c gen= wire token), so a consumer re-floats on the declaration instead of
+         * integrating a wandering correction.  Handover steps, cold or continuous,
+         * never reach the wire and therefore need no delta.
+         *
+         * EMIT-side only.  The estimator's own value keeps evolving behind the hold:
+         * the solve, the clock records and the code-bias records are byte-identical
+         * with the knob ON, and the held value is written BEFORE the emitter's
+         * phase-bias value-jump test so that test screens what the consumer receives.
+         *
+         * Default OFF ⇒ byte-identical (no hold, no @c gen= token, no @c pbhold= in
+         * the S contract).
+         */
+        bool emit_pb_hold{ false };
+        /**
+         * @brief Card PBH: arc gap (s) beyond which a returning key starts a NEW
+         *        hold generation (@c network.emit_pb_hold_max_gap_s, default 300).
+         *
+         * A key not emitted for longer than this is a re-acquisition, not a
+         * continuation: holding it at a value estimated before the gap would assert
+         * a frame the estimator has since abandoned.  The gap is measured in PRODUCT
+         * content time between the key's own emissions, and crossing it is an EVENT
+         * at both edges (a @c PB_HOLD / @c gen_start row with cause @c gap plus the
+         * run-end counters), exactly as a first sighting is.
+         *
+         * INERT unless @ref emit_pb_hold.
+         */
+        double emit_pb_hold_max_gap_s{ 300.0 };
+        /**
          * @brief Card RF-PD-fix: fold the station's own DATUM rows into its local
          *        block BEFORE the @c addStation positive-definiteness test
          *        (@c network.station_prior_before_pd).

@@ -102,6 +102,14 @@ void RealTimeEngine::logProducerStatus(RtEpochContext& ctx) {
  * (frozen lines 1708-1751); see scripts/rt_seam_verify.py.
  */
 void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
+    // Card PBH: the HELD keys are decided first, and on the DATA rather than on a
+    // consumer knob — the consumer cannot know the producer armed
+    // network.emit_pb_hold, it can only read SsrPhaseBiasEntry::hold_generation.
+    // Every key it handles lands in ctx.pb_hold_handled and is skipped by whichever
+    // of the three reactions below runs, so each key is visited exactly once per
+    // epoch (the same once-only guarantee the PBT-before-CC dispatch gives).  With
+    // an unheld product the set stays empty and all three bodies are unchanged.
+    reactToPbHold_(ctx);
     // Card PBT (A): with the STEP translation armed it REPLACES the whole
     // reaction — declared and undeclared steps alike — so it is dispatched
     // before the card-CC carry.  That precedence IS the once-only guarantee
@@ -133,6 +141,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key = obs.satellite + "|" + code;
+            if (ctx.pb_hold_handled.count(key)) continue;         // card PBH reacted
             if (auto pb = ssr.getPhaseBias(obs.satellite, code)) {
                 if (state_manager_->noteSsrDiscontinuity(
                         key, pb->discontinuity_counter)) {
@@ -207,6 +216,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
+            if (ctx.pb_hold_handled.count(key)) continue;         // card PBH reacted
             const std::string amb_key = obs.satellite + "_" + code;
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
@@ -313,6 +323,7 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
+            if (ctx.pb_hold_handled.count(key)) continue;         // card PBH reacted
             const std::string amb_key = obs.satellite + "_" + code;
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
@@ -401,6 +412,87 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
         c.skipped_eps_declared, c.reset_first_sight, c.reset_basis, c.reset_bssd,
         c.reset_unknown_key, c.refused_undeclared, c.no_pair,
         c.closureHolds() ? "HOLDS" : "BROKEN", pb_step_translate_.size());
+}
+
+/**
+ * @brief Card PBH: the reaction to a HELD phase bias.
+ *
+ * New code (not a relocation).  Dispatched FIRST inside @ref resetOnPhaseBiasDisc,
+ * and keyed on the wire rather than on a knob: a consumer cannot know the producer
+ * armed @c network.emit_pb_hold, it can only see a nonzero
+ * @c SsrPhaseBiasEntry::hold_generation.  Zero there means an unheld product (every
+ * RTCM stream, every pre-PBH file, every OFF run) and this seam handles nothing, so
+ * the three reactions below it are byte-identical.
+ *
+ * Under a hold the emitted value is a GENERATION CONSTANT, which inverts the
+ * meaning of both signals the pre-card reactions key on:
+ *
+ *  - the DISCONTINUITY COUNTER no longer implies a value step.  It is still read,
+ *    so @c StateManager's per-key memory advances and a key that later leaves the
+ *    hold does not mint a spurious reset from a stale comparison — but the reaction
+ *    is suppressed and COUNTED, which is the whole point of the contract: the
+ *    producer's marks are what the hold was built to stop paying for.
+ *  - the GENERATION becomes the declaration.  A change of a previously-seen nonzero
+ *    generation means the producer re-levelled this key, so the ambiguity re-floats
+ *    through the EXISTING reset path (@c StateManager::resetAmbiguity at
+ *    @c getAmbiguityStd, the same call @c reset_disc uses) and notifies card ALC
+ *    exactly as that reset does.  A FIRST sighting is not a change: there is no
+ *    prior state that could have drifted against it.
+ *
+ * The A5 freshness flip is deliberately NOT handled here and NOT suppressed: it is
+ * a step in the APPLIED correction (a bias gated out and back in), which the hold
+ * does not touch.  It is also unreachable on the closed-loop postures, where
+ * @c processing.enable_ssr_bias_max_age is off.  Keys this seam handled are recorded
+ * in @c ctx.pb_hold_handled and skipped downstream, so a held key is never visited
+ * twice in one epoch.
+ */
+void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
+    auto log = log_manager_.getLogger("rt_engine");
+    const std::string& epoch_prefix = ctx.epoch_prefix;
+    const std::vector<PppObservation>& modeled_obs = ctx.modeled_obs;
+
+    const auto&  ssr       = ssrStore();
+    const double reset_std = config_.getAmbiguityStd();
+    for (const auto& obs : modeled_obs) {
+        for (const auto& kv : obs.modeled) {
+            const std::string& code = kv.first;
+            if (code.empty() || code[0] != 'L') continue;       // phase only
+            if (code.find('_') != std::string::npos) continue;   // raw signal only
+            // The ungated read, exactly as the three reactions below make it.
+            const auto pb = ssr.getPhaseBias(obs.satellite, code);
+            if (!pb || pb->hold_generation == 0) continue;        // not held: unchanged path
+            const std::string key = obs.satellite + "|" + code;
+            ctx.pb_hold_handled.insert(key);
+
+            // Consume the counter so StateManager's per-key memory tracks, then let
+            // the ledger record that it was ignored.
+            const bool disc_changed =
+                state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
+            const auto d = pb_hold_.react(key, pb->hold_generation, disc_changed);
+            if (d.action == PbHoldLedger::Action::Refloat) {
+                state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                noteConsumerSatEvent_(key, "reset_hold_gen");   // card CST (no-op unarmed)
+                noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
+                log->info("{}SSR phase-bias HOLD generation {} -> {}: reset {} {}",
+                          epoch_prefix, d.previous_generation, pb->hold_generation,
+                          obs.satellite, code);
+            }
+        }
+    }
+}
+
+void RealTimeEngine::logPbHoldSummary_(const char* tag) {
+    // Printed only when a held entry was actually seen — a consumer reading an
+    // unheld product is byte-identical, and a run that reports 0 cells here had an
+    // INERT hold on the producer side no matter how clean the wire reads.
+    const auto& c = pb_hold_.counters();
+    if (c.cells == 0) return;
+    log_manager_.getLogger("rt_engine")->info(
+        "SSR phase-bias HOLD ({}): cells {} over {} held key(s) -> first_sight {} / held {} / "
+        "refloats {} (generation changes re-floated through the reset path); "
+        "disc-counter changes IGNORED {} (no value step under a hold); closure {}",
+        tag, c.cells, c.keys, c.first_sight, c.held, c.refloats, c.disc_ignored,
+        c.closureHolds() ? "HOLDS" : "BROKEN");
 }
 
 void RealTimeEngine::logPbDiscCarrySummary_(const char* tag) {

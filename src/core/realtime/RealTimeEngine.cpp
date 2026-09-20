@@ -366,6 +366,8 @@ void RealTimeEngine::flush() {
     logPbDiscCarrySummary_("end of run");
     // Card PBT (A): ditto for the every-step translation counters.
     logPbStepTranslateSummary_("end of run");
+    // Card PBH: ditto for the hold reaction (silent unless a held entry was seen).
+    logPbHoldSummary_("end of run");
     // Card ALC: ditto for the ambiguity level-check counters.
     logAmbLevelCheckSummary_("end of run");
 }

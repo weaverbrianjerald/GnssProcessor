@@ -1228,6 +1228,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // H3: per-λ jump gate (discfrac=)
             pending_contract.disc_jump_test_decommon = nc.disc_jump_test_decommon;  // Card JT: de-commoned phase jump test (discdecom=)
             pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // Card MS: per-channel mark scope (discscope=)
+            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // Card PBH: the phase-bias hold reading rule (pbhold=)
             // M4 (contract v2): advertise the combined-σ age-scaling coefficient on the
             // S line ONLY when the combined-σ channel is on and a coefficient is set, so
             // an OFF (or agek=0) run's v2 header is byte-identical (agek= token absent).

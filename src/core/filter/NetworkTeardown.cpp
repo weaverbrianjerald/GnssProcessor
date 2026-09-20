@@ -5666,6 +5666,44 @@ int networkTeardown(
                       NetworkProductEmitter::kDiscDecommonMinSats,
                       k.n_jt_decommon_only + k.n_jt_both);
         }
+        // Card PBH: the emit-side phase-bias hold — invariant #4's ON-path telemetry
+        // and invariant #7's two edges, printed ONLY when armed so an OFF run's
+        // summary is byte-identical.  `held_emissions 0` means the hold never wrote,
+        // however clean the wire reads.  The DECOUPLING edge's cost is the
+        // |estimate - held| distribution (what the hold HIDES) and the coupled-mark
+        // clock step (the frame move it refuses to transfer); the RE-COUPLING edge is
+        // the generation starts, each one a PB_HOLD/gen_start event the consumer
+        // re-floats on.
+        if (config_.getNetworkConfig().emit_pb_hold) {
+            const auto& k = ctx.counters;
+            auto        dev = ctx.carry.pb_hold_dev_abs_m;      // copy: run-end readout
+            auto        cpl = ctx.carry.pb_hold_coupled_step_m;
+            auto q = [](std::vector<double>& v, double f) -> double {
+                if (v.empty()) return 0.0;
+                const std::size_t i = static_cast<std::size_t>(
+                    std::min<double>(f * static_cast<double>(v.size()),
+                                     static_cast<double>(v.size()) - 1.0));
+                std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(i), v.end());
+                return v[i];
+            };
+            const double d50 = q(dev, 0.50), d90 = q(dev, 0.90);
+            const double dmax = dev.empty() ? 0.0 : *std::max_element(dev.begin(), dev.end());
+            const double c50 = q(cpl, 0.50), c90 = q(cpl, 0.90);
+            const double cmax = cpl.empty() ? 0.0 : *std::max_element(cpl.begin(), cpl.end());
+            log->info("  pb hold, emit (PBH)       : keys {} / generations {} (first {} / gap {}, "
+                      "max_gap_s {:.1f}) / held emissions {}; |estimate - held| p50 {:.4f} / "
+                      "p90 {:.4f} / max {:.4f} m over {} samples (what the hold HIDES)",
+                      k.n_pbh_keys, k.n_pbh_gen_first + k.n_pbh_gen_gap, k.n_pbh_gen_first,
+                      k.n_pbh_gen_gap, config_.getNetworkConfig().emit_pb_hold_max_gap_s,
+                      k.n_pbh_held_emissions, d50, d90, dmax,
+                      ctx.carry.pb_hold_dev_abs_m.size());
+            log->info("  pb hold, coupled (PBH)    : {} coupled clock+phase-bias mark(s) reached a "
+                      "held key; de-commoned satellite clock step at those epochs p50 {:.4f} / "
+                      "p90 {:.4f} / max {:.4f} m over {} sample(s) -- the measured cost of NOT "
+                      "transferring a coupled frame move",
+                      k.n_pbh_coupled_marks, c50, c90, cmax,
+                      ctx.carry.pb_hold_coupled_step_m.size());
+        }
         // Card MS: the per-channel mark scope — invariant #4's ON-path telemetry.
         // Printed ONLY when armed, so a `sat`-scope run's summary is byte-identical.
         // `suppressed` is the whole point of the knob: 0 there means the scope
@@ -5735,6 +5773,19 @@ int networkTeardown(
                       k.n_amb_level_checks, k.n_amb_level_trips_wl,
                       k.n_amb_level_trips_if, k.n_amb_level_refloats,
                       agree ? "AGREE" : "MISMATCH");
+        }
+        // Card PBH: the consumer's half of the hold contract.  Printed only when a
+        // held entry was actually seen, so an unheld run's summary is byte-identical
+        // -- and `cells 0` with the producer's hold armed would mean the generation
+        // never reached the store, which is the failure no clean log would show.
+        {
+            const auto& p = consumer->pbHoldCounters();
+            if (p.cells > 0)
+                log->info("  pb hold, consumer (PBH)   : cells {} over {} held key(s) -> "
+                          "first_sight {} / held {} / refloats {}; disc-counter changes "
+                          "IGNORED {} (no value step under a hold); closure {}",
+                          p.cells, p.keys, p.first_sight, p.held, p.refloats, p.disc_ignored,
+                          p.closureHolds() ? "HOLDS" : "BROKEN");
         }
         // Card CC (B): consumer snapshots written beside the network history
         // copies (0 written on an armed seed = no warm start on offer).
