@@ -382,3 +382,59 @@ hours 4 to 6 is more than 0.05 m above the sim's T3 (0.04 m), or its `T4_attrib`
 the sim bed its first L5 fault with truth, and the health screen is then developed
 against it. Sim ingredients that do not reproduce are recorded as harmless to this
 posture at the injected size.
+
+## 9. 2026-09-20: AB2-2 field wave, and the second field batch pre-registered
+
+Field arms of section 8 (`runs/_rap_<tag>`, six arms concurrent, about 8 minutes each):
+
+| arm | the one change from T3 | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | if_slip (band 5) |
+| --- | --- | --- | --- | --- | --- |
+| T3 | none | 0.67 0.30 0.14 0.62 0.68 1.11 | 0 | 931 | 259 (121) |
+| `fA_bshm` | band 5 removed at BSHM00ISR only | 0.53 0.20 0.09 0.20 0.20 0.13 | 168 | 574 | 246 (109) |
+| `fB_kit3` | band 5 removed at KIT300UZB only | 0.66 0.29 0.14 0.62 0.71 1.22 | 0 | 933 | 254 (116) |
+| `fD_rest9` | band 5 removed at the other nine | 0.69 0.31 0.15 0.52 0.60 0.96 | 0 | 905 | 167 (39) |
+| `fE_phase` | L5 phase removed at the 11, C5 code kept | 0.63 0.28 0.13 0.19 0.19 0.36 | 0 | 651 | 151 (24) |
+| `fF_code` | C5 code removed at the 11, L5 phase kept | 0.40 0.09 0.09 2.28 2.05 1.42 | 175 | 914 | 259 (121) |
+| T3s | band 5 removed at all 11 | 0.55 0.20 0.09 0.09 0.14 0.15 | 204 | 516 | 151 (24) |
+
+**One station carries the loss.** Removing band 5 at BSHM00ISR alone takes hours 4 to 6
+from 0.62 / 0.68 / 1.11 m to 0.20 / 0.20 / 0.13 m and `T4_attrib` from 931 to 574. The
+station with the largest L5 post-fit misfit (KIT300UZB, 0.23 m) changes nothing on
+its own, and neither do the other nine while BSHM00ISR keeps its band 5; with
+BSHM00ISR out they are worth the last 0.10 m of hours 4 and 5. It is the phase that
+does it (`fE_phase` recovers most of the loss). A band with phase and no code
+(`fF_code`) is not a posture: it is the best arm of the day through hour 3 and
+diverges after.
+
+**The raw data at BSHM00ISR are clean.** Estimator-free read of the RINEX files
+(`scripts/ab2_l5_raw_read.py`, selftest 25/25, outputs `runs/_ab2_l5raw_20260920/`;
+the combination 0.22618 PHI1 - 1.22618 PHI2 + PHI5 in metres cancels geometry,
+clocks, troposphere and the first-order ionosphere; re-read independently at three
+stations, agreeing). BSHM00ISR, KIT300UZB and JPLM00USA hold zero L5-lattice steps in
+six hours with 30 s noise of 3.8 to 4.5 mm (control median 4.6 mm), their three
+codes agree with each other to 0.3 to 0.5 m, the common-mode code-minus-phase rate at
+BSHM00ISR equals that of a healthy station with the same receiver type, and the epoch
+tags are on the grid. These stations are sick in the ESTIMATOR, in the dual solve
+already: L1 post-fit within-arc RMS of 0.247 m (BSHM00ISR), 0.171 (GAMB00PYF), 0.090
+(KIT300UZB), 0.089 (JPLM00USA), 0.047 (PARK00AUS) against a median of 0.0073 m,
+range-like in its band ratio. A third band multiplies the damage paths of a station
+that is already sick; it is not a band-5 fault. L5-only slips are real and belong to
+a receiver family, not to the suspects: 57 L5-lattice steps of one to three cycles
+in the 23 stations read, 56 of them on L5X receivers and 5 flagged by the receiver;
+38 at suspects (ULAB00MNG 12, YKRO00CIV 8, VOIM00MDG 5, LMMF00MTQ 4, STHL00GBR 4)
+and 19 at four control stations that are healthy in the solve (SGOC00LKA 6,
+GCGO00USA 5, MBAR00UGA 4, POTS00DEU 4). That is what the band-5 IF-TD pairs are
+catching, and slips alone do not make a station a suspect. The satellite-common term is visible and
+small: Block IIF range 0.032 m median and 0.112 m maximum (G25), Block III 0.008 m;
+it is the inter-band inconsistency of the order of 0.01 m read in section 7.
+
+**Second field batch, pre-registered** (one change each from T3; same reading as
+section 8, and `fG_nobshm` is read against the dual diagnostic without that station,
+`runs/_diag_field6_noBSHM`: 1.03 0.29 0.19 0.18 0.16 0.14 m, `T4_attrib` 252):
+
+| tag | the one change | question |
+| --- | --- | --- |
+| `fG_nobshm` | BSHM00ISR dropped from the roster, L5 at all 58 | is L5 adoptable once the sick station is out |
+| `fH_nobshm_s10` | the same, and band 5 removed at the other ten | what the other ten are worth without it |
+| `fJ_bshm_slip5` | band 5 removed at BSHM00ISR and the five slip stations | is the last 0.10 m the real L5 slips |
+| `fK_bshm_sick4` | band 5 removed at BSHM00ISR, KIT300UZB, JPLM00USA, GAMB00PYF, MAC100AUS | or the chronically sick stations |

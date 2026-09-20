@@ -301,12 +301,12 @@ def score_one(rd, pf=False):
     p = rd + "/logs/closed_loop_trace.csv"
     hrs = {}
     if os.path.exists(p):
-        rows = list(csv.DictReader(open(p)))
-        t0 = min(float(r["tow"]) for r in rows)
-        for r in rows:
+        rows = [r for r in csv.DictReader(open(p)) if r.get("tow") and r.get("pos_err_3d_m") is not None]
+        t0 = min(float(r["tow"]) for r in rows) if rows else 0.0
+        for r in rows:                      # a run still in flight has a partial last row
             try:
                 hrs.setdefault(int((float(r["tow"]) - t0) // 3600), []).append(float(r["pos_err_3d_m"]))
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
     out["p50"] = " ".join(f"{st.median(v):.2f}" for _, v in sorted(hrs.items()))
     out["subdm"] = sum(1 for v in hrs.values() for e in v if e < 0.10)
