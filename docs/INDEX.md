@@ -59,10 +59,12 @@ record the program is re-founding **on**.
   to 0.3 mm, which measures the two as the same operation. ADOPTED into the
   RF-0hv working bases 2026-09-20 (baseline pair `runs/_rf0hv3_{field,sim}6`); no
   loader default, golden or ledger row changed.
-- [AB1](refound/AB1_sh_consumer_product_2026-09-20.md): open, 2026-09-20: add-back 1,
-  the SH VTEC field as a consumer product; the in-solve field is loader-refused on
-  this posture, so a post-solve fit with per-satellite bias terms; the trace-only
-  prototype AB1-0 and its decision rule are pre-registered.
+- [AB1](refound/AB1_sh_consumer_product_2026-09-20.md): parked, 2026-09-20: add-back 1,
+  the SH VTEC field as a consumer product; the in-solve field is loader-refused, and
+  the trace-only prototype fails the frozen rule (a causal global product beats the
+  dual-frequency consumer's own ionosphere for 2 epochs only, sim with truth): the
+  consumer constraint is KEEP_OFF, the field is specified as a product (degree 6,
+  25 degree mask, per-satellite bias terms) and not built.
 - [AB2](refound/AB2_l5_third_frequency_2026-09-20.md): parked, 2026-09-20: add-back 2,
   GPS L5 as a third frequency, KEEP_OFF on the field: the triple NETWORK damages the
   L1/L2 wire on real data (consumer hours 4 to 6 at 0.6 to 1.1 m against 0.11; a dual
