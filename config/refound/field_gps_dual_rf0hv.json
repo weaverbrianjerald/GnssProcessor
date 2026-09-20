@@ -35,7 +35,14 @@
     "author's instruction -- network.emit_pb_hold: true, with closed_loop.pb_step_translate: false (the hold IS the",
     "zero-dead-band translation, moved to the producer) and closed_loop.amb_level_check: false (harmful under the",
     "hold: five of six hours worse on both beds).  The baseline pair is now runs/_rf0hv3_{field,sim}6 (= the PBH-1",
-    "arm H byte for byte), exe gnss_processor_pbh1.exe F1D3BDDB...  Every add-back is a delta against that pair."
+    "arm H byte for byte), exe gnss_processor_pbh1.exe F1D3BDDB...  Every add-back is a delta against that pair.",
+    "2026-09-20 (card AB2 sections 10 to 13, docs/refound/AB2_l5_third_frequency_2026-09-20.md): the GAP RE-ENTRY",
+    "RESPONSE is ARMED at the author's instruction -- network.cycle_slip.gap_reentry_relevel: true.  The working bases",
+    "folded 41 shifted-and-bridged arcs in 6 h on the field (standing invariant 1 open); armed, T4_attrib 457 to 228 and",
+    "the clock wire on the consumer's satellites 0.0274 to 0.0107 m; on the sim it is neutral without losses of lock and",
+    "restores the base level under 81 injected ones (0.45 to 0.05 m).  The baseline pair is now runs/_rf0hv4_{field,sim}6.",
+    "STILL OPEN: the re-entry is seen per SATELLITE, so a loss of lock on the primary pair while band 5 or a fallback",
+    "signal tracks through is not seen (card GRS, docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md)."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -255,7 +262,8 @@
       "common_band_ref_arc": true,
       "if_phase_td_ref_arm_all": true,
       "mw_lli_corroborate": true,
-      "gap_instrument": true
+      "gap_instrument": true,
+      "gap_reentry_relevel": true
     },
     "cold_clock_seed": true,
     "emit_clock_disc": true,

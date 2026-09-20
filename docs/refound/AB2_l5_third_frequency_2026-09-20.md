@@ -688,3 +688,39 @@ consistent with the further gain of the `holes` emulation on the dual field arm
 
 `sL_ds_tri_on` and `sJ_ds_dual_on` with the GRS rider are the acceptance arms of the
 build; `sN_dsfull_tri_on` and `sM_dsfull_dual_on` give the level they should reach.
+
+## 14. 2026-09-20: the gap re-entry response is armed in the working bases; the baseline pair is re-set
+
+At the author's instruction `network.cycle_slip.gap_reentry_relevel: true` is armed in
+`config/refound/{field,sim}_gps_dual_rf0hv.json` (the knob and a dated `_comment` block,
+nothing else). The new baseline pair is `runs/_rf0hv4_{field,sim}6`, exe
+`gnss_processor_pbh1.exe`, exit 0, 720 consumer epochs; its wires are byte-identical to
+the validated arms (`_rap_dC_gapre` sha256 `4bbb10e1f89b622b...`, `_rap_sG_gapre_dual`
+`46449eac18d3ca0b...`). Every later arm is a delta against this pair.
+
+| bed | pair | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | CLK_ANCHOR | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- | --- |
+| field | previous (`_rf0hv3_field6`) | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 457 | 598 | 0.0274 / 0.0281 |
+| field | **new (`_rf0hv4_field6`)** | 0.53 0.11 0.09 0.10 0.14 0.12 | 203 | 228 | 424 | **0.0107 / 0.0173** |
+| sim | previous (`_rf0hv3_sim6`) | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 | 0 | 127 | 0.0030 / 0.0040 |
+| sim | **new (`_rf0hv4_sim6`)** | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 | 0 | 127 | 0.0030 / 0.0040 |
+
+Field card-G line of the new pair: 131 resumptions, 88 shifted, 0 arcs shifted and
+bridged (41 before), 176 fresh.
+
+**The ledger row says KEEP_OFF, from another posture.** `docs/CONFIG_promotion_ledger`
+graded this knob on 2026-09-09 on the converging leveling posture (12 h, 63 stations):
+the mechanism worked (shifted-and-bridged 88 to 0, `T4a` refloats -46 %, the ZWD step
+of BSHM00ISR at TOW 271200 from -2612 m to -0.028 m) and the float consumer got 56 %
+worse (settled RMS 3.18 to 4.95 m, concentrated in hours 3 to 9), because every freed
+arc re-levelled from one epoch of code. The same row records that no sim reproduction
+was possible, the simulator having no tracking-gap scenario; the `dropslip` op of
+section 12 now supplies one. On the float vehicle of RF-0hv the consumer is at a
+decimetre, not at metres, and the 6 h grade is a gain in hours 1 to 3 and equal
+afterwards. Because the old cost sat in hours 3 to 9, two 12 h arms of the dual field
+base (`runs/_rap_d12_off`, `runs/_rap_d12_on`) are in flight; their reading, frozen: the
+armed arm must not be worse than the unarmed one by more than 0.03 m of consumer p50
+in any hour from 3 to 12, and its clock wire must stay better. A loss there reverts
+the arming. The ledger row is owed an amendment scoped to the float vehicle once the
+12 h arms and the GRS build have landed (it needs a loader posture row, and the
+loader file is under edit by the build).
