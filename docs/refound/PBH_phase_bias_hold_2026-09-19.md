@@ -480,3 +480,29 @@ excursion (EV6) is the largest remaining wire term on the field
 (clock-alone within-arc RMS 27 mm against 3 mm on the sim). (5) Why the
 estimator's phase bias wanders (section 2 leads); it no longer reaches a float
 consumer, and it bounds any integer add-back.
+
+## 8. 2026-09-20: the hold ADOPTED into the RF-0hv working bases
+
+At the author's instruction `config/refound/{field,sim}_gps_dual_rf0hv.json` now
+carry `network.emit_pb_hold: true`, `closed_loop.pb_step_translate: false` and
+`closed_loop.amb_level_check: false` (three keys plus dated comment lines).
+Working bases only: no loader default, no golden, no ledger row.
+
+Confirmation arms from the adopted bases with only the product path changed,
+exe `gnss_processor_pbh1.exe` (`F1D3BDDB...`), both exit 0 (245 s field, 192 s
+sim): `products.txt`, `closed_loop_trace.csv` and `network_epoch_status.csv` are
+byte-identical to the PBH-1 arm H on both beds (wire `bbaa7fd6...` field,
+`ea3a646f...` sim).
+
+**The baseline pair from this date: `runs/_rf0hv3_{field,sim}6`.** Consumer 3D
+p50 by hour: field 0.57 / 0.17 / 0.11 / 0.10 / 0.13 / 0.11 m (p90 3.31 / 0.20 /
+0.14 / 0.12 / 0.26 / 0.18; 167 epochs below 0.10 m), sim 0.60 / 0.10 / 0.10 /
+0.06 / 0.06 / 0.05 m (p90 3.38 / 0.16 / 0.15 / 0.10 / 0.09 / 0.10; 448 epochs),
+720/720 on both. Every add-back is a delta against this pair.
+
+Pre-flight note for the L5 add-back: the hold is a stiff quantity in the sense
+of invariant 1. A constant true phase bias is physically sound on L1 and L2; the
+GPS Block IIF L5 signal carries a thermally driven inter-frequency clock
+variation of order a decimetre, so on L5 part of the phase-bias movement is
+signal, and the hold needs a per-signal scope or a declared slow-variation
+channel there.

@@ -30,7 +30,12 @@
     "ALC2_restart_policy_adoption_2026-09-19.md, runs/_alc2_sim6): it raises the check's coverage",
     "0.302 -> 0.733 with translate-caused restarts 0, and the consumer LOSES on ALL SIX hours",
     "(+0.56 / +0.70 / +0.05 / +0.21 / +0.31 / +0.14 m -> 1.02 / 0.98 / 0.29 / 0.36 / 0.47 / 0.28 m,",
-    "epochs < 0.10 m 81 -> 0) -- so it is REFUSED, not adopted."
+    "epochs < 0.10 m 81 -> 0) -- so it is REFUSED, not adopted.",
+    "2026-09-20 (card PBH, docs/refound/PBH_phase_bias_hold_2026-09-19.md): the PHASE-BIAS HOLD is ADOPTED at the",
+    "author's instruction -- network.emit_pb_hold: true, with closed_loop.pb_step_translate: false (the hold IS the",
+    "zero-dead-band translation, moved to the producer) and closed_loop.amb_level_check: false (harmful under the",
+    "hold: five of six hours worse on both beds).  The baseline pair is now runs/_rf0hv3_{field,sim}6 (= the PBH-1",
+    "arm H byte for byte), exe gnss_processor_pbh1.exe F1D3BDDB...  Every add-back is a delta against that pair."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -285,8 +290,8 @@
       "consume_network_clock": true,
       "ar_mode": 0,
       "consume_network_iono": true,
-      "pb_step_translate": true,
-      "amb_level_check": true,
+      "pb_step_translate": false,
+      "amb_level_check": false,
       "station": {
         "position_ecef": [
           5378997.6974,
@@ -951,6 +956,7 @@
     "phase_anchor_flag_quiet_ep": 5,
     "trace_amb_state": true,
     "phase_datum_held_mark_cold": true,
-    "phase_datum_held_cold_release": true
+    "phase_datum_held_cold_release": true,
+    "emit_pb_hold": true
   }
 }

@@ -56,8 +56,9 @@ record the program is re-founding **on**.
   contribution to the within-arc error of the phase correction goes to exactly
   0.0000 m so the product's phase quality IS its clock quality (field 0.0693 to
   0.0274 m, sim 0.0199 to 0.0030 m), and the consumer reproduces the zero dead band
-  to 0.3 mm, which measures the two as the same operation. Nothing promoted;
-  adoption into the RF-0hv bases is the author's call.
+  to 0.3 mm, which measures the two as the same operation. ADOPTED into the
+  RF-0hv working bases 2026-09-20 (baseline pair `runs/_rf0hv3_{field,sim}6`); no
+  loader default, golden or ledger row changed.
 
 ---
 

@@ -206,3 +206,13 @@ Both reproduce the pre-ALC-ARC reference pair byte for byte, `products.txt` and 
 trace included; the only counter that moved is the field level-check coverage, 0.204 to 0.197.
 
 Record: [ALC2](ALC2_restart_policy_adoption_2026-09-19.md).
+
+## 9. 2026-09-20: the phase-bias hold adopted, the pair re-based again
+
+The working bases carry `network.emit_pb_hold: true` with the consumer
+translation and the level check OFF (card [PBH](PBH_phase_bias_hold_2026-09-19.md)
+section 8). The baseline pair is `runs/_rf0hv3_{field,sim}6`, exe
+`gnss_processor_pbh1.exe` (`F1D3BDDB...`): field 0.57 / 0.17 / 0.11 / 0.10 / 0.13 /
+0.11 m, sim 0.60 / 0.10 / 0.10 / 0.06 / 0.06 / 0.05 m, 720/720. The pair of
+section 8 (`_rf0hv2_*`) is superseded as the reference; its wire differs from the
+new one only in the P records.
