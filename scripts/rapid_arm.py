@@ -29,6 +29,10 @@ Ops:
                                       a loss of lock: the listed types are blanked for `len` epochs
                                       (rate per arc-hour) and every listed PHASE type returns with
                                       its own integer-cycle step, while the other types track through
+  primaryonly;bands=12                remove every observation type of `bands` whose tracking
+                                      attribute is not the station's primary one (first phase
+                                      type of the band in the priority list that the file has),
+                                      so that no fallback signal exists; epochs are kept
   holes;bands=12;window=20;where=all  delete a satellite's whole record at an epoch where the
                                       primary phase of one of `bands` is missing inside an arc
                                       (a good epoch within `window` epochs), so that a
@@ -71,7 +75,7 @@ def parse_op(text):
     for kv in parts[1:]:
         k, v = kv.split("=", 1)
         op[k.strip()] = v.strip()
-    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip"), op
+    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip", "primaryonly"), op
     return op
 
 
@@ -195,13 +199,20 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
     for op in ops:
         if op["op"] == "strip" and op["sats"] == "all":
             drop |= set(match_types(codes, op["types"]))
+        if op["op"] == "primaryonly":
+            prio = op.get("_prio") or []
+            for b in op.get("bands", "12"):
+                cand = [t for t in prio if t[0] == "L" and t[1] == b and t in codes] or \
+                    sorted(t for t in codes if t[0] == "L" and t[1] == b)
+                if cand:
+                    drop |= {k for k, c in enumerate(codes) if c[1] == b and c[2] != cand[0][2]}
         if op["op"] == "relabel":
             for k in match_types(codes, op["from"]):
                 new_codes[k] = "".join(t if t != "?" else c for t, c in zip(op["to"], codes[k]))
     keep = [k for k in range(len(codes)) if k not in drop]
     out = lines[:blk[0]] + type_block(system, [new_codes[k] for k in keep]) + lines[blk[1]:i]
     width = 3 + 16 * len(codes)
-    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes")
+    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly")
                and not (op["op"] == "strip" and op["sats"] == "all")]
     for op in rec_ops:
         op["_idx"] = match_types(codes, op["types"])
@@ -515,6 +526,14 @@ def cmd_selftest(_):
     n_edge = rewrite_rinex(d + "/j.rnx", d + "/k3.rnx",
                            [dict(parse_op("holes;bands=12;window=3;where=edge"), _prio=["L1C", "L2W"])], "AAAA")
     chk(n_mid == 1 and n_edge == 0, f"holes where: mid {n_mid} edge {n_edge}")
+    # 9: primaryonly keeps one tracking attribute per band
+    hp = list(hdr)
+    hp[1] = "G    8 C1C C1W C2W C2L L1C L1W L2W L2L                      SYS / # / OBS TYPES"
+    open(d + "/q.rnx", "w", newline="\n").write("\n".join(hp + ["> 2024 05 08 00 00 00.0000000  0  1",
+                                                 rec("G03", [1, 2, 3, 4, 5, 6, 7, 8])]) + "\n")
+    rewrite_rinex(d + "/q.rnx", d + "/r.rnx", [dict(parse_op("primaryonly;bands=12"), _prio=["L1W", "L1C", "L2W", "L2L"])], "AAAA")
+    r = open(d + "/r.rnx").read().split("\n")
+    chk(r[1].startswith("G    4 C1W C2W L1W L2W") and r[5] == rec("G03", [2, 3, 6, 7]).rstrip(), f"primaryonly {r[1]!r}")
     # 8: dropslip: the listed types vanish for `len` epochs and the phases return stepped by whole cycles
     long_body = []
     for e in range(12):

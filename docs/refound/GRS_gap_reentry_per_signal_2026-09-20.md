@@ -139,3 +139,46 @@ decimetre names the class of partial-signal epochs that still costs the triple
 network its ignition; the fix owed is then a rule for a satellite that is present
 without its primary pair (no fallback pair in the solve, or no rows at all), not a
 further slip response.
+
+## 5. 2026-09-20: GRS-2 result: the partial-signal epochs at the arc EDGES are what the triple network still pays for
+
+Arms on the rider posture (`gF_tri`), exe `gnss_processor_grs.exe`, exit 0, 720 consumer
+epochs; all 59 stations on three bands.
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | CLK_ANCHOR |
+| --- | --- | --- | --- | --- |
+| dual working base (`_rf0hv4_field6`) | 0.53 0.11 0.09 0.10 0.14 0.12 | 203 | 228 | 424 |
+| `gF_tri` (rider) | 0.69 0.31 0.15 0.14 0.12 0.17 | 6 | 219 | 325 |
+| **`hA_tri_edge`** (partial epochs at the arc edges removed) | 0.83 **0.08 0.05 0.09 0.11 0.07** | **393** | 267 | 349 |
+| `hB_tri_mid` (partial epochs inside an arc removed) | 0.43 0.11 0.16 0.14 0.09 0.12 | 206 | 300 | 439 |
+| `hC_tri_all` (both; the control) | 0.31 0.07 0.14 0.12 0.11 0.07 | 324 | 327 | 454 |
+
+The control reproduces the emulation of AB2 section 12 on the new exe (0.31 0.07 0.14
+0.13 0.11 0.07, 311). By the letter of the frozen reading only the control meets all
+three conditions; the split says why. Removing the edge epochs alone gives the best
+field consumer of the program from hour 2 on, better than the dual base in every one
+of hours 2 to 6 (0.08 0.05 0.09 0.11 0.07 against 0.11 0.09 0.10 0.14 0.12 m) with
+nearly twice its epochs below a decimetre, and a worse first hour (0.83 m). Removing
+the mid-arc ones alone brings the triple to the level of the dual base with the best
+first hour but one (0.43 m). The settled level is an EDGE matter: a rising or setting
+satellite that a receiver tracks on its civil signals before (after) the semi-codeless
+pair is present costs the triple network about 0.05 m of consumer accuracy and nearly
+all of its epochs below a decimetre; the day holds 34 726 such records, 1.9 % of the
+GPS records. The first hour is a MID-ARC matter.
+
+This is not a slip question any more. With the row-level response, the rider and the
+edge rule, GPS L5 on all 59 stations is better than two bands on real data.
+
+**GRS-3, pre-registered.** Two arms decide what the rule should be, before it is
+built. `hD_tri_noalt` = `gF_tri` with every non-primary observation type of bands 1
+and 2 removed from every station's RINEX file (op `primaryonly`, selftest 17/17): no
+fallback signal exists, the epochs stay. `hE_dual_edge` = the dual rider arm `gD_dual`
+with the edge epochs removed. Reading, frozen: `hD_tri_noalt` at the level of
+`hA_tri_edge` from hour 2 (within 0.03 m in each hour, 300 or more epochs below a
+decimetre) means the damage is done by the FALLBACK SIGNALS entering the solve at the
+edges, and the rule owed is "no fallback walk on the network path" (a canonical
+signal per band or nothing); otherwise the rule owed is an admission rule: a
+(station, satellite) epoch enters the solve only with its canonical pair on bands 1
+and 2. `hE_dual_edge` says whether the dual working base owes the same rule (better
+than `gD_dual` by 0.02 m or more in three of hours 2 to 6, or 250 or more epochs below
+a decimetre).
