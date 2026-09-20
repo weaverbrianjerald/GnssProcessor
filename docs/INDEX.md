@@ -59,6 +59,10 @@ record the program is re-founding **on**.
   to 0.3 mm, which measures the two as the same operation. ADOPTED into the
   RF-0hv working bases 2026-09-20 (baseline pair `runs/_rf0hv3_{field,sim}6`); no
   loader default, golden or ledger row changed.
+- [AB1](refound/AB1_sh_consumer_product_2026-09-20.md): open, 2026-09-20: add-back 1,
+  the SH VTEC field as a consumer product; the in-solve field is loader-refused on
+  this posture, so a post-solve fit with per-satellite bias terms; the trace-only
+  prototype AB1-0 and its decision rule are pre-registered.
 
 ---
 
