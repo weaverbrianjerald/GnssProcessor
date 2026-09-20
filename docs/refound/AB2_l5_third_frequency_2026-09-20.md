@@ -175,3 +175,41 @@ network's. Reading, frozen: T3d within 0.03 m of the baseline pair in hours 2 to
 means the triple wire serves a dual consumer and the loss is L5 inside the consumer;
 T3d reproducing T3's loss means the triple network damages the L1/L2 wire. Both
 beds.
+
+## 5. 2026-09-20: AB2-0b result (the loss is in the NETWORK), and the slip-tier arms pre-registered
+
+Arms `runs/_ab2_{field,sim}6_T3d`: the wire is byte-identical to T3's and the consumer
+tracks two signals only. Consumer 3D p50 by hour: field 0.81 / 0.37 / 0.17 / 0.45 /
+0.64 / 0.85 m (hours 4 to 6 up -0.557 m), sim 1.40 / 0.15 / 0.15 / 0.06 / 0.04 / 0.04 m.
+The dual consumer on the triple wire reproduces T3's field loss, so by the frozen
+reading the triple network damages the L1/L2 wire; L5 inside the consumer is not the
+cause. On the sim the triple wire serves a dual consumer as well as a triple one
+from hour 4, with a worse first hour (1.40 m).
+
+**What changed on the field wire.** Clock records of T3 minus the dual baseline,
+de-commoned with the difference-median and integrated, hours 2 to 6: within-arc RMS
+up to 0.558 m (G22), 0.312 (G17), 0.268 (G27), 0.230 (G26), 0.180 (G29), with ranges
+to 2 m, on satellites with and without L5. The level of the L5 satellites' clocks
+also moves by metres (RMS 2.8 m against 1.2 m for the others), constant in time,
+which is the asserted zero inter-signal correction re-realizing the clock datum of
+those satellites; a float consumer absorbs a constant. The p50 of the truth grade
+(0.0274 to 0.0308 m) hid the tail.
+
+**Where it comes from.** Slip-tier events by block, dual against triple:
+`T1_if_slip` 136 to 308 with 151 rows naming a band-5 signal (IIF 38 to 134, III 41
+to 117, satellites without L5 unchanged at 57); `T0_band_scope` 415 to 719 with 454
+rows naming band 5; `T4_attrib` 457 to 931, doubled on every block including the
+satellites with no L5 (231 to 469); `CLK_ANCHOR` 598 to 777. Block III is not
+quieter than Block IIF per satellite on the IF-TD tier, so this is not the Block IIF
+inter-frequency clock variation. The armed slip tiers fire on the (L1, L5) pairs of
+real data, their responses refloat, and the refloat traffic spills over the whole
+network.
+
+**AB2-0c, pre-registered (config-only, field bed first).** T3p = T3 with
+`cycle_slip.if_phase_td_pairs: "first"` (the (L1, L2) pair only). T3q = T3p with
+`cycle_slip.common_band_scope: false`. Reading, frozen: an arm whose consumer returns
+to within 0.05 m of the baseline pair in hours 4 to 6 with `T4_attrib` back below
+600 names the tier that must be scoped before L5 is adoptable, and the sim twin of
+that arm is then run; if neither arm does, L5 is recorded KEEP_OFF on the field
+with this evidence, the open item becomes a band-5 calibration of the slip tiers,
+and the add-back sequence moves on.
