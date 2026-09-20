@@ -724,3 +724,22 @@ in any hour from 3 to 12, and its clock wire must stay better. A loss there reve
 the arming. The ledger row is owed an amendment scoped to the float vehicle once the
 12 h arms and the GRS build have landed (it needs a loader posture row, and the
 loader file is under edit by the build).
+
+## 15. 2026-09-20: the 12 h arms: the arming stands
+
+`runs/_rap_d12_off` (the previous dual field base) and `runs/_rap_d12_on` (the armed
+base), 12 h, exe `gnss_processor_pbh1.exe`, exit 0, 1440 consumer epochs each.
+
+| arm | consumer 3D p50 by hour, hours 1 to 12 (m) | sub-dm | T4_attrib | CLK_ANCHOR | clock wire over 12 h, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| unarmed | 0.57 0.17 0.11 0.10 0.13 0.11 0.11 0.13 0.17 0.16 0.18 0.40 | 223 | 1069 | 1354 | 0.0406 / 0.0440 |
+| **armed** | 0.53 0.11 0.09 0.10 0.14 0.12 0.14 0.15 0.13 0.12 0.17 0.35 | **321** | **702** | 1066 | **0.0203 / 0.0303** |
+
+By the frozen reading of section 14 the arming stands: from hour 3 to hour 12 the armed
+arm is never worse by more than 0.03 m (the largest loss is 0.03 m in hour 7, the
+next 0.02 m in hour 8) and it is better by 0.04 to 0.05 m in hours 9, 10 and 12; it
+has 44 % more epochs below a decimetre, a third fewer post-fit refloats, and a clock
+wire twice as good on the consumer's satellites over the whole window. The cost that
+the ledger recorded on the old posture in hours 3 to 9 does not return on the float
+vehicle. Both arms lose hour 12 (0.40 and 0.35 m), which is a separate lead and is
+not read here.
