@@ -646,3 +646,45 @@ response never fires. If so the sim bed reproduces the field mechanism with trut
 and `sL_ds_tri_on` with the GRS knob becomes the acceptance test of the build. An arm
 that is not damaged is reported as such: the injection is then too weak or the
 mechanism is not the one read from the field.
+
+## 13. 2026-09-20: the sim bed carries the field's fault, with truth
+
+Arms of section 12 plus three controls, exe `gnss_processor_pbh1.exe`, all exit 0.
+The injection is the same in every arm (81 losses of lock of three epochs at 10 of
+the 60 sim stations, each phase returning with its own step of 1 to 300 cycles);
+"partial" blanks L1C, L2W and C2W while C5Q and L5Q track through, "full" blanks the
+band-5 pair as well, so that the satellite's raw row disappears.
+
+| arm | loss of lock | response | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | CLK_ANCHOR | re-entries: bridged / refloated |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sim dual base | none | off | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 | 0 | 127 | 2 / 0 |
+| `sO_dsfull_dual_off` | full | off | 0.77 0.23 0.18 0.26 0.45 0.45 | 14 | 2416 | 2669 | **141** / 0 |
+| **`sM_dsfull_dual_on`** | full | ON | 0.59 0.11 0.10 0.06 0.05 0.05 | 439 | 64 | 127 | 0 / **161** |
+| `sI_ds_dual_off` | partial | off | 0.81 0.72 0.12 0.14 0.17 0.20 | 108 | 1955 | 2437 | 2 / 0 |
+| `sJ_ds_dual_on` | partial | ON | 0.81 0.72 0.11 0.10 0.17 0.16 | 178 | 1940 | 2416 | 0 / 20 |
+| sim T3 (triple) | none | off | 0.56 0.16 0.08 0.04 0.04 0.04 | 430 | 0 | 133 | |
+| `sK_ds_tri_off`, `sL_ds_tri_on` | partial | off, ON | 0.50 0.23 0.28 0.24 0.22 0.22 (both) | 1 | 2944 | 2893 | |
+| **`sN_dsfull_tri_on`** | full | ON | 0.58 0.14 0.05 0.04 0.05 0.04 | 469 | 193 | 139 | 0 / 160 |
+
+**The same slips are harmless when the re-entry is seen and ruinous when it is not.**
+With a full loss of lock the satellite's row disappears, the instrument counts 141
+shifted-and-bridged arcs, and the response turns a run that ends at 0.45 m with 2416
+post-fit refloats into one at the level of the undisturbed base (0.05 m, 64, the
+clock-anchor decouples back at 127). With a partial loss of lock no re-entry row is
+written at all, on two bands or three, and the response changes nothing (the two
+triple arms are equal to the last digit). The triple posture pays more for the same
+81 events (2944 refloats, one epoch below a decimetre). Both halves of the field
+reading are now reproduced on a bed with truth: `gap_reentry_relevel` is necessary
+on the dual posture, and a per-signal re-entry is necessary whenever a signal tracks
+through a loss of lock of the primary pair.
+
+**One expectation of section 12 was wrong.** The dual arm with the response was
+expected to be healthy under the partial injection. It is not, because
+`raw_observed` holds the band-5 observables in a dual-frequency run too, so the
+satellite's row survives there as well. The hole is therefore open on the dual
+field posture for every satellite that transmits L5 (17 of 32 on this day), which is
+consistent with the further gain of the `holes` emulation on the dual field arm
+(clock wire 0.0107 to 0.0081 m).
+
+`sL_ds_tri_on` and `sJ_ds_dual_on` with the GRS rider are the acceptance arms of the
+build; `sN_dsfull_tri_on` and `sM_dsfull_dual_on` give the level they should reach.
