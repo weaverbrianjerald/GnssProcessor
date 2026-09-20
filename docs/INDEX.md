@@ -44,6 +44,11 @@ record the program is re-founding **on**.
   2026-09-19: the level-check restart policy refused on both beds and its
   branch left unmerged; translate + level check + consumer-sat trace adopted
   into the RF-0hv working bases; the pair re-based on post-ALC-ARC main.
+- [PBH](refound/PBH_phase_bias_hold_2026-09-19.md): open, 2026-09-19: the wire's
+  phase-bias movement is harmful error for a float consumer (sim 3.0 mm clock alone
+  against 19.9 mm with the phase bias) and 0.2 % of the translated mass is a known
+  frame move; config-only dead-band ladder pre-registered as the premise test for an
+  emit-side phase-bias hold.
 
 ---
 
