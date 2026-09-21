@@ -409,3 +409,23 @@ one tracker beside a mature carry. E4 as frozen would be vacuous. It is replaced
   reproduce the class (edges with a carried jump above 0.5 m, clock trips in those epochs).
   Knob ON: no carried jump above 0.5 m at an edge, no epoch with eight or more trips, and
   every hourly consumer p50 within 0.03 m of the OFF arm or better.
+
+### 6.2 The OFF arm of E4b, run before the build (2026-09-21, manager; exe `gnss_processor_rxp.exe`)
+
+`runs/_rap_w5_sim_off`: the sim base with
+`relabel;from=?1C;to=?1W;stations=S30000SIM,S22000SIM,S17000SIM,S38000SIM,S43000SIM`
+(five neighbouring stations, 1 S to 25 N, 8 E to 48 E). The station list is fixed by this
+run. The truth bed reproduces the class:
+
+| TOW | satellite | survivor | jump of the carried ambiguity (m) | variance before (m^2) | age (epochs) | clock trips | refloats, next 5 epochs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 268170 | G14 | S38000SIM | L1W +16.168 | 3.2e-4 | 291 | 1 | 10 |
+| 271500 | G22 | S38000SIM | L1W +7.335 | 2.2e-4 | 402 | 2 | 1 |
+| 274830 | G30 | S17000SIM | L1W -4.967 | 5.2e-4 | 236 | 2 | 1 |
+| 276600 | G25 | S43000SIM | L1W +2.152, L2W +20.082 | 6.9e-4, 1.8e-3 | 188 | 0 | 0 |
+
+Six more edges have a survivor whose L1W arc is not carried (jumps of 0.1 m or less on
+L2W). The run has 6 clock trips (baseline 1) and 12 post-fit refloats (baseline 0). The
+consumer goes from 0.60 0.10 0.10 0.06 0.06 0.05 m (448 epochs below a decimetre) to
+1.08 0.39 0.24 0.12 0.08 0.06 m (215). How much of that is the edge class and how much is
+the thinner family itself is what the ON arm measures.
