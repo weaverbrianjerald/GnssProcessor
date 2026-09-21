@@ -167,3 +167,24 @@ blocking deferral for a warm lineage, inert for the cold beds).
 **Standing of the knob.** Built, default OFF, byte-identical OFF, the mechanism
 verified; not armed; no ledger row yet (owed with the decision on the band-5
 detector lead). The card stays open for that decision.
+
+## 4. 2026-09-20: two manager reads after the build (no new mechanism)
+
+**A dual consumer on the emulation's wire** (`runs/_rap_tR_dual_on_tB`, a replay of
+`runs/_rap_tB_nocode5_net/products.txt` by the dual consumer, 12 s): 0.26 0.08 0.05 0.03
+0.10 0.06 m and 505 epochs below a decimetre, against 0.43 0.07 0.06 0.08 0.08 0.07 m and
+603 of the dual pair and 0.61 0.11 0.08 0.09 0.13 0.06 m and 349 on the knob's wire. A
+three-band network that uses the L5 phase and no band-5 code gives a user of bands 1
+and 2 a faster first hour and better hours 3, 4 and 6, and loses hours 2 and 5 by 0.01
+and 0.02 m; by the count of epochs below a decimetre the dual pair stays ahead of
+every three-band arm of the day (603 against 535, 505, 390, 349, 314).
+
+**The band-5 wide-lane detections of the knob arm are not obviously false.** Of the 55
+`mw_wl_slip` events that name an L5 signal (pairs L2W;L5Q 26, L2W;L5X 14, L1C;L5Q 10,
+L1W;L5X 5), 36 have a phase-only `T1_if_slip` at the same station and satellite within
+60 s, 29 an LLI event, 23 a gap event within 90 s; 19 are wide-lane-only. 19 of the 28
+first-hour ones fall in the first ten minutes of the cold start. The lead of section
+3 therefore reads: the cost, if it is there, is in the RESPONSE to these detections
+at ignition (action `all` 404 against 225) or in the band-5 code rows themselves, and
+separating the two needs a pair scope for the wide-lane detector or a code weight
+per band, neither of which exists as a knob.
