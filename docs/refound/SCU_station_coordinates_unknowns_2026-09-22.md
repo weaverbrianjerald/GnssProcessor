@@ -5,11 +5,11 @@
 - **id:** SCU
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** READ 2026-09-22 (manager; replays and config-only arms, no build), opened by the author's question whether the network should estimate its station coordinates instead of holding them. Three findings. (1) A second roster defect, found by replaying each roster station as a consumer on the network's own wire: MIZU00JPN is held 1.6 m from where its data puts it (E +1.47, N -0.64, U -0.12 m, stable to 0.02 m); the coordinate resolver propagates ITRF2020 linearly and applies no post-seismic model. With MIZU00JPN moved to its data the clock wire against the reference clocks goes from 0.0068 to 0.0044 m on all satellites (dropping the station gives 0.0045 m), 11 of 16 census sites improve, KOKB00USA loses half of its Up offset, WTZZ00DEU is unchanged. (2) The measure-only station-congruence screen had flagged MIZU00JPN (and, before card UPO, GRAZ00AUT and KRGG00ATF) at 22 to 29 against a roster median of 0.9 in every run, and nothing read it; it detects and cannot measure, because the carried ambiguities absorb the constant part of a coordinate error. (3) Holding is the right default and free coordinates for all stations are not estimable next to free satellite clocks; the recommended form is a constrained coordinate state per station with a release for flagged stations, which turns the existing detector into a full detect, identify, adapt loop with no external data. Build proposed in section 6, NOT started: the author's decision.
+- **summary:** READ 2026-09-22 (manager; replays and config-only arms, no build), opened by the author's question whether the network should estimate its station coordinates instead of holding them. Four findings. (1) A second roster defect, found by replaying each roster station as a consumer on the network's own wire: MIZU00JPN is held 1.6 m from where its data puts it (E +1.47, N -0.64, U -0.12 m, stable to 0.02 m); the coordinate resolver propagates ITRF2020 linearly and applies no post-seismic model. With MIZU00JPN moved to its data the clock wire against the reference clocks goes from 0.0068 to 0.0044 m on all satellites (dropping the station gives 0.0045 m), 11 of 16 census sites improve, KOKB00USA loses half of its Up offset, WTZZ00DEU is unchanged. (2) The measure-only station-congruence screen had flagged MIZU00JPN (and, before card UPO, GRAZ00AUT and KRGG00ATF) at 22 to 29 against a roster median of 0.9 in every run, and nothing read it; it detects and cannot measure, because the carried ambiguities absorb the constant part of a coordinate error. (3) Of the four stations the screen still flags, none shows a coordinate error of its own in a leave-out replay: two of them share a regional Up bias of the wire over central and east Asia (-0.13 to -0.18 m, WUH200CHN and BADG00RUS included), so a flag is not always a coordinate. (4) Holding is the right default and free coordinates for all stations are nearly unestimable next to free satellite clocks (0.05 of a common translation stays observable); the recommended form is a constrained coordinate state per station with a release for flagged stations, which turns the existing detector into a full detect, identify, adapt loop with no external data. Build proposed in section 6, NOT started: the author's decision.
 - **source:** the author's question of 2026-09-22; [UPO](UPO_consumer_up_offset_2026-09-22.md) sections 5.7 and 6 (the site-specific offsets left open, the congruence table)
 - **knobs / posture:** none built. Proposed: `network.station_position_estimate`, `network.station_position_sigma_m`, `network.station_position_free`, `network.station_position_release_t` (section 6). Posture: the RF-0hv working bases as armed on 2026-09-22 (baseline pair `runs/_rf0hv7_{field,sim}6`)
 - **dates in the text:** 2026-09-22
-- **hashes / run dirs:** `runs/_rap_u4_s10` (identical to `runs/_rf0hv7_field6`), `runs/_rap_m1_drop_mizu`, `runs/_rap_m2_mizu_moved`, roster replays `runs/_rap_ros_<station>_<key>` with keys `ros6`, `ros7u`, `ros7`, `rosm1`, `rosm2`, census key `m2`; exe `gnss_processor_upo.exe` (`E2E177AB...`); instrument `runs/_msc/scripts/msc_roster_audit.py`
+- **hashes / run dirs:** `runs/_rap_u4_s10` (identical to `runs/_rf0hv7_field6`), `runs/_rap_m1_drop_mizu`, `runs/_rap_m2_mizu_moved`, `runs/_rap_m3_drop_maju_lck4`, `runs/_rap_m4_drop_solo_ulab` (leave-out keys `lo3`, `lo4`), roster replays `runs/_rap_ros_<station>_<key>` with keys `ros6`, `ros7u`, `ros7`, `rosm1`, `rosm2`, census key `m2`; exe `gnss_processor_upo.exe` (`E2E177AB...`); instrument `runs/_msc/scripts/msc_roster_audit.py`
 
 ## 1. The question
 
@@ -123,14 +123,45 @@ median is 0.87 to 0.91 in all four runs:
   Measuring the error needs a coordinate state that is estimated together with the
   ambiguities (what the replayed consumer does), not a test on residuals.
 
+### 4.1 A flag is not always a coordinate error (leave-out replays of the four flagged stations)
+
+Two arms on the base with MIZU00JPN moved, each dropping two flagged stations
+(`runs/_rap_m3_drop_maju_lck4`, `runs/_rap_m4_drop_solo_ulab`), then the dropped stations
+replayed on the wire formed without them (`runs/_msc/scripts/msc_leaveout.py`, keys `lo3`,
+`lo4`). Mean over hours 4 to 6 (E, N, U in m), and Up by hour:
+
+| station | statistic | E | N | U | Up in hours 4, 5, 6 |
+| --- | --- | --- | --- | --- | --- |
+| MAJU00MHL | 7.3 to 8.7 | +0.013 | -0.011 | -0.040 | -0.081 -0.065 +0.026 |
+| LCK400IND | 4.8 to 5.4 | +0.031 | -0.034 | -0.169 | -0.200 -0.155 -0.151 |
+| SOLO00SLB | 3.2 to 4.1 | -0.078 | -0.046 | +0.084 | +0.179 +0.092 -0.019 |
+| ULAB00MNG | 3.4 to 4.1 | +0.051 | +0.050 | -0.146 | -0.142 -0.201 -0.094 |
+
+- MAJU00MHL carries the second largest statistic of the roster and no coordinate error at
+  the level of 0.04 m: its flag is something else at that station (unread).
+- LCK400IND and ULAB00MNG read -0.15 to -0.17 m in Up, and so do the INDEPENDENT census
+  sites of the same region on the wire these two arms derive from (key `m2`: WUH200CHN
+  -0.181 m, BADG00RUS -0.167 m; URUM00CHN -0.125 m among the roster replays `rosm2`). That is a regional bias of the wire over
+  central and east Asia, not the coordinates of those two stations. Candidates, unread:
+  the gross code rows held at full weight at SGOC00LKA and KIT300UZB (the two stations of
+  that region whose own replays leave by metres), a held height in the region.
+- Consequence for section 6: a released station takes up a regional bias as if it were
+  its coordinate and stops constraining the region, which is a loss where the roster is
+  thin. The static release list is safe; the automatic release needs a discriminator
+  between a station's own error (MIZU00JPN: no neighbour shares it) and a shared one.
+
 ## 5. Held, free, or constrained
 
 - **All free is not estimable next to free satellite clocks.** With orbits held and
   clocks free per epoch, a common translation d of all stations changes a range by
   -e.d = -(x_sat - x_sta).d / rho. For constant rho the first part is a satellite term
   and the second a receiver term, both absorbed by the clocks; what stays observable is
-  the variation of 1 / rho over the sky, about a tenth of the translation. A common height
-  change trades with clocks and wet delays in the same way. This is the known collinearity
+  the variation of 1 / rho over the sky. Checked numerically at one epoch (this roster's 59
+  positions, a 30-satellite constellation, 7 degree mask, 569 rows): next to free satellite
+  and receiver clocks 0.054 of the norm of a common translation's partials survives, 0.043
+  with the wet delays free as well, against 0.32 to 0.93 (0.32 to 0.81) for ONE station
+  freed while the others are held. A common height change trades with clocks and wet delays
+  in the same way. This is the known collinearity
   of the GNSS geocentre (Rebischung, Altamimi and Springer 2014, Journal of Geodesy 88).
   A roster with every coordinate free floats by centimetres to decimetres, and every
   user inherits the float one to one. Tight priors on most stations ARE the datum: the
@@ -172,8 +203,9 @@ Requirements:
   process noise zero by default. The loader refuses a posture in which fewer than three
   quarters of the stations keep the tight prior (section 5, first point).
 - K3. Release, first increment: a static list `network.station_position_free` (prior
-  10 m). Second increment: automatic release when the congruence statistic stays above
-  `network.station_position_release_t` over a window; one way (the converged estimate's
+  10 m). Second increment, only with the discriminator of section 4.1: automatic release
+  when the congruence statistic stays above `network.station_position_release_t` over a
+  window and no neighbour shares the offset; one way (the converged estimate's
   own covariance is the constraint afterwards). Both edges are events with counters and
   identities (invariant 7); the release epoch is declared.
 - K4. Telemetry in both knob states: the congruence run-end table becomes a WARNING that
@@ -210,13 +242,13 @@ edge; a released station's growing weight in the clocks is bounded by its own co
 
 ## 7. What stays open
 
-- MAJU00MHL, LCK400IND, SOLO00SLB, ULAB00MNG (congruence statistic 3.4 to 8.7) and the
-  central Asian loss when MIZU00JPN is corrected (section 3.1).
+- The regional Up bias of -0.13 to -0.18 m over central and east Asia (section 4.1; it
+  includes WUH200CHN), what MAJU00MHL's flag is, and SOLO00SLB (0.08 m East, not settled).
 - The resolver applies no post-seismic model: roster AND census truths. A stop-gap is
   available today (move MIZU00JPN by the leave-out estimate, or drop it: section 3.1);
   it puts a number derived from this network's own solution into the roster, which the
   build would make unnecessary. The author's decision.
 - The four replays that leave by metres on bad data (BSHM00ISR, SGOC00LKA, KIT300UZB,
   VOIM00MDG): the consumer's unbounded reaction, card MSC.
-- From card UPO section 5.7: WUH200CHN (-0.18 m Up, unchanged by this card), the negative
+- From card UPO section 5.7: the negative
   wet delays of CAS100ATA and SCTB00ATA, the soft hours 10 to 12, the consumer's mask.
