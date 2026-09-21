@@ -50,7 +50,14 @@
     "L1W; with the priority-first signal the field consumer goes from 162 to 603 epochs below a decimetre of 720 and from 275 to",
     "994 of 1440 in 12 h; byte-identical on the sim; the closed-loop consumer stays on count).  The baseline pair is now",
     "runs/_rf0hv5_{field,sim}6, exe gnss_processor_csl.exe.  OPEN: the mechanism of the latch effect is half read (a station",
-    "subset, card CSL section 4); network.canonical_pair_admission is KEEP_OFF (card CPA)."
+    "subset, card CSL section 4); network.canonical_pair_admission is KEEP_OFF (card CPA).",
+    "2026-09-22 (card EV7, docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md): ONE MORE KNOB ARMED at the author's instruction --",
+    "network.phase_datum_gate_drop_erase: true.  DEFECT of the coverage gate on the float vehicle: when phase_datum_min_stations removes a",
+    "(satellite, signal) phase-bias column with one tracker left, that station's CARRIED ambiguity stayed defined against the removed column and",
+    "absorbed the whole bias in one epoch (metres against a centimetre prior); 13 such edges in 6 h carried 49 of the field run's 50 clock-anchor",
+    "trips and every all-satellite decouple.  Armed, the drop edge erases the family's carries before assembly, as the return edge always did:",
+    "trips 50 to 1, clock wire 0.0184 / 0.0107 to 0.0091 / 0.0072 m, census 13 of 16 sites better, 12 h trips 134 to 8; byte-identical on the sim",
+    "(no such edge there).  The baseline pair is now runs/_rf0hv6_{field,sim}6, exe gnss_processor_ev7.exe.  OPEN: the consumers' standing Up offset."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -358,6 +365,7 @@
     "trace_section_timers": true,
     "station_pd_pin_aware": true,
     "phase_datum_min_stations": 2,
+    "phase_datum_gate_drop_erase": true,
     "cb_kaula_prior": false,
     "cb_kaula_sigma_m": 3.0,
     "sbasis_complete": true,

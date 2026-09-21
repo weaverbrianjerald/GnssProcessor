@@ -120,8 +120,8 @@ record the program is re-founding **on**.
   the corrected field run is the new baseline `runs/_rap_r6_dual` and is worse at WTZZ00DEU
   (533 against 603): CAS100ATA and LCK400IND together amplify the all-satellite clock-anchor
   decouple of 05:22 UT (post-fit refloats 21 to 72), the dominant open loss of the field bed.
-- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (FIX BUILT 2026-09-21, every
-  frozen gate passes, NOT armed: the author's decision), event card, the all-satellite
+- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (fix ARMED 2026-09-22 in the
+  working bases, baseline pair `runs/_rf0hv6_{field,sim}6`; every frozen gate passed), event card, the all-satellite
   clock-anchor decouple of 05:22 UT: DEFECT of the coverage gate on the float vehicle (a
   phase-bias column removed with one tracker left; that station's carried ambiguity absorbed
   the whole bias in one epoch; 13 edges in 6 h carry 49 of the run's 50 clock trips). Fix
