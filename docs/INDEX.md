@@ -89,11 +89,16 @@ record the program is re-founding **on**.
   L1C at 47 stations although 18 carry L1W; every station on its priority-first signal takes
   the consumer from 162 to 601 epochs below a decimetre (275 to 983 of 1440 in 12 h); mechanism
   unread; the decision rule is built behind a knob, bars frozen.
-- [TBI](refound/TBI_three_band_ignition_2026-09-20.md): open, 2026-09-20: the three-band
-  ignition; with the day's three knobs armed L5 is best in hour 6 (0.03 m) and not yet a gain
-  (314 epochs below a decimetre against 603) because its first two hours are slow; the lag is
-  Up-dominant and the consumer's band-5 code misfits the wire by about a metre per satellite;
-  leading hypothesis the zero inter-signal-correction assertion on band 5; batch and bars frozen.
+- [TBI](refound/TBI_three_band_ignition_2026-09-20.md): closed, 2026-09-20: the three-band
+  ignition; the network closes band 5's code datum by asserting a zero inter-signal correction
+  per satellite where the truth is metres (raw triple-code combination against the wire's:
+  correlation 0.947 field, 0.962 sim); the misfit is pushed into band 2 and the WIRE carries the
+  damage; band-5 code removed at the stations alone: 0.27 0.10 0.05 0.04 0.06 0.02 m, 535 epochs
+  below a decimetre (314 with it, 603 dual); no config-only cure; L5 adoption bars frozen.
+- [B5D](refound/B5D_band5_code_datum_2026-09-20.md): open, 2026-09-20: build card, the band-5
+  code datum; an extra-band code-bias column left free where the data determine it, each
+  signal family closed by its sum-to-zero row (`network.sat_gf_extra_band_free`, default OFF);
+  requirements, gates and bars frozen.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
