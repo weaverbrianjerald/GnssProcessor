@@ -106,7 +106,8 @@ record the program is re-founding **on**.
   `network.extra_band_code_sigma_scale`); the gap is the band-5 CODE ROWS (scale 10: 597 epochs
   below a decimetre at WTZZ00DEU, every hour better than the dual pair), not the detector
   pairs (391); the scale fails the clock-wire bar and does not transfer across the 16 census
-  sites; L5 not adopted.
+  sites; L5 not yet adopted and SEQUENCED, never abandoned (the author's directive; return
+  plan R-1 to R-4 in section 4).
 - [MSC](refound/MSC_multi_site_consumer_2026-09-21.md): open (MSC-1 result 2026-09-21), the
   multi-site consumer census; WTZZ00DEU is not representative (603 epochs below a decimetre
   against a median of 145 at 16 independent sites); by the frozen count rule no adoption of

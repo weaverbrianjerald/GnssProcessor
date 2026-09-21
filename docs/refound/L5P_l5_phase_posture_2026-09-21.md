@@ -137,3 +137,45 @@ adopted and neither knob is recommended. What the card settles: the residual cos
 the third band sits in the band-5 code rows of the network solve and not in the
 slip detector; the posture that holds up across sites is the one with no band-5
 code in the network and none on the wire.
+
+## 4. 2026-09-21: the standing of L5 (the author's directive) and the return plan
+
+The author's directive: L5 is a goal of the program and is never abandoned; an
+add-back that misses its bars is SEQUENCED, not closed. "Not adopted" in section 3 is
+a statement about the bars on 2026-09-21, on a base that two defects found the same
+day are about to move (card RXP, the reader; CSL section 7, the code half of the
+latch rule).
+
+**What the two days established in L5's favour.**
+
+- The field loss of the first attempt was three defects of the network, none a
+  property of L5: the gap re-entry hole (AB2; fixed and armed), the first-epoch latch
+  (CSL; armed), the zero inter-signal assertion on band 5 (B5D; fixed behind a knob).
+- With those out of the way the L5 PHASE is a gain wherever it was measured. At
+  WTZZ00DEU every three-band arm is better than the dual pair in hour 6 (0.02 to 0.04
+  m against 0.07 m); the two arms in which the band-5 code has no pull are better or
+  equal in hours 3 to 6 (`tB_nocode5_net` 0.05 0.04 0.06 0.02, `p2_sig10` 0.05 0.08 0.08
+  0.03, against 0.06 0.08 0.08 0.07 m), and `p2_sig10` in every hour. Across the 16
+  census sites the three-band wire with no band-5 code has the best median count of
+  any arm (193 against 145; 11 sites improve, 5 worsen) and a first hour better by
+  0.10 m at the paired median.
+- What still costs is the band-5 CODE: in the network solve (section 3) and on the
+  wire, as a bias that a consumer trusts.
+- The larger payoff of a third frequency lies in the integer layer (the extra-wide
+  lane between L2 and L5 has a wavelength of 5.86 m), which the float-only posture of
+  the re-founding does not use yet; AB3's readiness read passed on 2026-09-20.
+
+**The return plan**, sequenced after the reader fix and the code half of the latch
+rule have re-set the base that every L5 arm is graded against:
+
+- **R-1** the four three-band postures re-run on the corrected base (the assertion in
+  place, B5D, B5D with the code scale, no band-5 code), graded at WTZZ00DEU and on the
+  census with the paired statistic.
+- **R-2** the consumer's half of the posture: a band-5 code bias that the network
+  barely determines is either withheld from the wire or carried with a quality the
+  consumer weights by, so that the network's weight and the consumer's agree (two
+  variants: withhold, or a consumer-side scale that is no longer pinned).
+- **R-3** the bars of TBI section 4, on the census median and at WTZZ00DEU, 6 h then
+  12 h, with the ledger rows read first.
+- **R-4** L5 in the lanes add-back: the wide-lane census of AB3 includes the L2-L5
+  pair from the start.
