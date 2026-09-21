@@ -415,7 +415,8 @@ std::vector<std::string> activeFrequencyBands(
     std::map<std::pair<std::string, char>, PppModel::CanonicalPick>
     PppModel::decideCanonicalPicks(const std::vector<CanonicalCandidate>& candidates,
                                    CanonicalSignalRule rule,
-                                   double min_coverage) {
+                                   double min_coverage,
+                                   bool code_follows_phase) {
         using Key = std::pair<std::string, char>;
         // Group by (band, obs-type), preserving the caller's priority order.
         std::map<Key, std::vector<const CanonicalCandidate*>> by_key;
@@ -462,6 +463,12 @@ std::vector<std::string> activeFrequencyBands(
                                       run ? run->count : 0 };
         }
         if (rule != CanonicalSignalRule::Priority) return out;
+        // Card CSL-3: with the follow clause off, every CODE row keeps the pick
+        // the priority rule already made from the CODE's own list above — the
+        // same first-in-the-list-with-coverage decision the phase got, with no
+        // reference to the phase's attribute.  Nothing else in the rule changes,
+        // so a station whose two lists agree latches identically either way.
+        if (!code_follows_phase) return out;
 
         // The code follows the phase's tracking attribute where that code exists
         // at this station and clears the same floor.  A station that latches L1W
@@ -583,8 +590,11 @@ std::vector<std::string> activeFrequencyBands(
                 canonicalRuleForStation(config_.canonicalSignalRule(),
                                         config_.canonicalSignalPriorityStations(),
                                         canonical_trace_label_);
+            // Card CSL-3: the follow clause is the CODE half of the priority
+            // rule, so it rides the same call.  True is the CSL-1 behaviour.
             const auto picks = decideCanonicalPicks(candidates, station_rule,
-                                                    config_.canonicalSignalMinCoverage());
+                                                    config_.canonicalSignalMinCoverage(),
+                                                    config_.canonicalSignalCodeFollowsPhase());
             struct Candidate {
                 std::string signal;
                 int count{ 0 };
@@ -672,8 +682,12 @@ std::vector<std::string> activeFrequencyBands(
             // "priority" at a station running 'count' would be the trace lying
             // about the lever under test.  With no scope the two are the same
             // value, so an unscoped run's bytes are unchanged.
+            // Card CSL-3: the follow setting is NAMED only when it is off.  The
+            // default line therefore stays byte-identical, and a run that armed
+            // the knob says so on the same line that states the latch — which is
+            // the trace an arm of the code half is read from.
             log_manager_.getLogger("main_log")->info(
-                "Canonical latch for {} station '{}' (rule={}{}, min_coverage={:.2f}, "
+                "Canonical latch for {} station '{}' (rule={}{}{}, min_coverage={:.2f}, "
                 "{} sats this epoch): {}",
                 cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
                 station_rule == CanonicalSignalRule::Priority ? "priority" : "count",
@@ -681,6 +695,9 @@ std::vector<std::string> activeFrequencyBands(
                     ? std::string()
                     : fmt::format(" [scoped to {} station(s)]",
                                   config_.canonicalSignalPriorityStations().size()),
+                config_.canonicalSignalCodeFollowsPhase()
+                    ? std::string()
+                    : std::string(", code_follows_phase=false"),
                 config_.canonicalSignalMinCoverage(), sat_obs_list.size(),
                 latch_detail.empty() ? std::string("(none)") : latch_detail);
         }

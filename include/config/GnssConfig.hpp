@@ -274,6 +274,31 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Does the canonical CODE follow the PHASE's attribute (card CSL-3)?
+         *
+         * True (the default) is the behaviour built in CSL-1: under
+         * @c CanonicalSignalRule::Priority a band's code pick is moved onto the
+         * tracking attribute its phase latched, where such a code exists at the
+         * station and clears the coverage floor.  The multi-site census found
+         * the cost of that clause: 16 roster stations track L1C phase with C1W
+         * code, the follow moved their code to C1C, and the wire's C1W code
+         * biases thinned from a median of 30 satellites per epoch to 24, which
+         * a consumer on C1W code away from the European cluster pays for in
+         * code-bias dropouts (MSC section 4).
+         *
+         * False decides the code by the same first-in-the-priority-list rule as
+         * the phase, on the code's own list, with no reference to the phase.
+         * Read only under @c CanonicalSignalRule::Priority — @c Count never had
+         * the clause.  Parsed from
+         * @c processing.canonical_signal_code_follows_phase.
+         *
+         * @return True when the code follows the phase; default true.
+         */
+        bool canonicalSignalCodeFollowsPhase() const {
+            return canonical_signal_code_follows_phase_;
+        }
+
+        /**
          * @brief Gets the MW slip detector frequency mode (raw, including Mirror sentinel).
          *
          * Prefer @c getResolvedMwFrequencyMode at call sites that need a
@@ -7830,7 +7855,12 @@ namespace GnssProcessor {
         /// the byte-identical default (the rule applies everywhere); a non-empty list
         /// puts the listed stations on @c Priority and every other station on @c Count.
         std::vector<std::string> canonical_signal_priority_stations_;
-        bool enable_inhouse_bias_estimation_;         ///< In-house per-(sat, sig-pair) MW phase bias estimation; default off.
+        /// Card CSL-3: does the canonical CODE follow the PHASE's tracking attribute
+        /// under @c Priority?  True is the CSL-1 behaviour and the byte-identical
+        /// default; false decides the code on its own priority list.  Unread under
+        /// @c Count, which never had the clause.
+        bool canonical_signal_code_follows_phase_{ true };
+        bool enable_inhouse_bias_estimation_;       ///< In-house per-(sat, sig-pair) MW phase bias estimation; default off.
         double mw_init_frac_threshold_;                 ///< First-epoch sanity check: max |frac| (WL cycles) before forcing a slip-on-init.  Raise for code-noisy combinations (L1C-based MW).
         double mw_cross_sat_ewma_alpha_;                 ///< EWMA factor (0,1] for smoothing the MW cross-sat σ warmup floor; smaller = smoother. Default 0.1.
         StateAmbiguityBasis state_ambiguity_basis_; ///< Ambiguity parameterization (PerBand or NlWl).

@@ -114,10 +114,12 @@ record the program is re-founding **on**.
   2026-09-20 holds across sites, the three together improve 13 of 16; the CSL support reading
   is refuted; the priority latch thinned the wire's C1W code biases and a consumer diverges
   on the dropouts; the census fails its own bar as a standing instrument at 16 sites.
-- [RXP](refound/RXP_rinex3_blank_prn_2026-09-21.md): open, 2026-09-21: DEFECT, the RINEX 3 reader
-  drops every satellite numbered below 10 in a file that pads the number with a blank (`G 7`);
-  16 of 310 files of the day, four in the 59-station roster (CAS100ATA, GOPE00CZE, LCK400IND,
-  LMMF00MTQ); found by the multi-site census; fix, gates and the re-baseline reading frozen.
+- [RXP](refound/RXP_rinex3_blank_prn_2026-09-21.md): open (FIXED 2026-09-21), DEFECT, the RINEX 3
+  reader dropped every satellite numbered below 10 in a blank-padded file (`G 7`); 16 of 310
+  files of the day, four roster stations; fix unconditional, inert where no file is affected;
+  the corrected field run is the new baseline `runs/_rap_r6_dual` and is worse at WTZZ00DEU
+  (533 against 603): CAS100ATA and LCK400IND together amplify the all-satellite clock-anchor
+  decouple of 05:22 UT (post-fit refloats 21 to 72), the dominant open loss of the field bed.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

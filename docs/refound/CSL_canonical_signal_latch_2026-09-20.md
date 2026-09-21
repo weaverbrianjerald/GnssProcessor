@@ -253,3 +253,39 @@ left on C1W at those 16 stations the first hour halves, which agrees with sectio
 The split arms of section 6 are deferred until the reader defect of card RXP is
 fixed and the code half of section 7 is settled, because both move the base the
 split would be graded against; their control is then `pC_four`, not `lE_cov085`.
+
+## 9. 2026-09-21: CSL-3 result: the code half is built; the wire is cured and the census bars pass; WTZZ00DEU fails by a factor of three. NOT recommended
+
+`processing.canonical_signal_code_follows_phase` (default true) is built with card
+RXP's build (suite `CanonicalSignalCodeFollow`, 9 cases; byte-identical at the default
+and on the sim with the knob false; the consumer pinned to the default). Arms on the
+fixed reader, exe `gnss_processor_rxp.exe`; every number re-read by the manager.
+
+| arm | consumer 3D p50 by hour at WTZZ00DEU (m) | sub-dm | clock wire, tracked / all (m) | C1W code biases on the wire: median satellites, satellite-epochs lacking one |
+| --- | --- | --- | --- | --- |
+| `r6_dual` (the code follows the phase) | 0.48 0.05 0.05 0.08 0.09 0.10 | 533 | 0.0107 / 0.0184 | 24, 5323 (C1C: 31) |
+| **`r6_nofollow`** (knob false) | 0.37 0.11 0.09 0.10 0.11 0.12 | **173** | 0.0114 / 0.0210 | **31, 2** (C1C: 28) |
+
+**G0, G1, B2, B3 PASS; B1 FAILS.** The phase latch is unchanged at all 60 stations and
+the code is C1W at 42 of them (19 before); the wire's C1W code biases are complete.
+At the census sites every code-bias freshness flip is gone (QUIN00USA 13 to 0,
+KOKB00USA 10 to 0, POHN00FSM 7 to 0, WUH200CHN 2 to 0), QUIN00USA has no epoch above 5
+m after the first hour (380 on `r6_dual`, largest 1.5 m against 98 m), the across-site
+median count is 182 (bar 145) and the paired change of the mean hourly p50 over hours
+2 to 6 against `r6_dual` is +0.009 m (bar +0.010 m), with the first hour better by
+0.28 m at the median. At WTZZ00DEU the arm has 173 epochs below a decimetre against
+the bar of 570 and is 0.06 m worse in hour 2. Sites that lose more than 36 epochs
+against `r6_dual`: ASCG00SHN 262 to 68, BAKE00CAN 203 to 66, STPM00SPM 563 to 371,
+HARB00ZAF 264 to 191, ARHT00ATA 408 to 291, CEDU00AUS 448 to 356; QUIN00USA 7 to 171
+and POHN00FSM 5 to 173 gain.
+
+**Reading.** With one canonical code signal per station and band, the C1W and C1C
+families share 59 stations: the knob moves 23 stations to C1W, the C1W columns become
+complete and the C1C columns thin (31 to 28 satellites). Whichever way the knob
+stands, one family of consumers pays. The rule is not the lever; the missing piece is
+structural: a station that tracks both codes of a band contributes one of them. The
+same-band companion columns exist in the datum already (RF-0d, RF-0f: left estimable
+on purpose), so the candidate is that a station contributes every band-1 code it
+tracks (a second code channel for COVERAGE of the wire's code biases, not for the
+solve's strength). That is a design decision for the author and is not started. The
+knob stays in the tree, default true, not armed.

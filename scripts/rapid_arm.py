@@ -87,7 +87,22 @@ def match_types(codes, patterns):
     return [k for k, c in enumerate(codes) if any(fnmatch.fnmatchcase(c, p) for p in pats)]
 
 
+def norm_sat(sat):
+    """Canonical satellite id for a RINEX record (card RXP).
+
+    A RINEX 3 record may write its number blank-padded — "G 7" for "G07" — and 16
+    of the 310 observation files of 2024-129 do.  Every id this tool is COMPARED
+    against (the `sats=` selectors, IIF / III, the draw keys) is zero-padded, so a
+    raw slice silently skips those records: an op asked for on G03 never reaches a
+    station that writes "G 3".  Only comparisons and dictionary keys are
+    normalized; the record's own three bytes are written back untouched, because
+    re-padding the file would make the arm a second change.
+    """
+    return sat[:1] + "0" + sat[2:3] if len(sat) >= 3 and sat[1] == " " else sat
+
+
 def sat_selected(sat, sel):
+    sat = norm_sat(sat)
     if sel == "all":
         return True
     if sel == "NOL5":
@@ -160,7 +175,8 @@ def apply_holes(lines, i0, codes, system, op):
             continue
         if ln[:1] == system and len(ln) > 3:
             q = ln.ljust(width)
-            pres.setdefault(ln[:3], []).append((ep, all(q[3 + 16 * k: 17 + 16 * k].strip() for k in prim), j))
+            pres.setdefault(norm_sat(ln[:3]), []).append(
+                (ep, all(q[3 + 16 * k: 17 + 16 * k].strip() for k in prim), j))
             owner[j] = head
         j += 1
     kill, where = set(), op.get("where", "all")
@@ -244,7 +260,8 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                 i += n
             continue
         if ln[:1] == system and len(ln) > 3:
-            sat = ln[:3]
+            # Card RXP: compare and key on the canonical id, write back ln[:3].
+            sat = norm_sat(ln[:3])
             p = ln.ljust(width)
             fld = [p[3 + 16 * k: 19 + 16 * k] for k in range(len(codes))]
             for n_op, op in enumerate(rec_ops):
@@ -564,6 +581,31 @@ def cmd_selftest(_):
     first = next(k for k in range(blank[0] + 1, len(g)) if g[k].ljust(99)[3 + 48:3 + 62].strip())
     after = [float(g[first][3 + 48:3 + 62]) - 1.0e8]
     chk(after and abs(after[0]) >= 1 and abs(after[0] - round(after[0])) < 1e-3, f"dropslip integer step {after}")
+    # 10: card RXP — a blank-padded number ("G 3") is SELECTED as G03 and keyed as
+    #     G03, while the record's own three bytes are written back untouched.
+    pad_b, bln_b = [], []
+    for e in range(4):
+        ep = f"> 2024 05 08 00 {e:02d} 00.0000000  0  2"
+        vals3 = [2.0e7 + e, 2.0e7 + e, 2.0e7 + e, 1.0e8, 0.8e8, 0.7e8]
+        vals17 = [2.1e7, 2.1e7, 2.1e7, 1.1e8, 0.9e8, 0.8e8]
+        pad_b += [ep, rec("G03", vals3), rec("G17", vals17)]
+        bln_b += [ep, rec("G 3", vals3), rec("G17", vals17)]
+    open(d + "/s_pad.rnx", "w", newline="\n").write("\n".join(hdr + pad_b) + "\n")
+    open(d + "/s_bln.rnx", "w", newline="\n").write("\n".join(hdr + bln_b) + "\n")
+    rewrite_rinex(d + "/s_bln.rnx", d + "/t_bln.rnx", [parse_op("strip;types=?5?;sats=G03")], "AAAA")
+    t = open(d + "/t_bln.rnx").read().split("\n")
+    chk(t[5][:3] == "G 3", f"blank id written back verbatim {t[5][:3]!r}")
+    chk(t[5][3 + 32:3 + 46].strip() == "" and t[5][3 + 80:3 + 94].strip() == "",
+        "blank-padded G 3 selected by sats=G03")
+    chk(t[6] == bln_b[2].rstrip(), "G17 untouched")
+    # The draw key is the canonical id, so the same satellite gets the same slips
+    # whichever way its file writes the number.
+    rewrite_rinex(d + "/s_pad.rnx", d + "/u_pad.rnx", [parse_op("slip;types=L5?;sats=G03;rate=3600;max=3;seed=4")], "AAAA")
+    rewrite_rinex(d + "/s_bln.rnx", d + "/u_bln.rnx", [parse_op("slip;types=L5?;sats=G03;rate=3600;max=3;seed=4")], "AAAA")
+    up = [x[3:] for x in open(d + "/u_pad.rnx").read().split("\n")]
+    ub = [x[3:] for x in open(d + "/u_bln.rnx").read().split("\n")]
+    steps = [float(ub[5 + 3 * k][80:94]) - 0.7e8 for k in range(4)]
+    chk(up == ub and any(abs(s) >= 1 for s in steps), f"blank-padded draw matches the padded twin {steps}")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

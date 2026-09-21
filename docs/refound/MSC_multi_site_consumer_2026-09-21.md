@@ -198,3 +198,20 @@ rule's code half costs C1W coverage where C1W stations are sparse, and the consu
 response to a vanished code bias (re-inflating its receiver code-bias states) has an
 unbounded decoupling edge (invariant #7). The first is pre-registered as CSL section
 7; the second is recorded in the open items for the wire-contract work.
+
+## 5. 2026-09-21: follow-ups from the reader fix (card RXP) and the code half (CSL section 9)
+
+- **ANMG00MYS is explained.** Its observation file pads satellite numbers with a blank;
+  the old reader dropped every satellite below G10 and the consumer solved on a median
+  of five satellites. Replayed by the fixed exe on the unchanged wire it has 256
+  epochs below a decimetre (0 before); STPM00SPM, the other blank-padded site, 406 to
+  485. The 14 other sites reproduce bit for bit. KOKB00USA and UTQI00USA remain
+  unread. With the fixed exe the census median on the old wire is 191, not 145.
+- **The census as a tool.** `runs/_msc/scripts/msc_add_wire.py` adds a wire (16 replays
+  in about two minutes) and `msc_pair.py` prints the paired comparison; both are
+  outside the repository and are owed a place in `scripts/` with the site list when
+  the census is re-frozen with more sites.
+- **A caution the census earned.** The scale of card L5P won every hour at WTZZ00DEU
+  and lost across sites; the code half of CSL won across sites and lost at
+  WTZZ00DEU. One instrument is not enough in either direction, and the frozen bars
+  that named both did their work.

@@ -11924,6 +11924,13 @@ namespace GnssProcessor {
         // pinning the rule alone is not enough).  Clear the list too, which is the
         // configuration that makes the rule pin above authoritative.
         c.canonical_signal_priority_stations_.clear();
+        // Card CSL-3: the CODE half of the rule is the same network-side lever.
+        // With the consumer pinned on 'count' it is unread there (the follow
+        // clause belongs to 'priority' alone), so this line is belt and braces —
+        // but it is the line that keeps the pin true if the rule pin above is
+        // ever relaxed, and the census graded this knob by REPLAYING consumers,
+        // whose own code latch must not move with the producer's.
+        c.canonical_signal_code_follows_phase_ = true;
         // Card L5P: the extra-band code deweight is a PRODUCER-side lever on the
         // network's own normal equations.  The derived consumer is a full copy of
         // the producer config and would otherwise deweight its own band-5 code as

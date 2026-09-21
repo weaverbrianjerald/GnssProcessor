@@ -346,6 +346,7 @@ add_executable(gnss_tests
     tests/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_rinex_zero_sentinel.cpp
+    tests/test_rinex3_blank_prn.cpp
     tests/test_network_normal_equations.cpp
     tests/test_neq_station_prior_before_pd.cpp
     tests/test_pd_safe_fold.cpp
@@ -496,6 +497,7 @@ add_executable(gnss_tests
     tests/test_phase_held_basis.cpp
     tests/test_canonical_signal_latch.cpp
     tests/test_canonical_signal_station_scope.cpp
+    tests/test_canonical_signal_code_follow.cpp
     tests/test_mw_detect_pair_scope.cpp
     tests/test_extra_band_code_sigma.cpp
     "src/core/math/Coordinates.cpp"

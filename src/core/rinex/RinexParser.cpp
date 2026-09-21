@@ -623,7 +623,20 @@ namespace GnssProcessor {
                                 log_manager_.getLogger("rinex_parser")->warn("Invalid satellite line: {}", line);
                                 continue;
                             }
+                            // Card RXP: a blank in the PRN field is a well-formed
+                            // RINEX 3 identifier — a writer may emit "G 7" for
+                            // "G07", and 16 of the 310 observation files of
+                            // DOY-129 do.  Unnormalized it matches no orbit, no
+                            // product record and no other station's id, so every
+                            // satellite numbered below 10 leaves that station
+                            // silently: four roster stations contributed none.
+                            // The RINEX 2 path of this file has always applied
+                            // this rule (extractSatsFromLine below); it is
+                            // unconditional here for the same reason — a reader
+                            // that drops a valid satellite has no correct OFF
+                            // state.
                             std::string sat_id = line.substr(0, 3);
+                            if (sat_id[1] == ' ') sat_id[1] = '0';
                             System system = sat_id[0] == 'G' ? System::GPS :
                                 sat_id[0] == 'E' ? System::Galileo :
                                 sat_id[0] == 'R' ? System::GLONASS :

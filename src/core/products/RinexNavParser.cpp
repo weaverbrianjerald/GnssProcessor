@@ -215,7 +215,15 @@ bool decodeKeplerRecord(const std::string& epoch,
     if (sqrtA <= 0.0) return false;   // uninitialised / non-orbit record
 
     BroadcastEphemeris eph;
+    // Card RXP: the same blank-padded identifier the RINEX 3 OBSERVATION path
+    // carries ("G 7" for "G07").  The navigation record has the identical
+    // one-line shape, so it takes the identical normalization: an ephemeris
+    // keyed "G 7" matches no observation and no product record, and the
+    // satellite would drop out of the solution with no warning.  No product
+    // file of DOY-129 is written that way, so this changes nothing on the
+    // current beds; it closes the same hole in the other reader.
     eph.satellite = epoch.substr(0, 3);
+    if (eph.satellite[1] == ' ') eph.satellite[1] = '0';
     eph.system    = sys;
     eph.iode      = static_cast<int>(std::lround(iode_d));
     eph.health    = static_cast<int>(std::lround(health));

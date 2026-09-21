@@ -515,9 +515,10 @@ namespace GnssProcessor {
          *    goes to the earlier candidate, i.e. the historical rule exactly.
          *  - @c CanonicalSignalRule::Priority — the FIRST candidate whose count
          *    is at least @p min_coverage times the largest count of that (band,
-         *    obs-type) wins.  Afterwards every CODE row follows its band's PHASE
-         *    tracking attribute, if a code candidate with that attribute exists
-         *    and clears the same floor; the displaced pick becomes the runner-up.
+         *    obs-type) wins.  Afterwards, and only when @p code_follows_phase,
+         *    every CODE row follows its band's PHASE tracking attribute, if a
+         *    code candidate with that attribute exists and clears the same
+         *    floor; the displaced pick becomes the runner-up.
          *
          * The runner-up is defined under the SAME rule: what would have been
          * latched had the winner not been offered (so under @c Count it is the
@@ -528,13 +529,19 @@ namespace GnssProcessor {
          * @param rule         The decision rule.
          * @param min_coverage Coverage floor for @c Priority; clamped to [0, 1]
          *                     internally, unread under @c Count.
+         * @param code_follows_phase Card CSL-3: true (the default, and the CSL-1
+         *                     behaviour) runs the follow clause above; false
+         *                     leaves each CODE row on the pick the priority rule
+         *                     made from the code's own list.  Unread under
+         *                     @c Count, which never had the clause.
          * @return (band, obs-type) → pick, for every (band, obs-type) that had at
          *         least one candidate with a positive count.
          */
         static std::map<std::pair<std::string, char>, CanonicalPick>
         decideCanonicalPicks(const std::vector<CanonicalCandidate>& candidates,
                              CanonicalSignalRule rule,
-                             double min_coverage);
+                             double min_coverage,
+                             bool code_follows_phase = true);
 
         /**
          * @brief Scope the canonical-signal rule to a station list (card CSL-2).

@@ -366,13 +366,26 @@ namespace GnssProcessor {
                 canonical_signal_min_coverage_ =
                     std::min(1.0, std::max(0.0, canonical_signal_min_coverage_));
             }
+            // ----- Card CSL-3: does the CODE follow the PHASE's attribute? -----
+            // True is the clause CSL-1 built, so an absent key is byte-identical.
+            // False decides the code by the same first-in-the-list-with-coverage
+            // rule as the phase, on its own list: the census measured what the
+            // follow costs a wire whose C1W code biases thin when the 16 stations
+            // that track L1C phase with C1W code move their code to C1C (MSC §4).
+            // Read only under Priority — Count never had the clause.
+            canonical_signal_code_follows_phase_ = jval<bool>(json,
+                "processing.canonical_signal_code_follows_phase",
+                "canonical_signal_code_follows_phase", true);
             if (canonical_signal_rule_ == CanonicalSignalRule::Priority)
                 log->info("Canonical-signal rule: priority (min_coverage {:.2f}) — each station "
                           "latches the first priority-list signal of the band that reaches "
-                          "{:.0f}% of the band's largest satellite count, and its code follows "
-                          "the phase's tracking attribute.",
+                          "{:.0f}% of the band's largest satellite count, and its code {}.",
                           canonical_signal_min_coverage_,
-                          100.0 * canonical_signal_min_coverage_);
+                          100.0 * canonical_signal_min_coverage_,
+                          canonical_signal_code_follows_phase_
+                              ? "follows the phase's tracking attribute"
+                              : "is decided the same way on its own list, NOT following the "
+                                "phase's tracking attribute (card CSL-3)");
             else
                 log->info("Canonical-signal rule: count (highest satellite count per band, "
                           "ties to priority order).");
