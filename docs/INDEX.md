@@ -89,6 +89,11 @@ record the program is re-founding **on**.
   L1C at 47 stations although 18 carry L1W; every station on its priority-first signal takes
   the consumer from 162 to 601 epochs below a decimetre (275 to 983 of 1440 in 12 h); mechanism
   unread; the decision rule is built behind a knob, bars frozen.
+- [TBI](refound/TBI_three_band_ignition_2026-09-20.md): open, 2026-09-20: the three-band
+  ignition; with the day's three knobs armed L5 is best in hour 6 (0.03 m) and not yet a gain
+  (314 epochs below a decimetre against 603) because its first two hours are slow; the lag is
+  Up-dominant and the consumer's band-5 code misfits the wire by about a metre per satellite;
+  leading hypothesis the zero inter-signal-correction assertion on band 5; batch and bars frozen.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
