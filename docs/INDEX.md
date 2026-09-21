@@ -120,6 +120,11 @@ record the program is re-founding **on**.
   the corrected field run is the new baseline `runs/_rap_r6_dual` and is worse at WTZZ00DEU
   (533 against 603): CAS100ATA and LCK400IND together amplify the all-satellite clock-anchor
   decouple of 05:22 UT (post-fit refloats 21 to 72), the dominant open loss of the field bed.
+- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (pre-registered 2026-09-21), event
+  card, the all-satellite clock-anchor decouple of 05:22 UT (TOW 278520); the trigger epoch is
+  the same in every run (G30 loses its only L1W station, a G19 anchor arc is refloated), the
+  clock innovations are one fixed pattern whose amplitude changes tenfold with the roster;
+  trigger arms, a response ladder and a code read are frozen; nothing built.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
