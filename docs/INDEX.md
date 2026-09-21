@@ -120,14 +120,15 @@ record the program is re-founding **on**.
   the corrected field run is the new baseline `runs/_rap_r6_dual` and is worse at WTZZ00DEU
   (533 against 603): CAS100ATA and LCK400IND together amplify the all-satellite clock-anchor
   decouple of 05:22 UT (post-fit refloats 21 to 72), the dominant open loss of the field bed.
-- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (RESULT 2026-09-21, fix
-  pre-registered), event card, the all-satellite clock-anchor decouple of 05:22 UT (TOW 278520):
-  DEFECT of the coverage gate on the float vehicle. When `phase_datum_min_stations` removes a
-  phase-bias column with one tracker left, that station's carried ambiguity absorbs the whole
-  bias in one epoch (+15.8 m against a 1.7 cm prior); 13 such edges in 6 h carry every
-  all-satellite decouple of the run; removing the edge removes the episode (WTZZ00DEU cost
-  -0.011 against +0.019 m, 12 of 16 census sites better, several by metres); fix
-  `network.phase_datum_gate_drop_erase` frozen in section 6, not built.
+- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (FIX BUILT 2026-09-21, every
+  frozen gate passes, NOT armed: the author's decision), event card, the all-satellite
+  clock-anchor decouple of 05:22 UT: DEFECT of the coverage gate on the float vehicle (a
+  phase-bias column removed with one tracker left; that station's carried ambiguity absorbed
+  the whole bias in one epoch; 13 edges in 6 h carry 49 of the run's 50 clock trips). Fix
+  `network.phase_datum_gate_drop_erase` (default OFF): trips 50 to 1, no all-satellite epoch,
+  clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
+  half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
+  12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
 - [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (built 2026-09-21, NOT armed), build
   card, the second code channel (`network.second_code_channel`, default OFF): a station
   contributes every allow-listed band-1 code it tracks as code-only rows, with one receiver
@@ -135,7 +136,9 @@ record the program is re-founding **on**.
   epoch, census code-bias dropouts 50 to 4) and C1C is not reduced; fails the WTZZ00DEU bars at
   every scale and amplifies the EV7 episode at scale 1; the sim truth gate fails as frozen and
   the diagnosis names a standing per-satellite misfit of the PINNED code datum (0.285 m on the
-  sim) instead; re-grade on the EV7-fixed base owed.
+  sim) instead. Re-graded on the EV7-fixed base: a trade (census hour 1 better by 0.08 to
+  0.14 m, no consumer excursion left, WTZZ00DEU 0.02 m worse from hour 3); the author's
+  decision.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

@@ -5,7 +5,7 @@
 - **id:** EV7
 - **topic:** clock
 - **status:** open
-- **summary:** RESULT 2026-09-21: the trigger is found and is a DEFECT of the coverage gate on the float vehicle. When `network.phase_datum_min_stations` removes a phase-bias column because only one station still tracks the signal, that station's CARRIED ambiguity is left defined against the removed column and absorbs the whole bias in one epoch (G30 at VOIM00MDG: +15.8 m against a 1.7 cm prior, no refloat, no variance inflation). Removing the edge removes the episode (0 of 26 clock trips, 0 of 72 refloats, WTZZ00DEU cost -0.011 m against +0.019 m, clock wire 0.0064 against 0.0107 m, 12 of 16 census sites better in the last half hour, several by metres). All three all-satellite decouple epochs of the run sit on this edge (13 such edges in 6 h). The G19 reset at URUM00CHN is a false alarm and costs nothing here. With the guard made inert the cost also vanishes, so the guard's response inflicts most of the consumer loss; that is read again on the fixed base. Fix pre-registered in section 6 (`network.phase_datum_gate_drop_erase`, default OFF); nothing built yet. Original summary: Pre-registered 2026-09-21 (event card: one event, a 60-epoch window, five-minute one-change arms). At TOW 278520 every emitted satellite clock trips the Q3 clock-anchor gate in one epoch on every field run since RF-0hv; on the corrected baseline `runs/_rap_r6_dual` the consumer at WTZZ00DEU steps from 0.089 to 0.196 m and then holds a plateau of 0.108 m to the end of the run. The manager's read of existing runs fixes the trigger epoch's identities (one satellite-signal column loses its only station, one anchor arc is refloated) and shows the clock innovations are one fixed satellite pattern whose amplitude changes tenfold with the roster. Trigger arms, a response ladder and a code read are frozen below; nothing is built.
+- **summary:** FIX BUILT 2026-09-21 (main `1935079`, `network.phase_datum_gate_drop_erase`, default OFF), EVERY FROZEN GATE PASSES, NOT ARMED (the decision is the author's; recommendation: arm it in the working bases). Field 6 h: 13 drop edges all handled, carried jumps above 0.5 m 8 to 0, clock-anchor trips 50 to 1, no all-satellite epoch (3 before), refloats 183 to 69, WTZZ00DEU cost -0.011 against +0.019 m, clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m; census 13 of 16 sites better on hours 2 to 6, the last half hour's across-site median 0.171 to 0.099 m; sim byte-identical, the relabelled truth arm cured; 12 h: trips 134 to 8. With the trigger fixed the guard made inert changes nothing, so no response-side build is needed. Earlier summary: RESULT 2026-09-21: the trigger is found and is a DEFECT of the coverage gate on the float vehicle. When `network.phase_datum_min_stations` removes a phase-bias column because only one station still tracks the signal, that station's CARRIED ambiguity is left defined against the removed column and absorbs the whole bias in one epoch (G30 at VOIM00MDG: +15.8 m against a 1.7 cm prior, no refloat, no variance inflation). Removing the edge removes the episode (0 of 26 clock trips, 0 of 72 refloats, WTZZ00DEU cost -0.011 m against +0.019 m, clock wire 0.0064 against 0.0107 m, 12 of 16 census sites better in the last half hour, several by metres). All three all-satellite decouple epochs of the run sit on this edge (13 such edges in 6 h). The G19 reset at URUM00CHN is a false alarm and costs nothing here. With the guard made inert the cost also vanishes, so the guard's response inflicts most of the consumer loss; that is read again on the fixed base. Fix pre-registered in section 6 (`network.phase_datum_gate_drop_erase`, default OFF); nothing built yet. Original summary: Pre-registered 2026-09-21 (event card: one event, a 60-epoch window, five-minute one-change arms). At TOW 278520 every emitted satellite clock trips the Q3 clock-anchor gate in one epoch on every field run since RF-0hv; on the corrected baseline `runs/_rap_r6_dual` the consumer at WTZZ00DEU steps from 0.089 to 0.196 m and then holds a plateau of 0.108 m to the end of the run. The manager's read of existing runs fixes the trigger epoch's identities (one satellite-signal column loses its only station, one anchor arc is refloated) and shows the clock innovations are one fixed satellite pattern whose amplitude changes tenfold with the roster. Trigger arms, a response ladder and a code read are frozen below; nothing is built.
 - **source:** [RXP](RXP_rinex3_blank_prn_2026-09-21.md) section 3 (the loss of the corrected baseline is this episode); [EV6](EV6_hour6_decouple_event_2026-09-15.md) (the same mechanism class on the older posture); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 7 item 4 (with the phase bias held, the decouple excursion is the largest remaining wire term on the field)
 - **knobs / posture:** none armed; config-only discriminators `network.clock_anchor_resolve`, `network.clock_anchor_k`, `network.clock_anchor_recouple_epochs`
 - **dates in the text:** 2026-09-21
@@ -429,3 +429,116 @@ L2W). The run has 6 clock trips (baseline 1) and 12 post-fit refloats (baseline 
 consumer goes from 0.60 0.10 0.10 0.06 0.06 0.05 m (448 epochs below a decimetre) to
 1.08 0.39 0.24 0.12 0.08 0.06 m (215). How much of that is the edge class and how much is
 the thinner family itself is what the ON arm measures.
+
+## 7. The fix: result (2026-09-21; Opus build worker, every number re-graded by the manager from `runs/`)
+
+### 7.1 The build
+
+Main `1935079`. `include/filter/NetworkPhaseGateDrop.hpp` holds the edge predicate (a key
+gated in this epoch that had an anchor incumbent in the previous one); suite
+`PhaseGateDropEdgeTest`, 6 cases; `gnss_tests` 2414 ran, 2413 passed, 1 known skip. The
+gated key set is exported from `networkBuildPhaseDatumCandidates`; the election detects the
+edge before the incumbent swap and, with the knob ON, adds the family to the re-reference
+set, so the existing erase removes its carries before assembly. This posture runs the
+anchor election, not the ensemble datum. Events `PHASE_ANCHOR gate_drop` (survivors,
+trackers, previous anchor, handled) and the run-end readout exist in both knob states; the
+erased arcs carry the cause `erase:gate_drop`. Exe `gnss_processor_ev7.exe`
+(`8AEC0281...`). Loader parity check 0 gaps; golden verify PASS.
+
+Two properties to know. The knob rides `network.phase_anchor_carry_reref` (armed in both
+working bases; the loader warns when it is absent). The erase is the return edge's erase,
+so it is whole-family: 17 arcs over the 13 edges at 6 h, including arcs at stations that
+are not the survivor.
+
+### 7.2 Gates
+
+| gate | bar | measured | verdict |
+| --- | --- | --- | --- |
+| G0 | knob absent, three files identical on both beds | identical (field and sim) | PASS |
+| E1 | no carried jump above 0.5 m at an edge | 0 of 13 (OFF 8 of 13, 5.7 to 36.1 m) | PASS |
+| E1 | no epoch with eight or more clock trips | 0 (OFF 3); trips in the run 50 to 1 | PASS |
+| E2 | WTZZ00DEU cost at most +0.005 m | -0.0110 m (OFF +0.0189) | PASS |
+| E2 | every hourly p50 within 0.03 m or better | largest +0.009 m (hour 4) | PASS |
+| E2 | clock wire at most 0.0184 / 0.0107 m | 0.0091 / 0.0072 m | PASS |
+| E3 | last half hour, more sites better than worse, median change at most 0 | 12 / 4, -0.0322 m | PASS |
+| E3 | mean hourly p50, hours 2 to 6, same rule | 13 / 3, -0.019 m | PASS |
+| E4a | unmodified sim, knob ON, identical | identical, 0 edges | PASS |
+| E4b | relabelled sim: OFF reproduces, ON cures, consumer within 0.03 m of OFF | OFF identical to `w5_sim_off`; carried jumps 4 to 0; trips 6 to 1; refloats 12 to 0; largest hourly change +0.005 m | PASS |
+| E5 | 12 h, same reading | section 7.4 | read delivered |
+
+The count in section 6 ("9 of 13 edges") is corrected to 8 of 13: the table of section 5.3
+lists eight carried L1 jumps.
+
+Field 6 h, OFF against ON: 3D p50 by hour 0.48 0.05 0.05 0.08 0.09 0.10 against 0.48 0.05
+0.06 0.09 0.09 0.09 m; epochs below a decimetre 533 against 577; post-fit refloats by hour
+16 4 24 15 4 120 against 12 2 19 15 4 17; `CLK_ANCHOR` rows 274 against 127. At the edge
+of TOW 278520 the carried VOIM00MDG G30 L1W arc is erased and re-born (-26.998 to +8.304 m,
+age 0) and the L2W arc of the same satellite continues without a step (-0.3590 to
+-0.3582 m; it moved by -2.17 m in the OFF run). The re-born value shows that the removed
+bias was about 35 m: the stiff prior had let the arc absorb 15.8 m of it and pushed the
+rest into the station and the network.
+
+### 7.3 Census (16 sites, against the `r6` replays)
+
+Median 3D p50 by hour 0.827 0.282 0.101 0.104 0.113 0.169 to 0.827 0.273 0.096 0.093 0.098
+0.096 m; median count of epochs below a decimetre 206.5 to 235. Last half hour, per site:
+QUIN00USA 83.4 to 0.61 m, ASCG00SHN 3.05 to 0.08, SCRZ00BOL 1.62 to 0.10, HARB00ZAF 0.90 to
+0.02, DAV100ATA 0.29 to 0.10, CHTI00NZL 0.10 to 0.04; worse: ANMG00MYS by 0.039 m and three
+sites by 0.004 m or less. QUIN00USA still has 240 epochs above 5 m after hour 2 (380
+before); code-bias dropouts are unchanged at 50, as expected (this card does not touch the
+code families).
+
+### 7.4 Twelve hours
+
+Field, OFF against ON: 25 edges; carried jumps above 0.5 m 11 to 0; clock trips 134 to 8;
+epochs with eight or more trips 6 (268680, 278520, 280440, 288540, 294240, 299760) to 0;
+post-fit refloats 528 to 219; clock wire 0.0305 / 0.0129 to 0.0131 / 0.0086 m; epochs below
+a decimetre 863 to 875. Sim: OFF and ON identical.
+
+WTZZ00DEU by hour (3D p50, m): OFF 0.48 0.05 0.05 0.08 0.09 0.10 0.12 0.04 0.07 0.08 0.18
+0.18, ON 0.48 0.05 0.06 0.09 0.09 0.09 0.09 0.07 0.10 0.12 0.18 0.12. Hours 8 to 10 are
+worse by 0.03 to 0.04 m and hours 6, 7 and 12 better by 0.02 to 0.06 m. The mean Up offset
+explains both: in the OFF run it wanders from -0.10 m (hours 6 and 7) through +0.00 and
++0.06 m (hours 8 and 9) to -0.11 m (hour 11), so the run passes through zero after a kick;
+in the ON run it holds -0.06 to -0.09 m from hour 4 to hour 10. The site's 3D error is its
+standing Up offset, and a quieter wire shows as a steadier offset, not as a smaller one.
+
+### 7.5 The guard and card SCC on the fixed base (discriminators)
+
+| arm (all with the fix ON) | 3D p50 by hour (m) | below 0.1 m | cost (m) | clock wire (m) | trips | census, last half hour against `ev7fix` | census, hours 2 to 6 against `ev7fix` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `g1_field_on` | 0.48 0.05 0.06 0.09 0.09 0.09 | 577 | -0.0110 | 0.0091 / 0.0072 | 1 | | |
+| `fx_k_inert` (guard inert) | 0.48 0.04 0.06 0.09 0.09 0.09 | 555 | -0.0109 | 0.0093 / 0.0072 | 0 | 12 / 4, -0.0001 m | 1 / 0, 0.000 m |
+| `fx_s1` (card SCC, scale 1) | 0.40 0.07 0.07 0.11 0.11 0.10 | 316 | -0.0155 | 0.0092 / 0.0067 | 1 | 6 / 10, +0.0071 m | 6 / 3, -0.007 m |
+| `fx_s10` (card SCC, scale 10) | 0.52 0.07 0.07 0.11 0.11 0.11 | 260 | -0.0103 | 0.0098 / 0.0069 | 1 | 5 / 11, +0.0025 m | 6 / 4, -0.006 m |
+
+With the trigger fixed, the guard made inert changes nothing at WTZZ00DEU or across the
+census: the response of section 5.4 only costs when it is given a kick, and no
+response-side build is needed now. Card SCC on the fixed base is recorded in that card.
+
+### 7.6 Reading and recommendation
+
+Every frozen gate passes and the 12 h read supports it. Recommendation: arm
+`network.phase_datum_gate_drop_erase` in `config/refound/{field,sim}_gps_dual_rf0hv.json`
+(working bases only; the sim is byte-identical with it). The field baseline would become
+`runs/_rap_g1_field_on`: 0.48 0.05 0.06 0.09 0.09 0.09 m, 577 epochs below a decimetre,
+clock wire 0.0091 / 0.0072 m. The decision is the author's. A promotion-ledger row is owed
+with the arming.
+
+### 7.7 What stays open
+
+- The standing Up offset of the consumers (WTZZ00DEU -0.08 m; on the `r6` wire the median
+  over 15 census sites of the hours 4 to 6 Up medians is -0.033 m, 11 of them negative,
+  QUIN00USA excluded): now the largest term at WTZZ00DEU, and what the count of epochs
+  below a decimetre measures there.
+- The exact alternative to the erase (an S-transformation that keeps the arc's maturity),
+  and an erase scoped to the surviving station: not needed by any gate.
+- The inert combination `phase_datum_held_basis` without `phase_datum_held_cold_release`
+  (the driver clears the re-reference set) is not warned by the loader.
+- The false reference-satellite reset at URUM00CHN; code rows that continue without their
+  column (13 to 1 such edges with card SCC armed); QUIN00USA's remaining 240 epochs.
+- Gross code rows enter the solve at full weight (BSHM00ISR G22 C1C ramps to 712 m over ten
+  epochs from TOW 273390; SGOC00LKA has 262 code rows above 10 m in 6 h); the existing
+  gross line-of-sight screen needs two gross rows on a line of sight and does not declare a
+  single-signal ramp (config-only arm `runs/_rap_gl_on`: WTZZ00DEU unchanged). This belongs
+  to the code-row QC of RF-3.

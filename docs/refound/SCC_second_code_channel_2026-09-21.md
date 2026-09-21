@@ -5,7 +5,7 @@
 - **id:** SCC
 - **topic:** code-bias
 - **status:** open
-- **summary:** BUILT 2026-09-21 (main `61d67c2`), default OFF, NOT armed. The mechanism works: with the knob ON the wire carries a C1W code bias for a median of 31 satellites per epoch (24 before), 2 satellite-epochs lack it (5210 before), C1C is not reduced, the detector rows are identical, and the code-bias dropouts at the 16 census sites fall from 50 to 4. It fails the WTZZ00DEU bars at every scale (a C1W consumer whose standing Up offset grows by 1 to 3 cm), and at scale 1 it amplifies the episode of card EV7. The sim truth gate fails as frozen (0.275 m rms), and the diagnosis puts the error on the PINNED C1C column: the sim network carries a per-satellite code misfit of decimetres on its pinned signals that never relaxes, while the free C1W column sits where the data put it. Re-grade on the EV7-fixed base is owed. Original summary: Pre-registered 2026-09-21 (approved by the author the same day). Build card, default OFF: a network station contributes, as code-only rows, every allow-listed band-1 code it reports besides its latched canonical code, so that the C1C and C1W satellite code-bias families stop competing for the same 59 stations. One new unknown per station (the receiver's band-1 inter-signal bias); no second phase, ambiguity or phase-bias family; no new datum row. Requirements, gates and bars are frozen below; nothing is built.
+- **summary:** RE-GRADED 2026-09-21 on the EV7-fixed base: a trade, NOT armed, the author's decision. With the EV7 fix ON, the second code channel takes the 16 census sites' hour 1 down by 0.08 m (scale 1) or 0.14 m (scale 10), removes QUIN00USA's excursion entirely (240 epochs above 5 m after hour 2 to 0) and 46 of 50 code-bias dropouts, and is better than the fix alone on hours 2 to 6 at 6 sites against 3 or 4; it costs WTZZ00DEU, a C1W consumer, 0.02 m from hour 3 (its standing Up offset), which fails B1, and is slightly worse than the fix alone in the last half hour at 10 or 11 sites. Earlier summary: BUILT 2026-09-21 (main `61d67c2`), default OFF, NOT armed. The mechanism works: with the knob ON the wire carries a C1W code bias for a median of 31 satellites per epoch (24 before), 2 satellite-epochs lack it (5210 before), C1C is not reduced, the detector rows are identical, and the code-bias dropouts at the 16 census sites fall from 50 to 4. It fails the WTZZ00DEU bars at every scale (a C1W consumer whose standing Up offset grows by 1 to 3 cm), and at scale 1 it amplifies the episode of card EV7. The sim truth gate fails as frozen (0.275 m rms), and the diagnosis puts the error on the PINNED C1C column: the sim network carries a per-satellite code misfit of decimetres on its pinned signals that never relaxes, while the free C1W column sits where the data put it. Re-grade on the EV7-fixed base is owed. Original summary: Pre-registered 2026-09-21 (approved by the author the same day). Build card, default OFF: a network station contributes, as code-only rows, every allow-listed band-1 code it reports besides its latched canonical code, so that the C1C and C1W satellite code-bias families stop competing for the same 59 stations. One new unknown per station (the receiver's band-1 inter-signal bias); no second phase, ambiguity or phase-bias family; no new datum row. Requirements, gates and bars are frozen below; nothing is built.
 - **source:** [CSL](CSL_canonical_signal_latch_2026-09-20.md) section 9 (the code half of the latch rule is not the lever: one code per station and band makes the two families share the stations); [MSC](MSC_multi_site_consumer_2026-09-21.md) sections 4 and 5 (the thinned C1W biases and the consumer that leaves by tens of metres on a dropout)
 - **knobs / posture:** `network.second_code_channel` (bool, default false), `network.second_code_signals` (list, default `["C1C", "C1W"]`), `network.second_code_sigma_scale` (number, at least 1, default 1.0); closed-loop consumer pinned off
 - **dates in the text:** 2026-09-21
@@ -253,3 +253,40 @@ EV7 defect and scale 1 amplifies it, the card is graded again on the EV7-fixed b
 - The armed fingerprint append is not exercised by any run (no snapshot is written on this
   posture).
 - Band 2 companions (section 4).
+
+## 7. Re-grade on the EV7-fixed base (2026-09-21; arms of card EV7's build, exe `gnss_processor_ev7.exe`, manager re-graded)
+
+All arms carry `network.phase_datum_gate_drop_erase: true`. Census keys: `ev7fix` (the fix
+alone), `fxs1`, `fxs10`.
+
+| arm | 3D p50 by hour at WTZZ00DEU (m) | mean 3D, hours 3 to 6 (m) | below 0.1 m | clock wire, all / tracked (m) | refloats |
+| --- | --- | --- | --- | --- | --- |
+| `g1_field_on` (fix alone) | 0.48 0.05 0.06 0.09 0.09 0.09 | 0.0815 | 577 | 0.0091 / 0.0072 | 69 |
+| `fx_s1` (scale 1) | 0.40 0.07 0.07 0.11 0.11 0.10 | 0.1011 | 316 | 0.0092 / 0.0067 | 85 |
+| `fx_s10` (scale 10) | 0.52 0.07 0.07 0.11 0.11 0.11 | 0.1042 | 260 | 0.0098 / 0.0069 | 90 |
+
+| census key | median p50 by hour (m) | median count below 0.1 m | hours 2 to 6 against `ev7fix`: better / worse, median | hour 1 against `ev7fix` | last half hour against `ev7fix` | QUIN00USA epochs above 5 m after hour 2 | code-bias dropouts |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `r6` (old base) | 0.827 0.282 0.101 0.104 0.113 0.169 | 206.5 | | | | 380 | 50 |
+| `ev7fix` | 0.827 0.273 0.096 0.093 0.098 0.096 | 235 | | | | 240 | 50 |
+| `fxs1` | 0.804 0.237 0.107 0.119 0.095 0.078 | 245 | 6 / 3, -0.007 m | 9 / 4, -0.077 m | 6 / 10, +0.0071 m | 0 | 4 |
+| `fxs10` | 0.687 0.232 0.101 0.091 0.097 0.075 | 287.5 | 6 / 4, -0.006 m | 10 / 4, -0.138 m | 5 / 11, +0.0025 m | 0 | 4 |
+
+- The amplification of the EV7 episode is gone with the fix (section 6.4 attributed the
+  hour 6 loss at scale 1 to it): the clock wire and the trips of the two arms equal the
+  fix alone.
+- B1 still fails: WTZZ00DEU is 0.02 m worse from hour 3 at both scales (mean 3D over hours
+  3 to 6 0.1011 and 0.1042 m against 0.0815 m; hour 4 misses the 0.03 m window against the
+  old baseline by 0.004 m at scale 1). The whole difference is the site's standing Up
+  offset (card EV7 section 7.7).
+- Across the census the channel is a gain on the fixed base at hour 1 and on the two
+  absolute measures (no consumer leaves by metres any more; 46 of 50 dropouts gone), a
+  small gain on hours 2 to 6, and a small loss in the last half hour at more sites than
+  it helps. Card EV7's `row_kinds` proxy (rows that survive their column) falls from 13
+  edges to 1 with this card armed while the 13 phase drop edges stay: the code columns no
+  longer hang on one station.
+
+**Reading.** By the frozen rule B1 fails, so the card is not recommended as it stands. The
+evidence for it is nevertheless stronger than on the old base, and the one site that pays
+is the site whose error is an unexplained standing offset. The decision is the author's;
+scale 10 is the candidate if it is armed (best hour 1, best median count, no excursion).
