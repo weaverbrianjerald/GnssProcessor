@@ -461,6 +461,7 @@ add_executable(gnss_tests
     tests/test_station_info.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
+    tests/test_station_marker_to_arp.cpp
     tests/test_log_manager_init.cpp
     tests/test_windup_census_config.cpp
     tests/test_windup_restart_response_config.cpp

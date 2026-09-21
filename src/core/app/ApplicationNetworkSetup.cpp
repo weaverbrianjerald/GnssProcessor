@@ -648,6 +648,19 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the network because their receiver antenna TYPE is unknown to the loaded
     // ANTEX even after the radome→NONE fallback (unmodelled receiver PCO/PCV).
     std::vector<std::string> excluded_unmodeled_antenna_stations;
+    // --- Card UPO (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4) -------
+    // Marker → antenna-reference-point reduction of the roster's configured
+    // coordinates.  Read in BOTH knob states (standing invariant #4: an OFF run
+    // has to state the size of the class it is not fixing), applied only when
+    // network.station_marker_to_arp is armed.
+    const bool marker_to_arp = config_.networkStationMarkerToArp();
+    int    n_ecc_stations   = 0;        // roster stations with a nonzero header eccentricity
+    int    n_ecc_reduced    = 0;        // of those, the ones actually moved
+    int    n_ecc_over_1cm   = 0;        // |H|, |E| or |N| above 0.01 m
+    double ecc_max_h        = 0.0;      // largest |H| on the roster (signed value kept)
+    double ecc_max_abs      = 0.0;      // largest |H|, |E| or |N| on the roster
+    std::string ecc_max_h_station;
+    std::vector<std::string> no_ecc_record_stations;  // header carried no record at all
     // buildStation outcome: Built (pushed to `stations`), ExcludedUnmodeledAntenna
     // (Tier 2 policy drop — counted, not built), or Failed (parser/load error).
     enum class StationBuild { Built, ExcludedUnmodeledAntenna, Failed };
@@ -660,6 +673,50 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         NetStation st;
         st.name     = cfg.name;
         st.ecef      = Eigen::Vector3d(cfg.position_ecef.data());
+        // Card UPO §4 requirement U1: `position_ecef` is a PUBLISHED coordinate
+        // (IGS SSC/SINEX, NGS SIF, a surveyed RINEX header) and therefore
+        // references the MONUMENT, while the observations refer to the antenna and
+        // the ATX phase-centre model is defined relative to the antenna reference
+        // point.  Reduce here — once, and before st.ecef reaches the state vector
+        // (x0 below), the PppModel, the MeasurementModel, st.pstate or any
+        // geometry — through the same Coordinates::markerToArp the held-out
+        // consumer's truth uses.  markerToArp is an exact no-op below a 1e-6 m
+        // eccentricity, so a 0/0/0 station is bit-for-bit unchanged either way.
+        {
+            const Eigen::Vector3d hen = parser->getAntennaDeltaHen();
+            const bool   has_record = parser->hasAntennaDeltaHen();
+            const double ecc_norm   = hen.norm();
+            const double abs_max    = hen.cwiseAbs().maxCoeff();
+            if (!has_record) {
+                // U1: left unchanged and warned.  A missing record is NOT a zero
+                // eccentricity — it is an unreduced coordinate with no way to
+                // reduce it, which is a field-visible modelling error this run is
+                // carrying whether or not the knob is armed.
+                no_ecc_record_stations.push_back(cfg.name);
+                log->warn("Network (card UPO): station '{}' has NO 'ANTENNA: DELTA H/E/N' record "
+                          "in its RINEX header — its configured coordinate is used as given "
+                          "(no marker -> ARP reduction possible). If that coordinate is a "
+                          "monument coordinate the station is held below its antenna.",
+                          cfg.name);
+            } else if (ecc_norm > 1e-6) {
+                ++n_ecc_stations;
+                if (abs_max > 0.01) ++n_ecc_over_1cm;
+                if (abs_max > ecc_max_abs) ecc_max_abs = abs_max;
+                if (std::abs(hen(0)) > std::abs(ecc_max_h)) {
+                    ecc_max_h = hen(0);
+                    ecc_max_h_station = cfg.name;
+                }
+                if (marker_to_arp) {
+                    st.ecef = Coordinates::markerToArp(st.ecef, hen);
+                    ++n_ecc_reduced;
+                }
+                log->info("Network (card UPO): station '{}' ANTENNA: DELTA H/E/N "
+                          "({:.4f}, {:.4f}, {:.4f}) m — marker -> ARP reduction {} "
+                          "(network.station_marker_to_arp).",
+                          cfg.name, hen(0), hen(1), hen(2),
+                          marker_to_arp ? "APPLIED" : "NOT applied");
+            }
+        }
         st.is_pivot  = is_pivot;
         st.sm        = std::make_unique<StateManager>(5, log_manager_, config_);  // pos(3)+clk(1)+tropo(1)
         Eigen::VectorXd x0 = st.sm->getStateVector();
@@ -987,6 +1044,47 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "loaded station's receiver antenna resolved (radome→NONE fallback "
                   "covered any uncalibrated radomes).");
     }
+
+    // --- Card UPO §4 requirement U2: the marker → ARP summary ----------------
+    // Emitted in BOTH knob states.  ON it records what the roster frame now is;
+    // OFF it is the measurement of the defect the run is carrying, which is the
+    // number the fix is judged against (standing invariant #4).
+    setup.n_marker_arp_ecc       = n_ecc_stations;
+    setup.n_marker_arp_reduced   = n_ecc_reduced;
+    setup.n_marker_arp_over_1cm  = n_ecc_over_1cm;
+    setup.n_marker_arp_no_record = static_cast<int>(no_ecc_record_stations.size());
+    setup.marker_arp_max_h       = ecc_max_h;
+    setup.marker_arp_max_h_station = ecc_max_h_station;
+    if (marker_to_arp) {
+        log->info("Network (card UPO): marker -> ARP roster reduction ON — {} of {} loaded "
+                  "station(s) carry an 'ANTENNA: DELTA H/E/N' eccentricity ({} above 0.01 m), "
+                  "{} reduced to the antenna reference point; largest H {:+.4f} m at '{}'. "
+                  "The roster is now in the SAME frame as the antenna model and as the "
+                  "held-out consumer's truth.",
+                  n_ecc_stations, stations.size(), n_ecc_over_1cm, n_ecc_reduced,
+                  ecc_max_h, ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);
+    } else if (n_ecc_over_1cm > 0) {
+        log->warn("Network (card UPO): marker -> ARP roster reduction OFF — {} of {} loaded "
+                  "station(s) carry an eccentricity above 0.01 m (largest component {:.4f} m; "
+                  "largest H {:+.4f} m at '{}') and are held at their MONUMENT coordinate while "
+                  "their observations refer to the antenna. Each such station misfits every "
+                  "range by about H*sin(elev); its zenith wet delay absorbs roughly a quarter "
+                  "of H and the remainder reaches the satellite clocks regionally "
+                  "(docs/refound/UPO_consumer_up_offset_2026-09-22.md). Set "
+                  "network.station_marker_to_arp to reduce them.",
+                  n_ecc_over_1cm, stations.size(), ecc_max_abs, ecc_max_h,
+                  ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);
+    } else {
+        log->info("Network (card UPO): marker -> ARP roster reduction OFF — no loaded station "
+                  "carries an eccentricity above 0.01 m ({} with any nonzero record), so the "
+                  "roster's monument and antenna-reference-point frames coincide to within a "
+                  "centimetre.", n_ecc_stations);
+    }
+    if (!no_ecc_record_stations.empty())
+        log->warn("Network (card UPO): {} of {} loaded station(s) carry NO 'ANTENNA: DELTA "
+                  "H/E/N' record and cannot be reduced in either knob state: {}",
+                  no_ecc_record_stations.size(), stations.size(),
+                  joinNames(no_ecc_record_stations));
 
     // --- Station roster (viz) -----------------------------------------------
     // A tiny static CSV of the stations that actually loaded (id, role, ECEF) so

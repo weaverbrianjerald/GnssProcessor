@@ -182,6 +182,7 @@ namespace GnssProcessor {
         header_.interval = std::nullopt;
         header_.approx_position = { 0.0, 0.0, 0.0 };
         header_.antenna_delta_hen = { 0.0, 0.0, 0.0 };
+        header_.has_antenna_delta_hen = false;
         header_.antenna_azimuth_deg = 0.0;
         header_.antenna_elevation_deg = 0.0;
         log_manager_.getLogger("rinex_parser")->info("RinexParser initialized for mode: {}",
@@ -298,6 +299,7 @@ namespace GnssProcessor {
                         double e = std::stod(line.substr(14, 14));
                         double n = std::stod(line.substr(28, 14));
                         header_.antenna_delta_hen = { h, e, n };
+                        header_.has_antenna_delta_hen = true;
                     }
                     else if (label.find("ANTENNA: AZIMUTH") != std::string::npos) {
                         header_.antenna_azimuth_deg = std::stod(line.substr(0, 14));

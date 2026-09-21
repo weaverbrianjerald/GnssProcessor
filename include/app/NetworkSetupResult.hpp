@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace GnssProcessor {
@@ -141,6 +142,27 @@ namespace GnssProcessor {
         Eigen::Vector3d cl_truth_arp{ Eigen::Vector3d::Zero() };
         /// The `ANTENNA: DELTA H/E/N` used for @ref cl_truth_arp (zero when none).
         Eigen::Vector3d cl_truth_hen{ Eigen::Vector3d::Zero() };
+
+        /// @name Card UPO — marker → antenna-reference-point roster census
+        /// Filled at station build in BOTH states of
+        /// @c network.station_marker_to_arp, so an OFF run reports the size of the
+        /// class it is not fixing (standing invariant #4).  Read by the run-end
+        /// readout and the run manifest.
+        /// @{
+        /// Loaded roster stations whose header carries a nonzero eccentricity.
+        int n_marker_arp_ecc       = 0;
+        /// Of those, the ones actually reduced to the ARP (0 with the knob OFF).
+        int n_marker_arp_reduced   = 0;
+        /// Of those, the ones with |H|, |E| or |N| above 0.01 m.
+        int n_marker_arp_over_1cm  = 0;
+        /// Loaded roster stations whose header carries NO eccentricity record at
+        /// all; left at the configured coordinate in either state, and warned.
+        int n_marker_arp_no_record = 0;
+        /// Largest |H| on the roster, signed (0 when no station carries one).
+        double marker_arp_max_h    = 0.0;
+        /// The station @ref marker_arp_max_h belongs to (empty when none).
+        std::string marker_arp_max_h_station;
+        /// @}
     };
 
 } // namespace GnssProcessor

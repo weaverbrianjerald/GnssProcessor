@@ -5966,6 +5966,52 @@ namespace GnssProcessor {
         bool networkExcludeUnmodeledAntennaStations() const { return network_exclude_unmodeled_antenna_stations_; }
 
         /**
+         * @brief Card UPO — reduce every roster station's configured coordinate
+         *        from the monument to the antenna reference point at setup
+         *        (@c network.station_marker_to_arp).
+         *
+         * A network station is held FIXED at @c network.stations[].position_ecef,
+         * and that value is a published coordinate (IGS SSC / SINEX, NGS SIF, a
+         * surveyed RINEX header), which by convention references the MONUMENT.
+         * The observations refer to the antenna, and the antenna model
+         * (@c igs20.atx phase-centre offsets and variations) is defined relative
+         * to the antenna reference point, which sits `ANTENNA: DELTA H/E/N` above
+         * the monument.  Holding the station at the monument therefore misfits
+         * every range of that station by its eccentricity times the sine of the
+         * elevation.  The station's own clock and zenith delay absorb most of it
+         * (the zenith wet delay takes about a quarter of H), and what remains is
+         * an elevation-dependent pattern the satellite clocks take the regional
+         * mean of, so a consumer in the region is pulled down.
+         *
+         * Armed, each roster station's position becomes
+         * @c Coordinates::markerToArp(position_ecef, header H/E/N) once, at
+         * setup, before the state vector, the model or any geometry sees it —
+         * the same helper and the same frame the held-out consumer's TRUTH has
+         * used since 2026-07-29 (@ref NetworkSetupResult::cl_truth_arp).  A
+         * station whose RINEX header carries no @c ANTENNA: DELTA H/E/N record
+         * is left at its configured coordinate and warned; a recorded zero
+         * eccentricity is an exact no-op.
+         *
+         * Measured on the DOY-129 field bed (59 stations, 48 with an
+         * eccentricity, median 0.053 m, GRAZ00AUT 1.964 m): the consumer at
+         * WTZZ00DEU reads 0.52 0.04 0.01 0.01 0.02 0.01 m of 3D p50 by hour
+         * against 0.48 0.05 0.06 0.09 0.09 0.09 at the monument, its mean Up is
+         * within 0.005 m of zero from hour 4 instead of standing at -0.085 m, and
+         * the clock wire on its satellites goes 0.0072 to 0.0034 m
+         * (docs/refound/UPO_consumer_up_offset_2026-09-22.md).
+         *
+         * The held-out closed-loop consumer is NOT a roster station and is
+         * untouched — its truth and its seed are reduced already.  Default false;
+         * OFF is byte-identical (the eccentricities are read and REPORTED, so an
+         * OFF run states the size of the defect, standing invariant #4).
+         * Fingerprinted: the carried state of a resumed run means a station at a
+         * different place, so a warm resume across the flip cold-starts.
+         *
+         * @see Coordinates::markerToArp, RinexParser::hasAntennaDeltaHen
+         */
+        bool networkStationMarkerToArp() const { return network_station_marker_to_arp_; }
+
+        /**
          * @brief Whether RAIM refloats are driven by prominence attribution
          *        (@c network.raim_attribution) instead of the per-satellite consensus.
          *
@@ -8215,6 +8261,7 @@ namespace GnssProcessor {
         double network_signal_min_station_fraction_{0.0}; ///< Network-wide signal coverage gate: a RINEX code is admitted to the producer only if ≥ this fraction of stations observing its constellation track it (drops sparse channels like L2S everywhere, unlike per-station channel_mode). 0 = off (admit all tracked channels, byte-identical). Network mode only.
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets NO satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible) — the "float not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has NO ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state — its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). OFF = every station contributes (byte-identical). Network mode only.
+        bool   network_station_marker_to_arp_{false};              ///< Card UPO (network.station_marker_to_arp): reduce every roster station's configured position_ecef from the MONUMENT to the antenna reference point at setup, via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N` — the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. OFF = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
         bool   network_raim_carry_invariant_{false};         ///< POOL RE-HOST (measure-only): run the post-fit RAIM screen on the Card-4 invariant-carry lineage by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Post-fit RAIM is otherwise structurally inert under carry_invariant — the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). ⚠ NOT emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. OFF = byte-identical.

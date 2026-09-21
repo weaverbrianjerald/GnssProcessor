@@ -53,6 +53,20 @@ Ops:
                                       where=causal;keep=N deletes a partial epoch that comes
                                       before the satellite's first good epoch or more than N
                                       epochs after its last good one (a rule a filter can run)
+  ecc;stations=A,B;h=2.0[;e=0.0][;n=0.0]
+                                      GIVE the selected stations an antenna eccentricity (card
+                                      UPO).  The vector is written into the `ANTENNA: DELTA
+                                      H/E/N` record of each station's RINEX copy (the record is
+                                      inserted before END OF HEADER when the file has none), AND
+                                      the station's `position_ecef` in the ARM's config is moved
+                                      by MINUS the same vector along the local up / east / north
+                                      at the configured coordinate.  The true antenna therefore
+                                      stays exactly where the simulator put it and the configured
+                                      coordinate becomes a MONUMENT coordinate, which is the
+                                      ingredient the sim bed lacks (every sim station is 0/0/0).
+                                      `network.station_marker_to_arp` reduces it back, so ON must
+                                      reproduce the un-eccentric baseline and OFF must show the
+                                      defect.  Repeatable: one op per (h, e, n) group of stations.
   clone;from=C1C;to=C1W;noise=0.3;seed=7
                                       ADD an observation type `to` as a copy of `from` plus
                                       white noise N(0, noise) metres drawn per (seed, station,
@@ -104,10 +118,84 @@ def parse_op(text):
         k, v = kv.split("=", 1)
         op[k.strip()] = v.strip()
     assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip",
-                        "primaryonly", "clone"), op
+                        "primaryonly", "clone", "ecc"), op
     assert op["op"] == "strip" or not (set(op) & {"tow_from", "tow_to"}), \
         "tow_from / tow_to are selectors of the strip op only: " + text
+    if op["op"] == "ecc":
+        assert "h" in op or "e" in op or "n" in op, "ecc needs at least one of h= e= n=: " + text
+        assert op["stations"] != "all", \
+            "ecc must name its stations (an eccentricity on every station is not an arm): " + text
     return op
+
+
+# ----------------------------------------------------------------------------- geodesy
+# WGS84, matching include/common/Constants.hpp and src/core/math/Coordinates.cpp
+# (ecefToLlh's Bowring start + fixed-point refinement, enuToEcefMatrix's E/N/U
+# columns).  Used ONLY by the `ecc` op, to move a configured coordinate by minus
+# the eccentricity it writes into the header, so that the estimator's own
+# markerToArp puts the station back exactly where it was.
+WGS84_A, WGS84_F = 6378137.0, 1.0 / 298.257223563
+
+
+def ecef_to_llh(x, y, z):
+    e2 = WGS84_F * (2.0 - WGS84_F)
+    p = math.hypot(x, y)
+    lon = math.atan2(y, x)
+    if p < 1e-12:
+        lat = math.copysign(math.pi / 2.0, z)
+        nrad = WGS84_A / math.sqrt(1.0 - e2 * math.sin(lat) ** 2)
+        return lat, lon, abs(z) - nrad * (1.0 - e2)
+    lat, h = math.atan2(z, p * (1.0 - e2)), 0.0
+    for _ in range(10):
+        nrad = WGS84_A / math.sqrt(1.0 - e2 * math.sin(lat) ** 2)
+        h = p / math.cos(lat) - nrad
+        denom = p * (1.0 - e2 * (nrad / (nrad + h)))
+        if abs(denom) < 1e-15:
+            break
+        nxt = math.atan2(z, denom)
+        if abs(nxt - lat) < 1e-13:
+            lat = nxt
+            break
+        lat = nxt
+    return lat, lon, h
+
+
+def enu_to_ecef(enu, lat, lon):
+    """ENU offset -> ECEF offset, with the local frame at (lat, lon)."""
+    se, ce, sl, cl = math.sin(lon), math.cos(lon), math.sin(lat), math.cos(lat)
+    e, n, u = enu
+    return (-se * e - sl * ce * n + cl * ce * u,
+            ce * e - sl * se * n + cl * se * u,
+            cl * n + sl * u)
+
+
+def ecc_hen(op):
+    """(H, E, N) of an `ecc` op, in RINEX header order."""
+    return (float(op.get("h", 0.0)), float(op.get("e", 0.0)), float(op.get("n", 0.0)))
+
+
+def lower_to_marker(pos, hen):
+    """Move an ARP coordinate DOWN by `hen` in the local frame: the monument it came from.
+
+    The single-shot inverse of Coordinates::markerToArp evaluated at the ARP rather
+    than at the marker, which closes to O(|ecc|^2 / R) — 6e-7 m for a 2 m tower, four
+    orders below anything graded here.  This is deliberately the literal "minus the
+    same vector at the configured coordinate" the card asks for.
+    """
+    lat, lon, _ = ecef_to_llh(*pos)
+    d = enu_to_ecef((hen[1], hen[2], hen[0]), lat, lon)
+    return [pos[0] - d[0], pos[1] - d[1], pos[2] - d[2]]
+
+
+def apply_ecc_header(lines, hen):
+    """Write `hen` into the ANTENNA: DELTA H/E/N record, inserting one when absent."""
+    rec = ("%14.4f%14.4f%14.4f" % hen).ljust(60) + "ANTENNA: DELTA H/E/N"
+    for k, ln in enumerate(lines):
+        if ln[60:].strip() == "ANTENNA: DELTA H/E/N":
+            return lines[:k] + [rec] + lines[k + 1:]
+        if ln[60:].strip() == "END OF HEADER":
+            return lines[:k] + [rec] + lines[k:]
+    raise AssertionError("no END OF HEADER in the RINEX file")
 
 
 def op_window(op):
@@ -265,6 +353,12 @@ def apply_holes(lines, i0, codes, system, op):
 def rewrite_rinex(src, dst, ops, station, hours=None):
     """Apply `ops` (already selected for this station) to one RINEX 3 file; returns the records deleted by `holes`."""
     lines = open(src, "r", encoding="ascii", errors="replace").read().split("\n")
+    # `ecc` is a HEADER op: it rewrites (or inserts) the ANTENNA: DELTA H/E/N
+    # record and touches no observation.  Applied before read_header so the line
+    # indices below are those of the final header.
+    for op in ops:
+        if op["op"] == "ecc":
+            lines = apply_ecc_header(lines, ecc_hen(op))
     system = ops[0]["sys"]
     i, codes, blk = read_header(lines, system)
     assert codes, (src, "no type block for", system)
@@ -307,7 +401,7 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
     keep = [k for k in range(len(work)) if k not in drop]
     out = lines[:blk[0]] + type_block(system, [new_codes[k] for k in keep]) + lines[blk[1]:i]
     width = 3 + 16 * len(codes)
-    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone")
+    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone", "ecc")
                and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None)]
     for op in rec_ops:
         op["_idx"] = match_types(work, op["types"])
@@ -448,7 +542,7 @@ def cmd_make(a):
     ops = [parse_op(t) for t in (a.rinex or [])]
     for op in ops:
         op["_prio"] = base.get("processing", {}).get("signal_priorities", {}).get("GPS", [])
-    touched, n_holes = [], 0
+    touched, n_holes, moved = [], 0, []
     if ops:
         files = [(k, s["name"], s["rinex_path"], s) for k, s in enumerate(net["stations"])]
         cons = net.get("closed_loop", {}).get("station")
@@ -471,6 +565,19 @@ def cmd_make(a):
                 n_holes += rewrite_rinex(path, dst, mine, name, hours=(a.hours + 0.05) if a.hours else None)
                 node["rinex_path"] = dst
                 touched.append(name)
+                # `ecc` also LOWERS the configured coordinate by the vector it wrote
+                # into the header, so the true antenna stays where it was and the
+                # config value becomes a monument coordinate (card UPO, U5).  Done
+                # here rather than in rewrite_rinex because it edits the ARM, not
+                # the RINEX.  A station may carry at most one ecc op: two would
+                # compose two rotations and neither header could hold both.
+                eccs = [op for op in mine if op["op"] == "ecc"]
+                assert len(eccs) < 2, (name, "more than one ecc op selects this station")
+                for op in eccs:
+                    hen = ecc_hen(op)
+                    assert "position_ecef" in node, (name, "no position_ecef to lower")
+                    node["position_ecef"] = lower_to_marker(node["position_ecef"], hen)
+                    moved.append((name, hen))
     for kv in a.set or []:
         k, v = kv.split("=", 1)
         set_key(arm, k, v)
@@ -483,10 +590,13 @@ def cmd_make(a):
     json.dump(arm, open(rd + "/arm.json", "w"), indent=2)
     prov = {"base": a.base, "base_sha256": hashlib.sha256(open(a.base, "rb").read()).hexdigest(), "tag": a.tag,
             "hours": a.hours, "set": a.set or [], "drop_station": a.drop_station or [], "rinex": a.rinex or [],
-            "rinex_touched": touched, "holes_records_deleted": n_holes}
+            "rinex_touched": touched, "holes_records_deleted": n_holes,
+            "ecc_moved": [{"station": s, "hen": list(h)} for s, h in moved]}
     json.dump(prov, open(rd + "/rapid.json", "w"), indent=2)
     print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten"
-          + (f", {n_holes} record(s) deleted by holes" if n_holes else "") + f", -> {rd}")
+          + (f", {n_holes} record(s) deleted by holes" if n_holes else "")
+          + (", ecc " + " ".join("%s H%.3f/E%.3f/N%.3f" % (s, *h) for s, h in moved) if moved else "")
+          + f", -> {rd}")
 
 
 # ----------------------------------------------------------------------------- run
@@ -576,11 +686,11 @@ def cmd_draws(a):
     a spec cannot be graded in isolation: the same `bias;per=sat;seed=12` draws
     different numbers depending on what precedes it.  The whole list is therefore
     given here exactly as `make --rinex` takes it, in the same order, and the indices
-    are rebuilt the way rewrite_rinex builds them (a clone, a relabel, a holes, a
-    primaryonly and a whole-file strip are structural and take no index).
+    are rebuilt the way rewrite_rinex builds them (a clone, a relabel, a holes, an
+    ecc, a primaryonly and a whole-file strip are structural and take no index).
     """
     ops = [parse_op(t) for t in a.op]
-    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone")
+    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone", "ecc")
                and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None)]
     ids = [x.strip() for x in a.ids.split(",") if x.strip()]
     n_printed = 0
@@ -807,6 +917,62 @@ def cmd_selftest(_):
     c14 = open(d + "/c14.rnx").read().split("\n")
     chk(c14[1].startswith("G   14 C1C") and c14[2].startswith("       C1W")
         and c14[2][60:].strip() == LABEL, f"continuation line {c14[1]!r} / {c14[2]!r}")
+    # 13: card UPO — `ecc` writes the eccentricity into ANTENNA: DELTA H/E/N (inserting
+    #     the record when the file has none), leaves every observation untouched, and
+    #     LOWERS the configured coordinate by the same vector, so that the estimator's
+    #     own marker -> ARP reduction returns it to where it started.
+    he = list(hdr)
+    he.insert(1, "        0.0000        0.0000        0.0000                  ANTENNA: DELTA H/E/N")
+    open(d + "/ec0.rnx", "w", newline="\n").write("\n".join(he + body) + "\n")
+    rewrite_rinex(d + "/ec0.rnx", d + "/ec1.rnx", [parse_op("ecc;stations=AAAA;h=2.0;e=0.25;n=-0.5")], "AAAA")
+    e1 = open(d + "/ec1.rnx").read().split("\n")
+    dl = [x for x in e1 if x[60:].strip() == "ANTENNA: DELTA H/E/N"]
+    chk(len(dl) == 1 and dl[0][:42] == "%14.4f%14.4f%14.4f" % (2.0, 0.25, -0.5), f"ecc header {dl!r}")
+    chk([x for x in e1 if x.startswith(("G03", "G05", "E01"))] == [b for b in body if b[:1] != ">"],
+        "ecc leaves every observation record untouched")
+    chk([x for x in e1 if x.startswith(">")] == [b for b in body if b[:1] == ">"],
+        "ecc leaves every epoch header untouched")
+    # the record is INSERTED, in the header, when the file carries none
+    rewrite_rinex(src, d + "/ec2.rnx", [parse_op("ecc;stations=AAAA;h=1.5")], "AAAA")
+    e2 = open(d + "/ec2.rnx").read().split("\n")
+    k_rec = [k for k, x in enumerate(e2) if x[60:].strip() == "ANTENNA: DELTA H/E/N"]
+    k_end = [k for k, x in enumerate(e2) if x[60:].strip() == "END OF HEADER"]
+    chk(len(k_rec) == 1 and k_rec[0] < k_end[0], f"ecc inserts the record in the header {k_rec}")
+    chk(e2[k_rec[0]][:42] == "%14.4f%14.4f%14.4f" % (1.5, 0.0, 0.0), f"ecc default e/n zero {e2[k_rec[0]]!r}")
+    chk(len(e2) == len(hdr + body) + 2, f"ecc adds exactly one line {len(e2)}")
+    # the configured coordinate goes DOWN by h, and the estimator's markerToArp
+    # (the same rotation, opposite sign, at the lowered point) returns it to within
+    # the O(|ecc|^2/R) closure of a single-shot inverse
+    pos = [4194423.4920, 1162703.0403, 4647245.6154]          # GRAZ00AUT
+    hen = (1.9640, 0.0, 0.0)
+    mk = lower_to_marker(pos, hen)
+    lat, lon, h0 = ecef_to_llh(*pos)
+    _, _, h1 = ecef_to_llh(*mk)
+    chk(abs((h0 - h1) - hen[0]) < 1e-6, f"ecc lowers the coordinate by h {h0 - h1}")
+    la, lo, _ = ecef_to_llh(*mk)
+    dd = enu_to_ecef((hen[1], hen[2], hen[0]), la, lo)         # markerToArp, at the marker
+    back = [mk[k] + dd[k] for k in range(3)]
+    chk(max(abs(back[k] - pos[k]) for k in range(3)) < 1e-5,
+        f"markerToArp of the lowered coordinate returns the original {back} vs {pos}")
+    # a three-component vector lands on up / east / north, in that header order
+    mk3 = lower_to_marker(pos, (2.0, 0.25, -0.5))
+    la3, lo3, _ = ecef_to_llh(*pos)
+    se, ce, sl, cl = math.sin(lo3), math.cos(lo3), math.sin(la3), math.cos(la3)
+    dv = (pos[0] - mk3[0], pos[1] - mk3[1], pos[2] - mk3[2])
+    enu = (-se * dv[0] + ce * dv[1],
+           -sl * ce * dv[0] - sl * se * dv[1] + cl * dv[2],
+           cl * ce * dv[0] + cl * se * dv[1] + sl * dv[2])
+    chk(abs(enu[2] - 2.0) < 1e-6 and abs(enu[0] - 0.25) < 1e-6 and abs(enu[1] + 0.5) < 1e-6,
+        f"ecc uses RINEX (H, E, N) order {enu}")
+    # an ecc op is structural: it takes no record-op index and does not shift a bias
+    chk([op["op"] for op in [parse_op("ecc;stations=AAAA;h=1"), parse_op("bias;types=C1C;sigma=1;seed=3")]
+         if op["op"] not in ("relabel", "holes", "primaryonly", "clone", "ecc")] == ["bias"],
+        "ecc takes no record-op index")
+    try:
+        parse_op("ecc;h=1.0")
+        chk(False, "ecc with stations=all must be refused")
+    except AssertionError as ex:
+        chk("ecc must name its stations" in str(ex), f"ecc stations=all refused {ex}")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

@@ -3475,6 +3475,20 @@ namespace GnssProcessor {
         /// handover-driven `n_cr_phase_datum_reref` population it shares the path
         /// with (and tagged `erase:gate_drop` in network_amb_state.csv).
         size_t n_pd_gate_drop_arcs = 0;
+        // Card UPO — the marker → antenna-reference-point roster census, copied
+        // out of NetworkSetupResult once the context exists (it is a SETUP fact,
+        // not an epoch counter, and it is here only because the run-end readout
+        // and the run manifest both read `counters`).  Populated in BOTH states of
+        // network.station_marker_to_arp: with the knob OFF the eccentricities are
+        // still read, so the run states the size of the class (standing invariant
+        // #4).  See NetworkSetupResult for the per-field meanings.
+        bool   marker_arp_armed       = false;   ///< network.station_marker_to_arp as the run read it
+        int    n_marker_arp_ecc       = 0;
+        int    n_marker_arp_reduced   = 0;
+        int    n_marker_arp_over_1cm  = 0;
+        int    n_marker_arp_no_record = 0;
+        double marker_arp_max_h       = 0.0;
+        std::string marker_arp_max_h_station;
         size_t n_perconst_partial_epochs = 0;     // RTA-10: epochs published PARTIALLY (σ̂0 carve-out pruned >=1 constellation)
         size_t n_perconst_diffuse_published = 0;  // RTA-10: epochs published in FULL although the global σ̂0 tripped (every constellation individually clean — the diffuse cross-constellation edge of the per-const approximation)
         FlagRate fr_if_slip;    // T1 per (station,sat,pair) IF-phase sample   k=if_phase_td_k_mad

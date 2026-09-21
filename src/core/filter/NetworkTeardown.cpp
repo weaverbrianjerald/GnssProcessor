@@ -5652,6 +5652,35 @@ int networkTeardown(
                       "is the size of the class on this run.",
                       ctx.counters.n_pd_gate_drop_edges);
     }
+    // Card UPO — the marker → antenna-reference-point roster frame.  Reported in
+    // BOTH knob states (standing invariant #4): with the knob OFF this line is the
+    // size of the modelling error the run carried, which is the number the fix is
+    // judged against; armed it states that the roster is no longer at the published
+    // monument coordinates, which a reader of the products has to know.
+    if (ctx.counters.n_marker_arp_ecc > 0 || ctx.counters.n_marker_arp_no_record > 0) {
+        if (config_.networkStationMarkerToArp())
+            log->info("Network (card UPO): marker -> ARP roster reduction ON — {} station(s) "
+                      "carried an eccentricity ({} above 0.01 m) and {} were reduced to their "
+                      "antenna reference point; largest H {:+.4f} m at '{}'; {} station(s) had "
+                      "no header record and were left at their configured coordinate.",
+                      ctx.counters.n_marker_arp_ecc, ctx.counters.n_marker_arp_over_1cm,
+                      ctx.counters.n_marker_arp_reduced, ctx.counters.marker_arp_max_h,
+                      ctx.counters.marker_arp_max_h_station.empty()
+                          ? "<none>" : ctx.counters.marker_arp_max_h_station,
+                      ctx.counters.n_marker_arp_no_record);
+        else
+            log->info("Network (card UPO): marker -> ARP roster reduction OFF — {} station(s) "
+                      "carried an eccentricity ({} above 0.01 m; largest H {:+.4f} m at '{}') "
+                      "and were held at their MONUMENT coordinate for the whole run, while "
+                      "their observations refer to the antenna; {} station(s) had no header "
+                      "record. This count is the size of the class on this run "
+                      "(network.station_marker_to_arp).",
+                      ctx.counters.n_marker_arp_ecc, ctx.counters.n_marker_arp_over_1cm,
+                      ctx.counters.marker_arp_max_h,
+                      ctx.counters.marker_arp_max_h_station.empty()
+                          ? "<none>" : ctx.counters.marker_arp_max_h_station,
+                      ctx.counters.n_marker_arp_no_record);
+    }
     if (perconst_on && (n_perconst_partial_epochs > 0 || n_perconst_diffuse_published > 0))
         log->info("Network (RTA-10): σ̂0 carve-out — {} epoch(s) published PARTIALLY (>=1 "
                   "constellation pruned), {} DIFFUSE epoch(s) published in full (every judged "

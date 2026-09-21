@@ -258,6 +258,17 @@ int Application::runNetwork() {
     // alias blocks that replaced the former declaration stretches keep every
     // downstream use-site textually unchanged (the INC-3 migration mechanic).
     NetworkRunContext ctx(config_, nc);
+    // Card UPO: the marker → ARP roster census is a SETUP fact measured in
+    // networkSetup_ (which runs before this context exists).  Carry it into the
+    // counters so the run-end readout and the run manifest — both of which read
+    // ctx.counters — can state it in either knob state.
+    ctx.counters.marker_arp_armed         = config_.networkStationMarkerToArp();
+    ctx.counters.n_marker_arp_ecc         = setup.n_marker_arp_ecc;
+    ctx.counters.n_marker_arp_reduced     = setup.n_marker_arp_reduced;
+    ctx.counters.n_marker_arp_over_1cm    = setup.n_marker_arp_over_1cm;
+    ctx.counters.n_marker_arp_no_record   = setup.n_marker_arp_no_record;
+    ctx.counters.marker_arp_max_h         = setup.marker_arp_max_h;
+    ctx.counters.marker_arp_max_h_station = setup.marker_arp_max_h_station;
 
     // D2 process noise (variance growth per second) for the carry-forward prior.
 

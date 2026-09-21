@@ -691,6 +691,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         auto add = [&fp](const std::string& v) { fp += v; fp += '\x1f'; };
         for (const auto& st : stations) { add(st.name); add(st.is_pivot ? "P" : "-"); }
         add(nc.clock_datum_station); add(nc.clock_datum_satellite);
+        // Card UPO: the roster's fixed coordinates are reduced from the monument to
+        // the antenna reference point when network.station_marker_to_arp is armed,
+        // so every carried quantity that references a station's geometry — the
+        // phase-leveling zero-q levels, the carried ambiguities, the local blocks —
+        // means a station at a DIFFERENT place across the flip.  Appended ONLY when
+        // armed, so every pre-card snapshot's fingerprint is byte-identical.
+        if (config_.networkStationMarkerToArp()) add("roster:arp");
         // Carrier-phase wind-up MODEL REVISION.  Unlike every other token here
         // this is a CODE constant, not a knob — and it has to be, because the
         // thing that changes what the carried state means is a source fix, not a

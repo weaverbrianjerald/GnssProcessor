@@ -6121,6 +6121,15 @@ namespace GnssProcessor {
         network_exclude_unmodeled_antenna_stations_ =
             jval<bool>(json, "network.exclude_unmodeled_antenna_stations",
                        "network_exclude_unmodeled_antenna_stations", false);
+        // Card UPO: the roster's configured coordinates are MONUMENT coordinates and the
+        // observations refer to the antenna.  Armed, each station's position_ecef is
+        // reduced to its antenna reference point at setup through the same
+        // Coordinates::markerToArp the held-out consumer's truth has used since
+        // 2026-07-29.  Default OFF = byte-identical; the eccentricities are read and
+        // reported in BOTH states, so an OFF run states the size of the defect.
+        network_station_marker_to_arp_ =
+            jval<bool>(json, "network.station_marker_to_arp",
+                       "network_station_marker_to_arp", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
@@ -10179,6 +10188,21 @@ namespace GnssProcessor {
                       "absorb what the prior will not yield.  Edges, edges handled and arcs "
                       "erased are counted at run end.",
                       network_phase_datum_min_stations_);
+        // Card UPO: the armed line.  There is no INERT case (the reduction is
+        // unconditional at setup and self-reports per station and in a summary), so a
+        // single info line naming the frame change is what a reader of the config log
+        // needs to see that this run's roster is NOT at the published coordinates.
+        if (network_station_marker_to_arp_)
+            log->info("Network producer (card UPO): network.station_marker_to_arp is ON — every "
+                      "roster station's configured position_ecef is treated as a MONUMENT "
+                      "coordinate and reduced to its antenna reference point at setup with that "
+                      "station's RINEX ANTENNA: DELTA H/E/N (Coordinates::markerToArp, the same "
+                      "helper the held-out consumer's truth uses).  The observations refer to the "
+                      "antenna and the ATX phase-centre model is ARP-relative, so a station held "
+                      "at the monument misfits every range by H*sin(elev); its zenith wet delay "
+                      "absorbs about a quarter of H and the rest reaches the satellite clocks.  "
+                      "Per-station lines and a summary follow at station build; a station whose "
+                      "header carries no eccentricity record is left unchanged and warned.");
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.

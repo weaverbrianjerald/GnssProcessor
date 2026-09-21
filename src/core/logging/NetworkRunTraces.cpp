@@ -2095,6 +2095,17 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"n_sigma0_withheld\":" << n_sigma0_withheld << ','
                << "\"n_perconst_partial_epochs\":" << n_perconst_partial_epochs << ','
                << "\"n_perconst_diffuse_published\":" << n_perconst_diffuse_published << ','
+               // Card UPO: the setup-phase marker → ARP roster census, written in
+               // BOTH knob states so a manifest states which frame the roster was
+               // held in and how large the eccentricity population was.
+               << "\"marker_to_arp\":{"
+               << "\"armed\":" << (counters.marker_arp_armed ? "true" : "false") << ','
+               << "\"stations_with_ecc\":" << counters.n_marker_arp_ecc << ','
+               << "\"stations_reduced\":" << counters.n_marker_arp_reduced << ','
+               << "\"stations_ecc_over_1cm\":" << counters.n_marker_arp_over_1cm << ','
+               << "\"stations_no_record\":" << counters.n_marker_arp_no_record << ','
+               << fmt::format("\"max_h_m\":{:.4f},", counters.marker_arp_max_h)
+               << "\"max_h_station\":\"" << counters.marker_arp_max_h_station << "\"},"
                << fmt::format("\"loop_ms\":{:.1f}", loop_ms)
                << "}\n";
     }

@@ -101,6 +101,14 @@ namespace GnssProcessor {
         std::string antenna_type;  /**< Antenna type/model string (e.g., "TRM59800.00") */
         std::array<double, 3> approx_position{ 0.0, 0.0, 0.0 }; /**< Approx. receiver ECEF position (meters) */
         std::array<double, 3> antenna_delta_hen{ 0.0, 0.0, 0.0 }; /**< Antenna H/E/N offsets in meters */
+        /** True when an `ANTENNA: DELTA H/E/N` record was actually present in the
+         *  header.  The eccentricity itself cannot carry that information: an
+         *  absent record and a recorded 0.0/0.0/0.0 both leave
+         *  @ref antenna_delta_hen at zero, and a caller that REDUCES a published
+         *  monument coordinate to the antenna reference point has to tell the two
+         *  apart (a zero eccentricity is a reduction that is an exact no-op; a
+         *  missing record is an unreduced coordinate that must be reported). */
+        bool has_antenna_delta_hen{ false };
         std::string marker_name;   /**< Marker name (station identifier) */
         std::string marker_number; /**< Marker number (optional station number) */
         double antenna_azimuth_deg{ 0.0 };   /**< Antenna azimuth orientation in degrees (if available) */
@@ -210,6 +218,20 @@ namespace GnssProcessor {
         Eigen::Vector3d getAntennaDeltaHen() const {
             return Eigen::Vector3d(header_.antenna_delta_hen[0], header_.antenna_delta_hen[1], header_.antenna_delta_hen[2]);
         }
+
+        /**
+         * @brief Whether the header carried an `ANTENNA: DELTA H/E/N` record at all.
+         *
+         * @ref getAntennaDeltaHen returns zero both for a header that recorded
+         * 0.0/0.0/0.0 and for one that carried no record, which are different
+         * facts for a caller that reduces a monument coordinate to the antenna
+         * reference point: the first is a reduction that is an exact no-op, the
+         * second is a coordinate that could not be reduced and has to be reported
+         * (card UPO, @c network.station_marker_to_arp).
+         *
+         * @return true when the record was parsed from the header.
+         */
+        bool hasAntennaDeltaHen() const { return header_.has_antenna_delta_hen; }
 
         /** @brief Get antenna azimuth (degrees) from header. */
         double getReceiverAntennaAzimuthDeg() const { return header_.antenna_azimuth_deg; }
