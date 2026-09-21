@@ -4,8 +4,8 @@
 
 - **id:** UPO
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** FIX BUILT 2026-09-22 (main `95c7ea8`, `network.station_marker_to_arp`, default OFF); every build gate passes, B1 to B3 pass, NOT armed (the decision is the author's; recommendation: arm it in the working bases). Field ON equals the scripted arm to the printed digit (WTZZ00DEU 0.52 0.04 0.01 0.01 0.02 0.01 m by hour, mean Up within 0.005 m of zero from hour 4, clock wire 0.0069 / 0.0034 m); the sim truth bed reproduces the defect when eccentricities are injected (consumer 448 to 41 epochs below a decimetre) and the knob restores the baseline byte for byte; 12 h field 875 to 1046 epochs below a decimetre. Earlier summary: READ 2026-09-22 (manager; config-only arms and consumer-only replays, no build): the standing Up offset of WTZZ00DEU (-0.085 m, scatter 0.010 m) is a DEFECT of the network's station coordinates. The roster is held fixed at MONUMENT coordinates while the observations refer to the antenna; 48 of the 59 field stations carry an eccentricity (median 0.053 m, mean 0.128 m, GRAZ00AUT 1.964 m, KRGG00ATF 1.033 m). Each station's wet delay absorbs about a quarter of its eccentricity (GRAZ00AUT 0.656 m of zenith wet delay) and the rest leaks into the wire regionally. With the roster reduced to the antenna reference points the consumer at WTZZ00DEU reads 0.52 0.04 0.01 0.01 0.02 0.01 m by hour (0.48 0.05 0.06 0.09 0.09 0.09 before), its mean Up is within 0.005 m of zero from hour 4, and the clock wire on its satellites goes from 0.0072 to 0.0034 m. Across the 16 census sites the effect is regional (DAV100ATA 0.101 to 0.056 m, WUH200CHN 0.273 to 0.161 m); the remaining offsets are site-specific. Build pre-registered in section 4 (`network.station_marker_to_arp`, default OFF); nothing built.
+- **status:** closed
+- **summary:** ARMED 2026-09-22 in the RF-0hv working bases at the author's instruction (section 6; baseline pair `runs/_rf0hv7_{field,sim}6`; ledger row RECOMMEND_SCOPED). At the roster's own 59 stations the absolute mean Up of a replayed consumer is smaller at 40 of 56 (median 0.062 to 0.024 m). The measure-only station-congruence screen had ranked the defect all along (GRAZ00AUT 26.1 against a roster median of 0.9) and nothing read it; the same table flags MIZU00JPN, a second roster defect (card SCU). What section 5.7 left open moves to card SCU and to OPEN_ITEMS. Earlier summary: FIX BUILT 2026-09-22 (main `95c7ea8`, `network.station_marker_to_arp`, default OFF); every build gate passes, B1 to B3 pass, NOT armed (the decision is the author's; recommendation: arm it in the working bases). Field ON equals the scripted arm to the printed digit (WTZZ00DEU 0.52 0.04 0.01 0.01 0.02 0.01 m by hour, mean Up within 0.005 m of zero from hour 4, clock wire 0.0069 / 0.0034 m); the sim truth bed reproduces the defect when eccentricities are injected (consumer 448 to 41 epochs below a decimetre) and the knob restores the baseline byte for byte; 12 h field 875 to 1046 epochs below a decimetre. Earlier summary: READ 2026-09-22 (manager; config-only arms and consumer-only replays, no build): the standing Up offset of WTZZ00DEU (-0.085 m, scatter 0.010 m) is a DEFECT of the network's station coordinates. The roster is held fixed at MONUMENT coordinates while the observations refer to the antenna; 48 of the 59 field stations carry an eccentricity (median 0.053 m, mean 0.128 m, GRAZ00AUT 1.964 m, KRGG00ATF 1.033 m). Each station's wet delay absorbs about a quarter of its eccentricity (GRAZ00AUT 0.656 m of zenith wet delay) and the rest leaks into the wire regionally. With the roster reduced to the antenna reference points the consumer at WTZZ00DEU reads 0.52 0.04 0.01 0.01 0.02 0.01 m by hour (0.48 0.05 0.06 0.09 0.09 0.09 before), its mean Up is within 0.005 m of zero from hour 4, and the clock wire on its satellites goes from 0.0072 to 0.0034 m. Across the 16 census sites the effect is regional (DAV100ATA 0.101 to 0.056 m, WUH200CHN 0.273 to 0.161 m); the remaining offsets are site-specific. Build pre-registered in section 4 (`network.station_marker_to_arp`, default OFF); nothing built.
 - **source:** [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) section 7.7 (the standing Up offset is the largest term left at WTZZ00DEU)
 - **knobs / posture:** `network.station_marker_to_arp` (to build, default OFF); the RF-0hv working bases with `network.phase_datum_gate_drop_erase` armed (baseline pair `runs/_rf0hv6_{field,sim}6`)
 - **dates in the text:** 2026-09-22
@@ -262,3 +262,56 @@ join the deferred golden re-base.
 - The consumer's elevation mask (10 degrees: 11 of 16 sites better, QUIN00USA cured) and
   the consumer's unbounded reaction at thin geometry.
 - Hour 1 is 0.03 m worse with the knob ON at WTZZ00DEU (0.517 against 0.484 m).
+
+## 6. 2026-09-22: ARMED in the RF-0hv working bases
+
+At the author's instruction `config/refound/{field,sim}_gps_dual_rf0hv.json` now carry
+`network.station_marker_to_arp: true`, in the same commit as card SCC's second code
+channel (three keys plus dated comment lines). Working bases only: no loader default, no
+golden. The promotion-ledger rows and the loader's posture rows land in a separate commit.
+
+Confirmation arms from the armed bases with only the product path changed, exe
+`gnss_processor_rf7.exe` (`97547306...`), both exit 0: `runs/_rf0hv7_field6` is
+byte-identical to `runs/_rap_u4_s10` on `products.txt` (lines starting with `#`
+removed), `closed_loop_trace.csv` and `network_epoch_status.csv`, and
+`runs/_rf0hv7_sim6` is byte-identical to `runs/_rf0hv6_sim6` on the same three files.
+Both knobs are inert on the sim and the run says so: 0 of 60 sim stations carry an
+eccentricity, and the second code channel's run-end line reads that no companion code
+row was ever added (one band-1 code per sim station). Field setup line: 48 of 59
+stations carry an eccentricity (37 above 0.01 m), 48 reduced, largest H +1.9640 m at
+GRAZ00AUT, no station without a header record.
+
+**The baseline pair from this date: `runs/_rf0hv7_{field,sim}6`.** Field: consumer 3D p50
+by hour 0.549 0.057 0.027 0.030 0.033 0.029 m, mean Up by hour +0.726 +0.017 +0.004
+-0.022 -0.026 -0.025 m, 610 epochs below a decimetre (reported, not a bar), clock wire
+0.0068 / 0.0033 m, clock-anchor trips 1, post-fit refloats 87. Sim: unchanged, 0.601
+0.104 0.096 0.056 0.055 0.049 m. Census replays of the field wire: key `upos10`
+(identical wire). The 0.02 m of Up in hours 4 to 6 belongs to the second code channel
+(card SCC section 9), not to this knob.
+
+### 6.1 The reduction graded at the roster's own stations (59 leave-in replays)
+
+Instrument: every roster station replayed as a closed-loop consumer on a wire
+(`runs/_msc/scripts/msc_roster_audit.py`; the station's data helped form the wire with
+its coordinate held, so the replay is leave-in; mean E / N / U over hours 4 to 6 against
+the configured coordinate reduced to the antenna reference point, 14 s per station).
+Key `ros6` = the wire of `runs/_rf0hv6_field6` (roster at the monument), `ros7u` = the
+wire of `runs/_rap_u1_field_on` (this card's knob alone). Over the 56 stations whose
+replay converges on both wires: the absolute mean Up is smaller at 40, median change
+-0.0174 m; the 3D p50 over hours 4 to 6 is better at 41, median change -0.0139 m; median
+absolute mean Up 0.062 to 0.024 m; stations with an absolute mean Up above 0.05 m 34 to
+19.
+
+### 6.2 The defect had been detected all along, by an instrument nothing read
+
+The measure-only station-congruence screen (`docs/SPEC_redundancy_census.md`, armed in
+every one of these runs, run-end table in `stdout.txt`) ranks the monument roster by
+eccentricity. Run-median statistic geo(t) on `runs/_rf0hv6_field6`, roster median 0.91:
+GRAZ00AUT 26.10 (1.964 m), KRGG00ATF 8.99 (1.033 m), GUAM00GUM 3.87 (0.623 m), CPVG00CPV
+2.83 (0.430 m), SEYG00SYC 2.75 (0.519 m). With the knob ON (`runs/_rap_u1_field_on`):
+0.53, 0.68, 2.54, 1.27, 1.17. Its coordinate ESTIMATE does not carry the size (GRAZ00AUT
+-0.100 m Up against 1.964 m): on the float vehicle the carried ambiguities absorb the
+constant part of a coordinate error at birth and the post-fit rows keep only its change
+with the geometry. The statistic detects; it does not measure. The same table flags
+MIZU00JPN at 21.6 to 29.1 on every run, which is a second roster defect: card
+[SCU](SCU_station_coordinates_unknowns_2026-09-22.md).

@@ -129,25 +129,35 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
-- [UPO](refound/UPO_consumer_up_offset_2026-09-22.md): open (FIX BUILT 2026-09-22, gates pass,
-  NOT armed: the author's decision), the consumers' standing Up offset: DEFECT, the network
-  roster is held at MONUMENT coordinates while the observations refer to the antenna (48 of 59
-  stations, mean eccentricity 0.128 m, GRAZ00AUT 1.964 m; a station's wet delay absorbs a
-  quarter of it, the wire carries the rest regionally). `network.station_marker_to_arp`
-  (default OFF): WTZZ00DEU 0.48 0.05 0.06 0.09 0.09 0.09 to 0.52 0.04 0.01 0.01 0.02 0.01 m,
-  mean Up -0.085 m to zero, clock wire 0.0072 to 0.0034 m; the sim truth bed reproduces the
-  defect with injected eccentricities and the knob restores it byte for byte; 12 h 875 to 1046
-  epochs below a decimetre.
-- [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (built 2026-09-21, NOT armed), build
-  card, the second code channel (`network.second_code_channel`, default OFF): a station
-  contributes every allow-listed band-1 code it tracks as code-only rows, with one receiver
-  inter-signal-bias state; the wire's C1W coverage becomes complete (24 to 31 satellites per
-  epoch, census code-bias dropouts 50 to 4) and C1C is not reduced; fails the WTZZ00DEU bars at
-  every scale and amplifies the EV7 episode at scale 1; the sim truth gate fails as frozen and
-  the diagnosis names a standing per-satellite misfit of the PINNED code datum (0.285 m on the
-  sim) instead. Re-graded on the EV7-fixed base and again with the roster at the antenna
-  reference points: a trade (census hour 1 better by 0.14 m at scale 10, no consumer excursion
-  left, WTZZ00DEU 0.02 m worse from hour 3); the author's decision.
+- [SCU](refound/SCU_station_coordinates_unknowns_2026-09-22.md): open (READ 2026-09-22, build
+  proposed, NOT started: the author's decision), station coordinates held or estimated. The
+  roster audit (each roster station replayed as a consumer on the network's own wire) finds
+  MIZU00JPN held 1.6 m from its data: the coordinate resolver applies no post-seismic model.
+  Moved to its data: clock wire 0.0068 to 0.0044 m on all satellites, 11 of 16 census sites
+  better, KOKB00USA loses half of its Up offset. The measure-only station-congruence screen
+  had flagged it (and GRAZ00AUT, KRGG00ATF before card UPO) at 22 to 29 against a median of
+  0.9 in every run, unread; it detects and cannot measure. All-free coordinates are not
+  estimable next to free satellite clocks; proposed: a constrained coordinate state per
+  station with a release for flagged stations.
+- [UPO](refound/UPO_consumer_up_offset_2026-09-22.md): closed (ARMED 2026-09-22 in the RF-0hv
+  working bases; baseline pair `runs/_rf0hv7_{field,sim}6`), the consumers' standing Up offset:
+  DEFECT, the network roster was held at MONUMENT coordinates while the observations refer to
+  the antenna (48 of 59 stations, mean eccentricity 0.128 m, GRAZ00AUT 1.964 m; a station's wet
+  delay absorbs a quarter of it, the wire carries the rest regionally).
+  `network.station_marker_to_arp`: WTZZ00DEU 0.48 0.05 0.06 0.09 0.09 0.09 to 0.52 0.04 0.01
+  0.01 0.02 0.01 m, mean Up -0.085 m to zero, clock wire 0.0072 to 0.0034 m; the sim truth bed
+  reproduces the defect with injected eccentricities and the knob restores it byte for byte;
+  12 h 875 to 1046 epochs below a decimetre; at the roster's own stations the absolute mean Up
+  of a replayed consumer is smaller at 40 of 56.
+- [SCC](refound/SCC_second_code_channel_2026-09-21.md): closed (ARMED 2026-09-22 at scale 10 by
+  the author's decision, AGAINST the card's failed frozen bar B1), build card, the second code
+  channel (`network.second_code_channel`): a station contributes every allow-listed band-1
+  code it tracks as code-only rows, with one receiver inter-signal-bias state; the wire's C1W
+  coverage becomes complete (24 to 31 satellites per epoch, census code-bias dropouts 50 to 4),
+  census hour 1 better by a median of 0.136 m, no consumer excursion left; it costs WTZZ00DEU
+  0.02 m from hour 3, which the roster replays show to be a regional Up shift over Europe
+  (eleven stations, mean -0.017 m; none elsewhere). The sim truth gate fails as frozen and the
+  diagnosis names a standing per-satellite misfit of the PINNED code datum (0.285 m on the sim).
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
