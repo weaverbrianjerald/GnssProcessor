@@ -72,3 +72,76 @@ decision function. No RINEX edit is involved in any validation arm.
 - **Not adopted by this card.** The mechanism read (section 1, last paragraph) is owed
   before a recommendation: a lever whose cause is unknown is not armed on the
   strength of one consumer at one site.
+
+## 4. 2026-09-20: CSL-1 result: built; the rule reproduces the emulation with no file edited; the mechanism is half read
+
+Build at main `df691cd`, exe `gnss_processor_csl.exe`: the pick is the pure function
+`PppModel::decideCanonicalPicks`; the closed-loop consumer is pinned to `count`
+(`deriveClosedLoopConsumerConfig`), so the knob moves the network stations only; one
+log line per station states the latch and its runner-up with counts; suite
+`CanonicalSignalLatchRule` (15 cases), `gnss_tests` 2332 passed with the one known skip.
+Every number below was re-read from the run directories by the manager. No arm of
+this section edits an observation file.
+
+**G0 PASS** on three controls at the default (products and event ledgers). **G1 PASS**:
+with `priority` the field latch is C1C 41 / C1W 18 and L1C 41 / L1W 18 (from
+`network_pf_rows.csv`; the log agrees), the six stations added to L1W are the six of
+section 1; band 2 is C2W / L2W everywhere under both rules.
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- |
+| `gD_dual` (`count`) | 0.53 0.11 0.10 0.11 0.12 0.11 | 162 | 92 | 0.0090 / 0.0128 |
+| **`lD_dual`** (`priority`) | 0.43 0.07 0.06 0.08 0.08 0.07 | **603** | 126 | **0.0069** / 0.0128 |
+| `d12_grs` (`count`, 12 h) | 0.53 0.11 0.10 0.11 0.12 0.11 0.16 0.16 0.14 0.11 0.17 0.12 | 275 | 370 | 0.0148 / 0.0251 |
+| **`lD_dual12`** (`priority`, 12 h) | 0.43 0.07 0.06 0.08 0.08 0.07 0.08 0.06 0.06 0.14 0.19 0.17 | **994** | 340 | 0.0128 / 0.0250 |
+| `gF_tri` / **`lF_tri`** (triple field) | 0.69 0.31 0.15 0.14 0.12 0.17 / 1.47 0.21 0.09 0.11 0.09 0.03 | 6 / **314** | 219 / 242 | 0.0095 / 0.0073 tracked |
+| `lS_dual`, `lS_tri` (sim) | byte-identical to their bases | | | |
+
+**B1 PASS** (every hour within 0.01 m of the reference, 603 epochs, 0.0069 m). **B3
+PASS** (314). **B4 PASS** (byte identity). **B2 split**: 994 of 1440 epochs passes;
+the second clause fails in hour 12 only (0.17 against 0.12 m of `d12_grs`, 0.05 m),
+as the emulation arm it was set from does (`d12_prim`), so the clause was unattainable
+as written; hours 3 to 11 are within 0.03 m or better. The build reproduces the
+emulation to the digit: the latch is the lever, and this time nothing else moved.
+
+**The mechanism read (trace-only, `gD_dual` against `lD_dual`, hours 2 to 6).**
+H1, slip and refloat traffic at the six stations: refuted (MW detections 3 to 1, IF-TD
+9 to 5, band scope 5 to 5, gaps 36 to 32, post-fit refloats 16 to 26; and the claim
+that L1W is the more coherent partner of L2W inverts: cells with band 2 only are
+0.16 % on L1C with L2W and 7.6 % on L1W with L2W at those stations). H3, post-fit
+residuals: refuted, they get louder (band 1 at the 41 unchanged stations 4.0 to 5.6
+mm; band 2 at the six 4.2 to 8.4 mm). H2, the phase-bias columns the consumer uses:
+supported, not established. Stations per (satellite, L1W) column 4.58 to 5.94, cold
+re-realizations of L1W columns 2 to 1, anchor-slip handovers 5 to 3, and the clock
+wire improves only on the consumer's satellites. The counts of this paragraph are the
+worker's; two were spot-checked by the manager with a slightly different window
+(stations per column 4.59 to 6.00, post-fit refloats at the six 17 to 26).
+
+**Two coverage arms decide between support count and a station subset.** The
+first-epoch margins of the six are 10 of 11 (WIND00NAM, KOKV00USA, STHL00GBR), 9 of 10
+(ULAB00MNG), 8 of 10 (BOGT00COL) and 10 of 13 (URUM00CHN), so the coverage floor
+selects subsets with no file edited.
+
+| arm | L1W stations | which of the six | consumer 3D p50 by hour (m) | sub-dm | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| `gD_dual` | 12 | none | 0.53 0.11 0.10 0.11 0.12 0.11 | 162 | 0.0090 / 0.0128 |
+| `lE_cov085` (floor 0.85) | 16 | KOKV, STHL, ULAB, WIND | 0.37 0.07 0.05 0.09 0.08 0.05 | 610 | 0.0096 / 0.0126 |
+| `lG_cov078` (floor 0.78) | 17 | and BOGT | 0.40 0.07 0.06 0.07 0.08 0.05 | 615 | 0.0080 / 0.0129 |
+| `lD_dual` (floor 0.5) | 18 | all six | 0.43 0.07 0.06 0.08 0.08 0.07 | 603 | 0.0069 / 0.0128 |
+
+The consumer's gain is complete with four stations and does not grow with the fifth
+and sixth, while the clock wire on its satellites keeps improving with them (0.0096,
+0.0080, 0.0069 m). The consumer effect is therefore a station subset, not a support
+count, and the two instruments part company here: what four L1W stations give a
+consumer at one site is not what the wire as a whole gains. Which of the four, and
+why, is not read; margins are equal for three of them, so the next split needs a
+per-station override, not a floor.
+
+**Standing of the rule.** Independent of the unread part, `count` is an artefact: one
+satellite that lacks the semi-codeless pair in a station's first processed epoch
+decides that station's band-1 signal for the run, and `priority` is what a priority
+list is for. It is byte-identical on the sim, holds over 12 h, helps both postures on
+the field, and leaves the consumer's own latch alone. Arming it in the working bases
+is the author's decision; the card's own condition (the mechanism read before a
+recommendation) is met only in part, and that is stated to the author with the
+recommendation.
