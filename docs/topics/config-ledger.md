@@ -3,7 +3,7 @@
 **The ledger is [`CONFIG_promotion_ledger.md`](../CONFIG_promotion_ledger.md), and it is a
 LIVING REGISTER kept whole at that path.** One row per default-OFF knob in four verdict
 tiers (RECOMMEND_ON, RECOMMEND_SCOPED, UNVALIDATED, KEEP_OFF), plus the cross-cutting notes
-and the A1–A5 session appendices. This is the record the goldens are generated from.
+and the A1–A6 session appendices. This is the record the goldens are generated from.
 
 **Conventions and invariants**
 
@@ -11,8 +11,9 @@ and the A1–A5 session appendices. This is the record the goldens are generated
   `scripts/make_golden_config.py --verify` and `scripts/config_posture_check.py`. The
   `.md` is the prose half; the two are edited together, in that order.
 - **It is never split.** The `scripts/_*_ledger_oneoff.py` family (`_coldfb_`,
-  `_fieldharness_`, `_rs2_refarc_`, `_scopedpromo_`, `_stspromo_`, `_study7_`) and every
-  future promotion APPEND a row at that exact path, in step with the `.json`. The 2026-09-14
+  `_fieldharness_`, `_gapreentry_float_`, `_rs2_refarc_`, `_scopedpromo_`, `_stspromo_`,
+  `_study7_`) and every future promotion APPEND a row at that exact path, in step with the
+  `.json`. The 2026-09-14
   documentation reorganisation left it whole for that reason, and
   `scripts/docs_index_check.py` carries a named size exemption for it (`SIZE_EXEMPT`) —
   a living register grows one row at a time and the 60 KB bar does not apply.

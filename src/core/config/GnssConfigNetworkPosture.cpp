@@ -438,6 +438,19 @@ namespace GnssProcessor {
               "run the reference arm on the additional IF-TD chains (empirical gate): collateral refloats "
               "6 -> 0 on every GOPE/G24 event, the 13.3 m innocent PB re-realization removed, consumer mean "
               "1.4-2.7x better, flood held (93/94 wide-chain candidates suppressed); sim storm arm owed" },
+            // --- Card G RESPONSE on the FLOAT vehicle (AB2 sections 12 to 15, ledger
+            //     amended 2026-09-20).  Freeing a re-entering arc makes it re-level from ONE
+            //     epoch of code, which bought a KEEP_OFF on the converging LEVELING vehicle
+            //     (float consumer +56 % in hours 3 to 9) and is priced differently by a float
+            //     ambiguity state with a floored birth prior.  Regime = the vehicle; on the
+            //     leveling one the KEEP_OFF still stands, so this row must NOT report there.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
+              nc.slip_qc.gap_reentry,
+              Tier::SCOPED, false, "network.cycle_slip.gap_reentry_relevel",
+              "free a re-entering arc's ambiguities on the float vehicle: 12 h field post-fit "
+              "refloats 1069 -> 702, epochs below a decimetre 223 -> 321, clock wire on the "
+              "consumer's satellites 0.0406 -> 0.0203 m, never worse than 0.03 m of consumer "
+              "p50 in hours 3 to 12; needs cycle_slip.relevel_free_epoch to act" },
             { true,
               network_exclude_unmodeled_antenna_stations_,
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
