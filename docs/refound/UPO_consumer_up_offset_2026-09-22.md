@@ -5,7 +5,7 @@
 - **id:** UPO
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** READ 2026-09-22 (manager; config-only arms and consumer-only replays, no build): the standing Up offset of WTZZ00DEU (-0.085 m, scatter 0.010 m) is a DEFECT of the network's station coordinates. The roster is held fixed at MONUMENT coordinates while the observations refer to the antenna; 48 of the 59 field stations carry an eccentricity (median 0.053 m, mean 0.128 m, GRAZ00AUT 1.964 m, KRGG00ATF 1.033 m). Each station's wet delay absorbs about a quarter of its eccentricity (GRAZ00AUT 0.656 m of zenith wet delay) and the rest leaks into the wire regionally. With the roster reduced to the antenna reference points the consumer at WTZZ00DEU reads 0.52 0.04 0.01 0.01 0.02 0.01 m by hour (0.48 0.05 0.06 0.09 0.09 0.09 before), its mean Up is within 0.005 m of zero from hour 4, and the clock wire on its satellites goes from 0.0072 to 0.0034 m. Across the 16 census sites the effect is regional (DAV100ATA 0.101 to 0.056 m, WUH200CHN 0.273 to 0.161 m); the remaining offsets are site-specific. Build pre-registered in section 4 (`network.station_marker_to_arp`, default OFF); nothing built.
+- **summary:** FIX BUILT 2026-09-22 (main `95c7ea8`, `network.station_marker_to_arp`, default OFF); every build gate passes, B1 to B3 pass, NOT armed (the decision is the author's; recommendation: arm it in the working bases). Field ON equals the scripted arm to the printed digit (WTZZ00DEU 0.52 0.04 0.01 0.01 0.02 0.01 m by hour, mean Up within 0.005 m of zero from hour 4, clock wire 0.0069 / 0.0034 m); the sim truth bed reproduces the defect when eccentricities are injected (consumer 448 to 41 epochs below a decimetre) and the knob restores the baseline byte for byte; 12 h field 875 to 1046 epochs below a decimetre. Earlier summary: READ 2026-09-22 (manager; config-only arms and consumer-only replays, no build): the standing Up offset of WTZZ00DEU (-0.085 m, scatter 0.010 m) is a DEFECT of the network's station coordinates. The roster is held fixed at MONUMENT coordinates while the observations refer to the antenna; 48 of the 59 field stations carry an eccentricity (median 0.053 m, mean 0.128 m, GRAZ00AUT 1.964 m, KRGG00ATF 1.033 m). Each station's wet delay absorbs about a quarter of its eccentricity (GRAZ00AUT 0.656 m of zenith wet delay) and the rest leaks into the wire regionally. With the roster reduced to the antenna reference points the consumer at WTZZ00DEU reads 0.52 0.04 0.01 0.01 0.02 0.01 m by hour (0.48 0.05 0.06 0.09 0.09 0.09 before), its mean Up is within 0.005 m of zero from hour 4, and the clock wire on its satellites goes from 0.0072 to 0.0034 m. Across the 16 census sites the effect is regional (DAV100ATA 0.101 to 0.056 m, WUH200CHN 0.273 to 0.161 m); the remaining offsets are site-specific. Build pre-registered in section 4 (`network.station_marker_to_arp`, default OFF); nothing built.
 - **source:** [EV7](EV7_all_sat_clock_decouple_2026-09-21.md) section 7.7 (the standing Up offset is the largest term left at WTZZ00DEU)
 - **knobs / posture:** `network.station_marker_to_arp` (to build, default OFF); the RF-0hv working bases with `network.phase_datum_gate_drop_erase` armed (baseline pair `runs/_rf0hv6_{field,sim}6`)
 - **dates in the text:** 2026-09-22
@@ -155,3 +155,110 @@ same monument roster; they are out of scope here and join the deferred golden re
 header record is unchanged and warned). 4: U2. 5: graded on consumer position, station
 zenith delays against a physical expectation, and the clock wire against an external
 product within arcs. 6: G0.
+
+## 5. The build: result (2026-09-22; Opus build worker, every number re-graded by the manager from `runs/`)
+
+### 5.1 The build
+
+Main `95c7ea8`. The reduction sits in `buildStation` of
+`src/core/app/ApplicationNetworkSetup.cpp`, immediately after the configured coordinate
+is assigned and before every reader of the station position (the worker's list: the
+filter's initial state, the models' receiver position and with it tides, antenna terms,
+wind-up and troposphere; the per-epoch geometry of the ionosphere, fast-clock and
+slip seams; the roster trace). Three grid lookups keep the header's approximate position
+(atmospheric and ocean loading grids, ocean pole tide): a shift of metres is null at
+their resolution. `RinexHeader` gained a record-present flag so that an absent
+`ANTENNA: DELTA H/E/N` is left unchanged and warned. Telemetry in both knob states: a
+line per station with an eccentricity, a summary that WARNS when the knob is OFF (the
+field base reads: 37 of 59 stations above 0.01 m, largest +1.9640 m at GRAZ00AUT), the
+run-end readout and a `marker_to_arp` object in the run manifest. Armed-only fingerprint
+append. The closed-loop consumer is untouched (its truth line is character-identical OFF
+and ON). Suite `StationMarkerToArpTest`, 6 cases; `gnss_tests` 2420 ran, 2419 passed, 1
+known skip. Exe `gnss_processor_upo.exe` (`E2E177AB...`). Loader parity 0 gaps, golden
+verify PASS, `rapid_arm.py selftest` 58 of 58 (the `ecc` op of U5).
+
+### 5.2 Gates and bars
+
+| gate | bar | measured | verdict |
+| --- | --- | --- | --- |
+| G0 | knob absent, three files identical on both beds | identical | PASS |
+| G1 | hourly p50 within 0.002 m of the scripted arm | 0.517 0.042 0.014 0.011 0.017 0.010 m on both, largest difference 0.0000 m | PASS |
+| G1 | eight zenith wet delays within 0.002 m | largest difference 2.5e-5 m | PASS |
+| G1 | 48 stations reported reduced | 48 | PASS |
+| G2 OFF | wet delays rise by 0.15 to 0.35 of H | 0.263, 0.233, 0.255 and 0.406 (the 0.1 m station: a rise of 0.041 m) | 3 of 4 |
+| G2 OFF | consumer mean Up over hours 3 to 6 moves by more than 0.01 m | 0.25 to 0.36 m | PASS |
+| G2 ON | hourly p50 and the four wet delays within 0.002 m of the sim baseline | the three graded files byte-identical to `runs/_rf0hv6_sim6` | PASS |
+| B1 | every hourly p50 from hour 3 at most 0.03 m | 0.014 0.011 0.017 0.010 | PASS |
+| B1 | hours 1 and 2 within 0.05 m of the baseline | +0.033, -0.003 | PASS |
+| B1 | clock wire at most 0.0091 / 0.0072 m | 0.0069 / 0.0034 m | PASS |
+| B2 | census, hours 2 to 6: more sites better than worse, median at most 0 | 5 / 2, -0.004 m | PASS |
+| B2 | absolute mean Up over hours 4 to 6 smaller at more sites | 9 smaller, 6 larger of 15 | PASS |
+| B3 | 12 h against a 12 h OFF arm | section 5.4 | read delivered |
+
+The one number outside its band is the OFF rise at the 0.1 m station (0.406 of H). Its
+absolute size, 0.041 m, is at the scale of the between-station spread of the wet delays
+on the bed; the three larger eccentricities sit at 0.23 to 0.26 of H, like the field.
+
+### 5.3 The truth bed
+
+`runs/_rap_u2_sim_ecc_off` and `_on`: the four sim stations nearest the sim consumer
+(S48000SIM at 579 km, then 2425, 2547 and 3196 km) given eccentricities of 2.0, 1.0, 0.5
+and 0.1 m by the `ecc` op, which writes the header record and lowers the configured
+coordinate, so the true antenna stays where the simulator put it.
+
+| | 3D p50 by hour (m) | mean Up by hour (m) | below 0.1 m |
+| --- | --- | --- | --- |
+| sim baseline | 0.601 0.104 0.096 0.056 0.055 0.049 | -0.560 +0.080 +0.087 +0.047 +0.046 +0.036 | 448 |
+| eccentricities, knob OFF | 0.564 0.127 0.274 0.279 0.202 0.222 | -0.522 -0.114 -0.276 -0.269 -0.199 -0.212 | 41 |
+| eccentricities, knob ON | 0.601 0.104 0.096 0.056 0.055 0.049 | -0.560 +0.080 +0.087 +0.047 +0.046 +0.036 | 448 |
+
+The defect reproduces on the truth bed with the field's signature (a negative standing
+Up at the consumer, wet delays raised by a quarter of H), and the knob removes it exactly.
+
+### 5.4 Twelve hours (field)
+
+| | 3D p50 by hour (m) | mean Up by hour (m) | below 0.1 m | clock wire, hours 2 to 6 (m) |
+| --- | --- | --- | --- | --- |
+| OFF | 0.484 0.045 0.056 0.088 0.090 0.085 0.092 0.072 0.101 0.124 0.176 0.125 | +0.780 -0.011 -0.057 -0.087 -0.089 -0.080 -0.084 -0.059 -0.085 -0.082 -0.124 -0.049 | 875 | 0.0131 / 0.0086 |
+| ON | 0.517 0.042 0.014 0.011 0.017 0.010 0.013 0.032 0.032 0.095 0.139 0.124 | +0.830 +0.030 +0.011 +0.000 -0.005 -0.003 +0.011 +0.008 +0.004 +0.006 -0.063 -0.013 | 1046 | 0.0098 / 0.0059 |
+
+Eleven of twelve hours are better, by 0.03 to 0.08 m from hour 3 to hour 9; hour 1 is
+0.033 m worse. Hours 10 to 12 stay soft in both arms (0.095, 0.139 and 0.124 m with the
+knob ON; the mean Up of hour 11 is -0.063 m): an older open item, not this card's.
+
+### 5.5 Card SCC on this base (discriminator)
+
+`runs/_rap_u4_s10`: the knob ON plus the second code channel at scale 10.
+
+| | 3D p50 by hour at WTZZ00DEU (m) | mean Up, hours 4 to 6 (m) | clock wire (m) | census median p50 by hour (m) | median count | code-bias dropouts | QUIN00USA epochs above 5 m after hour 2 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `u1_field_on` | 0.517 0.042 0.014 0.011 0.017 0.010 | +0.000 -0.005 -0.003 | 0.0069 / 0.0034 | 0.829 0.265 0.086 0.095 0.102 0.090 | 282 | 50 | 265 |
+| `u4_s10` | 0.549 0.057 0.027 0.030 0.033 0.029 | -0.022 -0.026 -0.025 | 0.0068 / 0.0033 | 0.677 0.235 0.118 0.095 0.097 0.078 | 331.5 | 4 | 0 |
+
+Against the `upo` replays the channel is better on hours 2 to 6 at 7 sites and worse at 3
+(median -0.007 m) and takes hour 1 down by a median of 0.136 m (11 better, 5 worse);
+QUIN00USA no longer diverges (3D p50 0.080 m over hours 4 to 6). It costs WTZZ00DEU
+0.015 to 0.02 m from hour 3 (a mean Up of -0.025 m), which still fails that card's
+frozen bar on the mean over hours 3 to 6. Recorded in card SCC.
+
+### 5.6 Reading and recommendation
+
+G0, G1 and G2 pass, with one sub-bar of the G2 OFF arm outside its band at the smallest
+eccentricity; B1 and B2 pass; the 12 h read supports it. Recommendation: arm
+`network.station_marker_to_arp` in `config/refound/{field,sim}_gps_dual_rf0hv.json`
+(the sim is byte-identical with it: no sim station has an eccentricity). The field
+baseline would become `runs/_rap_u1_field_on`: 0.52 0.04 0.01 0.01 0.02 0.01 m by hour,
+clock wire 0.0069 / 0.0034 m. The decision is the author's; it changes what the
+ruling of 2026-07-29 left alone. The two goldens carry the same monument roster and
+join the deferred golden re-base.
+
+### 5.7 What stays open
+
+- Site-specific offsets of the census: KOKB00USA (-0.197 m Up) and WUH200CHN (-0.149 m),
+  horizontal means of 0.04 to 0.12 m at seven sites, UTQI00USA and KOKB00USA never below
+  a decimetre.
+- The negative zenith wet delays of CAS100ATA and SCTB00ATA (-0.09 m with the knob ON).
+- The soft hours 10 to 12 of the 12 h arm.
+- The consumer's elevation mask (10 degrees: 11 of 16 sites better, QUIN00USA cured) and
+  the consumer's unbounded reaction at thin geometry.
+- Hour 1 is 0.03 m worse with the knob ON at WTZZ00DEU (0.517 against 0.484 m).

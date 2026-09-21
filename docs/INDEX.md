@@ -129,13 +129,15 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
-- [UPO](refound/UPO_consumer_up_offset_2026-09-22.md): open (READ 2026-09-22, build
-  pre-registered), the consumers' standing Up offset: DEFECT, the network roster is held at
-  MONUMENT coordinates while the observations refer to the antenna (48 of 59 stations carry an
-  eccentricity, mean 0.128 m, GRAZ00AUT 1.964 m; each station's wet delay absorbs a quarter of
-  it, the wire carries the rest regionally). Roster reduced to the antenna reference points:
-  WTZZ00DEU 0.48 0.05 0.06 0.09 0.09 0.09 to 0.52 0.04 0.01 0.01 0.02 0.01 m, mean Up -0.085 m
-  to zero, clock wire 0.0072 to 0.0034 m; `network.station_marker_to_arp` frozen, not built.
+- [UPO](refound/UPO_consumer_up_offset_2026-09-22.md): open (FIX BUILT 2026-09-22, gates pass,
+  NOT armed: the author's decision), the consumers' standing Up offset: DEFECT, the network
+  roster is held at MONUMENT coordinates while the observations refer to the antenna (48 of 59
+  stations, mean eccentricity 0.128 m, GRAZ00AUT 1.964 m; a station's wet delay absorbs a
+  quarter of it, the wire carries the rest regionally). `network.station_marker_to_arp`
+  (default OFF): WTZZ00DEU 0.48 0.05 0.06 0.09 0.09 0.09 to 0.52 0.04 0.01 0.01 0.02 0.01 m,
+  mean Up -0.085 m to zero, clock wire 0.0072 to 0.0034 m; the sim truth bed reproduces the
+  defect with injected eccentricities and the knob restores it byte for byte; 12 h 875 to 1046
+  epochs below a decimetre.
 - [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (built 2026-09-21, NOT armed), build
   card, the second code channel (`network.second_code_channel`, default OFF): a station
   contributes every allow-listed band-1 code it tracks as code-only rows, with one receiver
@@ -143,9 +145,9 @@ record the program is re-founding **on**.
   epoch, census code-bias dropouts 50 to 4) and C1C is not reduced; fails the WTZZ00DEU bars at
   every scale and amplifies the EV7 episode at scale 1; the sim truth gate fails as frozen and
   the diagnosis names a standing per-satellite misfit of the PINNED code datum (0.285 m on the
-  sim) instead. Re-graded on the EV7-fixed base: a trade (census hour 1 better by 0.08 to
-  0.14 m, no consumer excursion left, WTZZ00DEU 0.02 m worse from hour 3); the author's
-  decision.
+  sim) instead. Re-graded on the EV7-fixed base and again with the roster at the antenna
+  reference points: a trade (census hour 1 better by 0.14 m at scale 10, no consumer excursion
+  left, WTZZ00DEU 0.02 m worse from hour 3); the author's decision.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

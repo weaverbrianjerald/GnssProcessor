@@ -5,7 +5,7 @@
 - **id:** SCC
 - **topic:** code-bias
 - **status:** open
-- **summary:** RE-GRADED 2026-09-21 on the EV7-fixed base: a trade, NOT armed, the author's decision. With the EV7 fix ON, the second code channel takes the 16 census sites' hour 1 down by 0.08 m (scale 1) or 0.14 m (scale 10), removes QUIN00USA's excursion entirely (240 epochs above 5 m after hour 2 to 0) and 46 of 50 code-bias dropouts, and is better than the fix alone on hours 2 to 6 at 6 sites against 3 or 4; it costs WTZZ00DEU, a C1W consumer, 0.02 m from hour 3 (its standing Up offset), which fails B1, and is slightly worse than the fix alone in the last half hour at 10 or 11 sites. Earlier summary: BUILT 2026-09-21 (main `61d67c2`), default OFF, NOT armed. The mechanism works: with the knob ON the wire carries a C1W code bias for a median of 31 satellites per epoch (24 before), 2 satellite-epochs lack it (5210 before), C1C is not reduced, the detector rows are identical, and the code-bias dropouts at the 16 census sites fall from 50 to 4. It fails the WTZZ00DEU bars at every scale (a C1W consumer whose standing Up offset grows by 1 to 3 cm), and at scale 1 it amplifies the episode of card EV7. The sim truth gate fails as frozen (0.275 m rms), and the diagnosis puts the error on the PINNED C1C column: the sim network carries a per-satellite code misfit of decimetres on its pinned signals that never relaxes, while the free C1W column sits where the data put it. Re-grade on the EV7-fixed base is owed. Original summary: Pre-registered 2026-09-21 (approved by the author the same day). Build card, default OFF: a network station contributes, as code-only rows, every allow-listed band-1 code it reports besides its latched canonical code, so that the C1C and C1W satellite code-bias families stop competing for the same 59 stations. One new unknown per station (the receiver's band-1 inter-signal bias); no second phase, ambiguity or phase-bias family; no new datum row. Requirements, gates and bars are frozen below; nothing is built.
+- **summary:** RE-GRADED 2026-09-22 on the base with the roster at the antenna reference points (card UPO): still a trade, NOT armed, the author's decision. At scale 10 the channel takes the census hour 1 down by a median of 0.136 m, leaves no consumer excursion (QUIN00USA 265 epochs above 5 m to 0) and 4 of 50 code-bias dropouts, is better on hours 2 to 6 at 7 sites against 3, and costs WTZZ00DEU 0.015 to 0.02 m from hour 3 (0.027 0.030 0.033 0.029 m against 0.014 0.011 0.017 0.010 m). Earlier summary: RE-GRADED 2026-09-21 on the EV7-fixed base: a trade, NOT armed, the author's decision. With the EV7 fix ON, the second code channel takes the 16 census sites' hour 1 down by 0.08 m (scale 1) or 0.14 m (scale 10), removes QUIN00USA's excursion entirely (240 epochs above 5 m after hour 2 to 0) and 46 of 50 code-bias dropouts, and is better than the fix alone on hours 2 to 6 at 6 sites against 3 or 4; it costs WTZZ00DEU, a C1W consumer, 0.02 m from hour 3 (its standing Up offset), which fails B1, and is slightly worse than the fix alone in the last half hour at 10 or 11 sites. Earlier summary: BUILT 2026-09-21 (main `61d67c2`), default OFF, NOT armed. The mechanism works: with the knob ON the wire carries a C1W code bias for a median of 31 satellites per epoch (24 before), 2 satellite-epochs lack it (5210 before), C1C is not reduced, the detector rows are identical, and the code-bias dropouts at the 16 census sites fall from 50 to 4. It fails the WTZZ00DEU bars at every scale (a C1W consumer whose standing Up offset grows by 1 to 3 cm), and at scale 1 it amplifies the episode of card EV7. The sim truth gate fails as frozen (0.275 m rms), and the diagnosis puts the error on the PINNED C1C column: the sim network carries a per-satellite code misfit of decimetres on its pinned signals that never relaxes, while the free C1W column sits where the data put it. Re-grade on the EV7-fixed base is owed. Original summary: Pre-registered 2026-09-21 (approved by the author the same day). Build card, default OFF: a network station contributes, as code-only rows, every allow-listed band-1 code it reports besides its latched canonical code, so that the C1C and C1W satellite code-bias families stop competing for the same 59 stations. One new unknown per station (the receiver's band-1 inter-signal bias); no second phase, ambiguity or phase-bias family; no new datum row. Requirements, gates and bars are frozen below; nothing is built.
 - **source:** [CSL](CSL_canonical_signal_latch_2026-09-20.md) section 9 (the code half of the latch rule is not the lever: one code per station and band makes the two families share the stations); [MSC](MSC_multi_site_consumer_2026-09-21.md) sections 4 and 5 (the thinned C1W biases and the consumer that leaves by tens of metres on a dropout)
 - **knobs / posture:** `network.second_code_channel` (bool, default false), `network.second_code_signals` (list, default `["C1C", "C1W"]`), `network.second_code_sigma_scale` (number, at least 1, default 1.0); closed-loop consumer pinned off
 - **dates in the text:** 2026-09-21
@@ -290,3 +290,27 @@ alone), `fxs1`, `fxs10`.
 evidence for it is nevertheless stronger than on the old base, and the one site that pays
 is the site whose error is an unexplained standing offset. The decision is the author's;
 scale 10 is the candidate if it is armed (best hour 1, best median count, no excursion).
+
+## 8. Re-grade on the base with the roster at the antenna reference points (2026-09-22; card UPO section 5.5)
+
+Arm `runs/_rap_u4_s10` (the EV7 fix, `network.station_marker_to_arp` and this card at
+scale 10; exe `gnss_processor_upo.exe`), census key `upos10`, against `u1_field_on` and
+the `upo` replays.
+
+- WTZZ00DEU: 0.549 0.057 0.027 0.030 0.033 0.029 m by hour against 0.517 0.042 0.014
+  0.011 0.017 0.010 m; mean Up over hours 4 to 6 -0.022, -0.026 and -0.025 m against
+  zero; clock wire 0.0068 / 0.0033 m against 0.0069 / 0.0034 m. The frozen B1 still
+  fails on the mean over hours 3 to 6 (+0.017 m against a bar of 0.010 m), now at the
+  level of 0.03 m and not of 0.10 m.
+- Census against `upo`: hours 2 to 6 better at 7 sites and worse at 3 (median -0.007 m);
+  hour 1 better at 11 and worse at 5 (median -0.136 m); median count of epochs below a
+  decimetre 282 to 331.5; median p50 by hour 0.829 0.265 0.086 0.095 0.102 0.090 to
+  0.677 0.235 0.118 0.095 0.097 0.078 m; the absolute mean Up is smaller at 6 of 15
+  sites (median change +0.0037 m).
+- Code-bias dropouts 50 to 4; QUIN00USA epochs above 5 m after hour 2: 265 to 0.
+
+**Reading.** The premise of section 7 (the site that pays is the site with an
+unexplained standing offset) is settled by card UPO: the offset is gone and the channel
+still costs WTZZ00DEU about 0.02 m, as a small negative Up. What the channel buys is
+convergence and robustness across sites. By the frozen rule it is not recommended; the
+decision is the author's.
