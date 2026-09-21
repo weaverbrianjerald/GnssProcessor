@@ -451,6 +451,36 @@ namespace GnssProcessor {
               "refloats 1069 -> 702, epochs below a decimetre 223 -> 321, clock wire on the "
               "consumer's satellites 0.0406 -> 0.0203 m, never worse than 0.03 m of consumer "
               "p50 in hours 3 to 12; needs cycle_slip.relevel_free_epoch to act" },
+            // --- Card GRS, the PER-SIGNAL rider of the row above (ledger row promoted
+            //     2026-09-20).  The row-level tier keys on the SATELLITE, so a loss of
+            //     lock on the primary pair while band 5 or a fallback signal tracks
+            //     through is never seen.  Regime = the float vehicle AND the row-level
+            //     knob: without it the per-signal history is never filled, the loader
+            //     WARNS and the tier counts itself inert.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && nc.slip_qc.gap_reentry,
+              nc.slip_qc.gap_reentry_per_signal,
+              Tier::SCOPED, false, "network.cycle_slip.gap_reentry_per_signal",
+              "see the re-entry per SIGNAL, not per satellite: sim fault bed repaired "
+              "completely (clock wire against truth 0.0670 -> 0.0030 m dual, 0.0939 -> "
+              "0.0029 m triple), field dual T4_attrib 228 -> 92, and the 12 h field arm "
+              "never worse than 0.02 m of consumer p50 in hours 3 to 12 (T4_attrib 702 "
+              "-> 370)" },
+            // --- Card CSL, the canonical-signal latch (ledger row landed 2026-09-20).
+            //     A VALUE knob, and the ONLY processing.* row in this table: the default
+            //     string "count" is truthy, so the armed test is an explicit comparison
+            //     on canonical_signal_rule_ (a direct GnssConfig member, not part of
+            //     network_config_ and not a PostureRegime alias) exactly as the
+            //     apriori_source row compares network_apriori_source_.  Regime = the
+            //     float vehicle: it is the only posture the rule was graded on.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
+              canonical_signal_rule_ == CanonicalSignalRule::Priority,
+              Tier::SCOPED, false, "processing.canonical_signal_rule",
+              "latch each station's band signal by PRIORITY, not by the satellite count "
+              "of its first processed epoch (one satellite without the semi-codeless "
+              "pair latches the civil signal for the whole run): field dual epochs below "
+              "a decimetre 162 -> 603 of 720, 12 h 275 -> 994 of 1440, triple 6 -> 314; "
+              "byte-identical on the sim; mechanism half read (a station subset)" },
             { true,
               network_exclude_unmodeled_antenna_stations_,
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
