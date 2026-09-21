@@ -106,9 +106,12 @@ record the program is re-founding **on**.
   `network.extra_band_code_sigma_scale`) separate the band-5 wide-lane detector pairs from the
   band-5 code rows (the gap 390 to 535 epochs below a decimetre); gates, attribution and the
   unchanged L5 adoption bars frozen.
-- [MSC](refound/MSC_multi_site_consumer_2026-09-21.md): open, 2026-09-21: the multi-site consumer
-  census; independent consumers replayed at 16 sites outside the roster on the recorded wires
-  of 2026-09-20 (12 s per replay); site rule, statistics and reading frozen.
+- [MSC](refound/MSC_multi_site_consumer_2026-09-21.md): open (MSC-1 result 2026-09-21), the
+  multi-site consumer census; WTZZ00DEU is not representative (603 epochs below a decimetre
+  against a median of 145 at 16 independent sites); by the frozen count rule no adoption of
+  2026-09-20 holds across sites, the three together improve 13 of 16; the CSL support reading
+  is refuted; the priority latch thinned the wire's C1W code biases and a consumer diverges
+  on the dropouts; the census fails its own bar as a standing instrument at 16 sites.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

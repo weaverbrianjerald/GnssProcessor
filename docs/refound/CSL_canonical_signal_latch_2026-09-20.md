@@ -202,3 +202,37 @@ effect after all, and the count of L1W stations per satellite column is read aga
 the consumer's satellites. Every arm is also replayed at the sites of card MSC when
 that list exists, because a split graded by one consumer at one site is what this
 section is trying to get beyond.
+
+## 7. 2026-09-21: CSL-3 pre-registration: the code half of the rule (found by the multi-site census)
+
+[MSC](MSC_multi_site_consumer_2026-09-21.md) section 4: under `priority` the code
+follows the phase's attribute, so 16 stations that track L1C phase with C1W code
+moved their code to C1C; the wire's C1W code biases fell from a median of 30
+satellites per epoch to 24 (satellite-epochs with a clock and no C1W code bias 1293
+to 5323), and consumers on C1W code away from the European cluster log code-bias
+dropouts that did not exist before (QUIN00USA 0 to 13, with a divergence of tens of
+metres; KOKB00USA 0 to 10; POHN00FSM 0 to 7; WUH200CHN 0 to 2). The same section
+refutes the supported reading of section 4 (both consumer families gain).
+
+**Build.** `processing.canonical_signal_code_follows_phase` (bool, default true, the
+behaviour built in CSL-1). False: under `priority` the code is decided by the same
+first-in-the-list-with-coverage rule as the phase, on its own list, and does not
+follow the phase. Byte-identical at the default; the consumer stays on `count`.
+
+**Gates and bars (frozen).**
+
+- **G0** byte identity at the default on the dual field base and the dual sim base.
+- **G1** with the knob false the field latch keeps L1W at 18 stations and L1C at 41, and
+  the code is C1W at every station that has it; the wire's C1W code biases return to a
+  median of 29 satellites or more per epoch and 1500 satellite-epochs or fewer without
+  one.
+- **B1 WTZZ00DEU, 6 h:** never worse than the baseline pair by more than 0.03 m in any
+  hour, 570 or more epochs below a decimetre (603 today).
+- **B2 the census sites (replays on the new wire):** no code-bias freshness flip at
+  QUIN00USA, KOKB00USA, POHN00FSM and WUH200CHN beyond their count on `_rap_gD_dual`
+  (zero); no epoch above 5 m at QUIN00USA after the first hour; the across-site
+  median count at or above 145 and the paired change of the mean hourly p50 over
+  hours 2 to 6 at or below +0.01 m at the median.
+- **B3 sim** byte-identical (one signal per band).
+- A pass makes a recommendation to replace the armed value in the working bases; the
+  author decides.
