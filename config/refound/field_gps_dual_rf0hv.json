@@ -42,7 +42,15 @@
     "the clock wire on the consumer's satellites 0.0274 to 0.0107 m; on the sim it is neutral without losses of lock and",
     "restores the base level under 81 injected ones (0.45 to 0.05 m).  The baseline pair is now runs/_rf0hv4_{field,sim}6.",
     "STILL OPEN: the re-entry is seen per SATELLITE, so a loss of lock on the primary pair while band 5 or a fallback",
-    "signal tracks through is not seen (card GRS, docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md)."
+    "signal tracks through is not seen (card GRS, docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).",
+    "2026-09-20 (cards GRS and CSL, docs/refound/): TWO MORE KNOBS ARMED at the author's instruction --",
+    "network.cycle_slip.gap_reentry_per_signal: true (the re-entry seen per SIGNAL: a loss of lock on the primary pair while",
+    "band 5 or a fallback signal tracks through; sim fault repaired completely, field T4_attrib 228 to 92, 12 h arm passed) and",
+    "processing.canonical_signal_rule: priority (the first-epoch satellite count latched L1C at 47 stations although 18 carry",
+    "L1W; with the priority-first signal the field consumer goes from 162 to 603 epochs below a decimetre of 720 and from 275 to",
+    "994 of 1440 in 12 h; byte-identical on the sim; the closed-loop consumer stays on count).  The baseline pair is now",
+    "runs/_rf0hv5_{field,sim}6, exe gnss_processor_csl.exe.  OPEN: the mechanism of the latch effect is half read (a station",
+    "subset, card CSL section 4); network.canonical_pair_admission is KEEP_OFF (card CPA)."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -58,6 +66,7 @@
     "doy": 129
   },
   "processing": {
+    "canonical_signal_rule": "priority",
     "mode": "ppp-rtk-network",
     "active_systems": [
       "GPS"
@@ -263,7 +272,8 @@
       "if_phase_td_ref_arm_all": true,
       "mw_lli_corroborate": true,
       "gap_instrument": true,
-      "gap_reentry_relevel": true
+      "gap_reentry_relevel": true,
+      "gap_reentry_per_signal": true
     },
     "cold_clock_seed": true,
     "emit_clock_disc": true,

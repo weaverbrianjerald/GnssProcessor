@@ -83,7 +83,8 @@ record the program is re-founding **on**.
   that motivated it (203 to 627 epochs below a decimetre) had also moved the producer's
   first-epoch canonical-signal latch at 13 stations, and the gain belongs to that latch
   (every station on its priority-first signal: 601 epochs with no rule).
-- [CSL](refound/CSL_canonical_signal_latch_2026-09-20.md): open, 2026-09-20: the canonical-signal
+- [CSL](refound/CSL_canonical_signal_latch_2026-09-20.md): open (built and ARMED 2026-09-20, baseline
+  pair `runs/_rf0hv5_*`; the mechanism read is open), 2026-09-20: the canonical-signal
   latch; the first-epoch satellite count prefers a civil signal, the dual field base latches
   L1C at 47 stations although 18 carry L1W; every station on its priority-first signal takes
   the consumer from 162 to 601 epochs below a decimetre (275 to 983 of 1440 in 12 h); mechanism

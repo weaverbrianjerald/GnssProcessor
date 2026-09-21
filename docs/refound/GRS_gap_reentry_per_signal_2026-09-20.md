@@ -259,3 +259,11 @@ consumer numbers stand as measured; their ATTRIBUTION to the partial-signal epoc
 and to an admission rule is withdrawn. What they measured is mostly the canonical
 signal of six stations. The rider's own results (sections 4 and 7, arms `gD_dual`,
 `gF_tri`, `gS_*`, `d12_grs`) do not use the emulation and are unaffected.
+
+## 9. 2026-09-20: the rider is armed in the working bases
+
+At the author's instruction, together with the priority canonical-signal latch; the
+record of the arming and the new baseline pair `runs/_rf0hv5_{field,sim}6` is in
+[CSL](CSL_canonical_signal_latch_2026-09-20.md) section 5. The field triple bar B1 of
+section 3 stays failed on the consumer count and is superseded as a question: with
+the latch the triple arm has 314 epochs below a decimetre (CSL section 4).

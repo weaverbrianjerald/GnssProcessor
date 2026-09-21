@@ -145,3 +145,32 @@ the field, and leaves the consumer's own latch alone. Arming it in the working b
 is the author's decision; the card's own condition (the mechanism read before a
 recommendation) is met only in part, and that is stated to the author with the
 recommendation.
+
+## 5. 2026-09-20: both knobs armed in the working bases; the baseline pair is re-set
+
+At the author's instruction `processing.canonical_signal_rule: "priority"` and
+`network.cycle_slip.gap_reentry_per_signal: true` are armed in
+`config/refound/{field,sim}_gps_dual_rf0hv.json` (the two knobs and a dated `_comment`
+block, nothing else). The new baseline pair is `runs/_rf0hv5_{field,sim}6`, exe
+`gnss_processor_csl.exe`, exit 0, 720 consumer epochs; the arm configs equal the
+validated arms key for key and the wires are byte-identical to them (`_rap_lD_dual`
+sha256 `72b5324bf12761d6...`, `_rap_lS_dual` `46449eac18d3ca0b...`). Every later arm is a
+delta against this pair. The day's three field pairs:
+
+| field pair | armed | consumer 3D p50 by hour (m) | sub-dm of 720 | T4_attrib | CLK_ANCHOR | clock wire against COD, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `_rf0hv3_field6` | the hold | 0.57 0.17 0.11 0.10 0.13 0.11 | 167 | 457 | 598 | 0.0274 / 0.0281 |
+| `_rf0hv4_field6` | and the row-level gap re-entry response | 0.53 0.11 0.09 0.10 0.14 0.12 | 203 | 228 | 424 | 0.0107 / 0.0173 |
+| **`_rf0hv5_field6`** | and the per-signal rider and the priority latch | **0.43 0.07 0.06 0.08 0.08 0.07** | **603** | **126** | **268** | **0.0069 / 0.0128** |
+
+The sim pair is unchanged through all three (0.60 0.10 0.10 0.06 0.06 0.05 m, 448
+epochs, no post-fit refloat, clock wire against truth 0.0030 / 0.0040 m). The 12 h
+field arm of the armed posture exists already (`runs/_rap_lD_dual12`, section 4: 994
+of 1440 epochs below a decimetre, one hour, the twelfth, worse than the rider-only
+arm by more than 0.03 m).
+
+Open with the arming: the latch effect is a station subset whose cause is not read
+(section 4); one consumer at one site has graded it; the first hour of the triple
+posture under the priority latch is slow (1.47 m); hours 10 to 12 are soft on every
+12 h arm. The promotion-ledger rows of the two knobs, and the KEEP_OFF row of
+`network.canonical_pair_admission`, are being written in step.
