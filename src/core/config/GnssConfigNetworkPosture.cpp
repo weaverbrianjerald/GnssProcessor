@@ -486,6 +486,26 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
               "backstop: an unmodelled receiver PCO/PCV is a systematic in every obs feeding the "
               "shared clocks and biases" },
+            // --- Card UPO, the roster held at the MONUMENT (ledger row landed 2026-09-22).
+            //     A roster station's configured coordinate is its ITRF2020 monument
+            //     coordinate while the observations refer to the antenna, so 48 of the 59
+            //     field stations sit below their antennas by the header eccentricity.  The
+            //     station's own zenith wet delay absorbs about a quarter of the height error
+            //     and the satellite clocks take the rest, regionally.  Sits beside the
+            //     antenna-modelling row above because it is the same class of defect: a
+            //     station-frame term the shared states pay for.  Regime = the float vehicle,
+            //     the only posture the reduction was graded on; the defect itself does not
+            //     depend on the vehicle, so the goldens' re-base owes this knob.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
+              network_station_marker_to_arp_,
+              Tier::SCOPED, false, "network.station_marker_to_arp",
+              "reduce the roster's monument coordinates to the antenna reference points at "
+              "setup (the network otherwise holds 48 of 59 field stations away from their "
+              "antennas, GRAZ00AUT by 1.964 m; the station's wet delay absorbs a quarter and "
+              "the satellite clocks the rest, regionally): WTZZ00DEU mean Up -0.085 m -> 0, "
+              "hourly p50 from hour 3 0.06-0.09 -> 0.01-0.02 m, clock wire 0.0072 -> 0.0034 m "
+              "on the consumer's satellites, 12 h 875 -> 1046 epochs below a decimetre; sim "
+              "truth bed restored byte for byte" },
             { network_phase_leveling_,
               network_raim_,
               Tier::SCOPED, false, "network.raim",
@@ -712,6 +732,30 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.estimate_sat_code_bias",
               "W6 OSB is a drop-in for the .BIA product (3-sta closed loop 0.508 m vs 0.489 m "
               "3D); grade BIAS-ONLY" },
+            // --- Card SCC, the SECOND CODE CHANNEL (ledger row landed 2026-09-22).  Sits
+            //     beside the satellite code-bias row above because it is the same product:
+            //     with one canonical band-1 code per station the C1C and C1W satellite
+            //     families compete for the same 59 stations, so a satellite's column can
+            //     hang on a single tracker.  Armed, a station contributes every allow-listed
+            //     band-1 code it tracks as CODE-ONLY rows, each through its own receiver
+            //     inter-signal state.  Regime = the float vehicle (the only posture it was
+            //     graded on) AND the two dependencies the loader itself enforces: without
+            //     carry_rx_code_bias the new receiver state cold-starts every epoch and the
+            //     loader DISARMS the knob, and with channel_mode 'all' it is REFUSED because
+            //     that mode already widens every band on the phase side as well.  ARMED
+            //     AGAINST A FAILED FROZEN BAR of its own card (B1, WTZZ00DEU): the verdict
+            //     records the author's decision and the card keeps the bar as FAILED.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && network_carry_rx_code_bias_
+                  && channel_mode_ != ChannelMode::All,
+              nc.second_code_channel,
+              Tier::SCOPED, false, "network.second_code_channel",
+              "a station contributes every band-1 code it tracks as code-only rows through a "
+              "receiver inter-signal state (the priority latch otherwise leaves the wire's "
+              "C1W code biases on 18 stations): census hour 1 better by a median of 0.136 m, "
+              "code-bias dropouts 50 -> 4, QUIN00USA's excursion gone, median count 282 -> "
+              "331.5; costs WTZZ00DEU about 0.02 m from hour 3 and FAILS card SCC's frozen "
+              "B1, armed as the author's decision; scale 10" },
             { network_carry_invariant_,
               network_phase_datum_eq34_,
               Tier::SCOPED, true , "network.phase_datum_eq34",
