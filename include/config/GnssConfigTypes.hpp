@@ -1704,6 +1704,41 @@ namespace GnssProcessor {
         /// Default OFF ⇒ RF-0d's pin-everything behaviour ⇒ byte-identical.  INERT
         /// without @ref sat_gf_datum.
         bool sat_isc_state{ false };
+        /// B5D (docs/refound/B5D_band5_code_datum_2026-09-20.md): leave an EXTRA-BAND
+        /// satellite code-bias column FREE where the data determine it, and let its
+        /// (constellation, signal) channel carry the level with its sum-to-zero row.
+        ///
+        /// WHY.  RF-0d pins every registered code column beyond the ionosphere-free pair
+        /// through its geometry-free combination `(d_k - d_ref)/(mu_k - 1) = c*T_GD`, an
+        /// identity under the broadcast convention `d_j = c*T_GD*mu_j` — so the row
+        /// ASSERTS an inter-signal correction of zero.  That was written for the
+        /// same-band companions RF-0f then freed, where the correction is centimetres.
+        /// On a THIRD BAND it is metres: card TBI measured the estimator-free triple-code
+        /// combination on both beds and found the six Block III satellites sitting 4 to
+        /// 5 m above the eleven Block IIF ones, with the wire carrying 0.43 m of a 2.97 m
+        /// truth, the network pushing the rest into band 2 (post-fit station-median sd
+        /// across satellites 0.740 m against 0.066 m on the dual run), and a dual
+        /// consumer replayed on the triple wire lagging by the same amount.
+        ///
+        /// WHY IT IS ESTIMABLE.  With the slant ionosphere and the satellite clock fixed
+        /// by the PINNED pair, a cell carrying code on both of the pair's bands and on
+        /// the extra signal determines `d_k` up to one constant per signal family, and
+        /// that constant is exactly what the receiver's own extra-band code bias absorbs.
+        /// The channel's sum-to-zero row is the constant's datum — the same row RF-0d
+        /// suppresses once every column of the channel is pinned, which re-enables on its
+        /// own here because a freed column is not in the pinned set.
+        ///
+        /// WHERE IT IS NOT.  A column the data do not determine this epoch never brings
+        /// the absolute broadcast-frame target into a family that now stands in the
+        /// sum-to-zero frame: it is CARRIED at its own previous solved geometry-free
+        /// combination, or — at a first sighting with nothing to carry — HELD by a single
+        /// level row in the channel's own frame and withheld from the wire (the RF-0f
+        /// precedent: a value no consumer can tell from an estimate is not emitted).
+        /// Both cases are counted.
+        ///
+        /// Default OFF ⇒ RF-0d's pin-everything behaviour ⇒ byte-identical.  INERT
+        /// without @ref sat_gf_datum.
+        bool sat_gf_extra_band_free{ false };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

@@ -136,6 +136,12 @@ struct DatumRowsHarness {
     /// falls through to the pin -- which is exactly the unobservable case.
     bool sat_isc_state{false};
     std::set<std::string> isc_bridged;
+    /// B5D: leave an extra-band column unpinned where the data determine it, and the
+    /// `"sat|signal|<b1><b2>"` determination roster the driver builds from the station
+    /// state maps.  Off by default so every case above keeps measuring the posture it
+    /// was written for.
+    bool sat_gf_extra_band_free{false};
+    std::set<std::string> extra_band_determined;
     std::set<std::string> gf_family_constellations;
 
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
@@ -166,6 +172,7 @@ struct DatumRowsHarness {
             sat_gf_datum, sat_gf_target_m,
             sat_if_level_datum, sat_gf_datum_time_linked,
             sat_isc_state, isc_bridged,
+            sat_gf_extra_band_free, extra_band_determined,
             gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
             code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
             this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,

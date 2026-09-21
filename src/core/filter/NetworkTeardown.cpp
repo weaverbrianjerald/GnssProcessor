@@ -4459,6 +4459,45 @@ int networkTeardown(
                       100.0 * static_cast<double>(ctx.counters.n_isc_pinned)
                           / static_cast<double>(tot));
     }
+    // B5D: armed-only run-end line.  The whole card is a claim about WHICH columns stop
+    // being asserted, and neither the wire nor the trace stream can say it — a freed
+    // column looks exactly like a pinned one in the B record (standing invariant #4).
+    if (config_.getNetworkConfig().sat_gf_extra_band_free) {
+        const std::size_t tot = ctx.counters.n_extra_band_free
+                              + ctx.counters.n_extra_band_carried
+                              + ctx.counters.n_extra_band_held;
+        if (tot == 0)
+            log->warn("Network (EXTRA-BAND FREE, B5D): ARMED but no extra-band code column "
+                      "was ever seen — no satellite carried a registered code signal "
+                      "outside its ionosphere-free pin pair's two bands, so this run "
+                      "exercised nothing and is byte-equivalent to the unarmed posture "
+                      "(standing invariant #4).  A dual-frequency lineage reads this way "
+                      "by construction; on a triple one it means the third band never "
+                      "reached the >= 2-station register.");
+        else
+            log->info("Network (EXTRA-BAND FREE, B5D): {} column-epoch(s) FREED (a station "
+                      "carried code on both of the pin pair's bands and on the signal, so "
+                      "the data determine the column up to its family constant and the "
+                      "channel's sum-to-zero row is that constant's datum), {} CARRIED at "
+                      "their own previous solved geometry-free combination because no "
+                      "station determined them that epoch, {} HELD at a first sighting with "
+                      "nothing to carry ({:.2f} % held) — a held column is pinned by a "
+                      "level row in the channel's own frame and its bias is NOT emitted, "
+                      "because a value chosen to keep the rank is indistinguishable from "
+                      "an estimate.  Every one of these would have been an ASSERTION of a "
+                      "zero inter-signal correction under RF-0d alone (counted beside this "
+                      "as n_sat_gf_isc_zero = {}), which card TBI measured at metres across "
+                      "a band.  The freed channels' LEVEL now re-references whenever the "
+                      "veteran link re-seeds: {} sum-to-zero row(s) re-seeded over the run, "
+                      "marking {} satellite-epoch(s) for the consumer's discontinuity "
+                      "channel (standing invariant #7, the decoupling edge).",
+                      ctx.counters.n_extra_band_free, ctx.counters.n_extra_band_carried,
+                      ctx.counters.n_extra_band_held,
+                      100.0 * static_cast<double>(ctx.counters.n_extra_band_held)
+                          / static_cast<double>(tot),
+                      ctx.counters.n_sat_gf_isc0,
+                      ctx.counters.n_s2z_reseed_rows, ctx.counters.n_s2z_reseed_sats);
+    }
     // RXCB-DATUM: armed-only run-end line.  Standing invariant #4 — the ONLY way to
     // tell a live gauge from an armed-but-inert one is the fold count, so print it
     // even (especially) when it is zero.

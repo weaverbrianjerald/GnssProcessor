@@ -308,6 +308,17 @@ public:
         int n_isc_observed{0};        ///< RF-0f: band-2 same-band companion columns left UNPINNED because some present station tracks BOTH that companion and the pin's second signal on that satellite — their difference is a pure inter-signal correction and the data determines it.
         int n_isc_pinned{0};          ///< RF-0f: companion columns that still had to be pinned at 0 because NO station bridged the two signals this epoch.  The wire does not emit those biases; this count is how a run says how much of its C2X content is assertion rather than estimate.
         int n_sat_gf_anchored{0};     ///< RF-0e e2: geometry-free rows that fell back to the ABSOLUTE target because the satellite had no veteran value — the first-sighting anchor, and the only place the broadcast frame is re-asserted.
+        int n_extra_band_free{0};     ///< B5D: EXTRA-BAND columns (band neither of the pin pair's) left UNPINNED because some present station carries code on both of the pair's bands AND on that signal for that satellite — with the pinned pair fixing the slant ionosphere and the clock, the data determine d_k up to the family constant the channel's sum-to-zero row datums.
+        int n_extra_band_carried{0};  ///< B5D: extra-band columns the data did NOT determine this epoch but which had a previous solved value on both the reference and themselves, so the row carries their OWN previous geometry-free combination instead of the absolute broadcast target.
+        int n_extra_band_held{0};     ///< B5D: extra-band columns the data did not determine at a FIRST SIGHTING — nothing to carry, so a single level row in the channel's own frame HOLDS the column (never the absolute broadcast target, which would drag a sum-to-zero family into the broadcast frame) and the bias is withheld from the wire.  Standing invariant #3: a deferral is triaged with data, so this count is what says whether the case occurs at all.
+        int n_s2z_reseed_rows{0};     ///< B5D / invariant #7: per-(constellation, signal) sum-to-zero rows whose veteran link RE-SEEDED this epoch (no veteran present ⇒ the channel's LEVEL re-references).  The affected satellites are marked in @c this_epoch_cb_reseed and disc-bumped at the emit site; this is the count of the DECOUPLING edge.
+        int n_s2z_reseed_sats{0};     ///< B5D / invariant #7: satellites marked by those re-seeds (the marks the consumer reacts to).
+        /// B5D: the `"sat|signal"` keys of the extra-band columns HELD this epoch (see
+        /// @ref n_extra_band_held).  Returned rather than re-derived by the caller because
+        /// the hold verdict is a three-way branch over the determination roster AND the
+        /// carry map, and two views of one truth drift apart.  Empty unless the knob is
+        /// armed, so the emit prep's withholding loop is never entered otherwise.
+        std::set<std::string> extra_band_held;
     };
 
     /// FAMILY-GF (docs/SPEC_family_gf_datum.md §3.1): a receiver channel FAMILY tag.
@@ -468,6 +479,26 @@ public:
      * @param sat_gf_datum_time_linked  RF-0e e2: carry each geometry-free row's RHS
      *                                  from the previous kept epoch, using the
      *                                  absolute target only at first sighting.
+     * @param sat_gf_extra_band_free    B5D (@c network.sat_gf_extra_band_free): fold NO
+     *                                  geometry-free row for an EXTRA-BAND column (a
+     *                                  registered signal whose band digit is neither of
+     *                                  the pin pair's) that @p extra_band_determined
+     *                                  reports as determined this epoch, so its level
+     *                                  falls to the channel's sum-to-zero row and its
+     *                                  between-satellite differences to the data.  An
+     *                                  UNDETERMINED column is carried at its own previous
+     *                                  combination, or held by a single level row in the
+     *                                  channel's own frame at a first sighting — never at
+     *                                  the absolute broadcast target, which is what would
+     *                                  drag a sum-to-zero family into the broadcast frame.
+     *                                  OFF ⇒ RF-0d's pin ⇒ byte-identical.
+     * @param extra_band_determined     B5D: the `"<sat>|<signal>|<b1><b2>"` keys the data
+     *                                  determine this epoch — @c b1 / @c b2 are the pin
+     *                                  pair's band digits, so the roster answers the
+     *                                  question for the pair the builder actually
+     *                                  realized rather than for an assumed (L1, L2).
+     *                                  Built by the driver (only it sees the stations),
+     *                                  empty unless @p sat_gf_extra_band_free is armed.
      * @param basis_relatch_disc_pending  [in/out] pending per-sat disc bumps.
      * @param emitEvent                 L2 event-row callback (tier, event, sat,
      *                                  station, statistic, threshold, action, detail).
@@ -482,6 +513,8 @@ public:
         const std::map<std::string, double>& sat_gf_target_m,
         bool sat_if_level_datum, bool sat_gf_datum_time_linked,
         bool sat_isc_state, const std::set<std::string>& isc_bridged,
+        bool sat_gf_extra_band_free,
+        const std::set<std::string>& extra_band_determined,
         const std::set<std::string>& gf_family_constellations,
         const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
         const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,

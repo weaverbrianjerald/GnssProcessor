@@ -5,7 +5,7 @@
 - **id:** B5D
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Build card, pre-registered 2026-09-20. On a three-band lineage the per-signal extension of the geometry-free pin asserts a zero inter-signal correction between L1 and L5 for every satellite, where the truth is metres and estimable (card TBI). The build leaves an extra-band code-bias column free where the data determine it and closes each signal family with its sum-to-zero row. Default OFF, byte-identical OFF. Requirements, gates and bars frozen here before the build.
+- **summary:** BUILT 2026-09-20, NOT ARMED: the assertion is gone (22 999 rows to 0), the wire carries 2.78 of the 2.97 m per-satellite truth (0.43 before), the network's band-2 contamination is cured (0.740 to 0.119 m) and the triple field consumer goes from 1.47 0.21 0.09 0.11 0.09 0.03 m and 314 epochs below a decimetre to 0.68 0.09 0.06 0.11 0.09 0.04 m and 390, which fails the L5 adoption bars (dual pair 603; the band-5-code-removed emulation 535). The emulation had also removed the band-5 wide-lane detector pair (55 detections, 28 in the first hour), an unread lead. Original summary: Build card, pre-registered 2026-09-20. On a three-band lineage the per-signal extension of the geometry-free pin asserts a zero inter-signal correction between L1 and L5 for every satellite, where the truth is metres and estimable (card TBI). The build leaves an extra-band code-bias column free where the data determine it and closes each signal family with its sum-to-zero row. Default OFF, byte-identical OFF. Requirements, gates and bars frozen here before the build.
 - **source:** [TBI](TBI_three_band_ignition_2026-09-20.md) section 5; [AB2](AB2_l5_third_frequency_2026-09-20.md) section 1; RF-0d and RF-0f (the per-signal pin and its same-band exception)
 - **knobs / posture:** new `network.sat_gf_extra_band_free` (default false); RF-0hv working bases of `8fe757f` with `processing.frequency_mode: triple`
 - **dates in the text:** 2026-09-20
@@ -76,3 +76,94 @@ struct, the loader, the manifest, the fingerprint and the posture table):
 - **Not armed by this card.** A pass makes a recommendation to the author with the
   ledger row; the ledger rows of `network.sat_gf_datum` and `network.sat_isc_state`
   are read first.
+
+## 3. 2026-09-20: B5D-1 result: built; the datum is cured; the consumer bars are NOT met
+
+Build by an Opus worker on main `4746aa8`, exe `gnss_processor_b5d.exe`: the mechanism
+sits in the RF-0d per-signal loop of `NetworkSbasis::buildCodeBiasDatumRows` (a
+determined extra-band column takes no row; an undetermined one with a previous value
+carries its own combination; an undetermined first sighting is held by a level row
+in the channel's frame and kept off the record in `NetworkSolPrep`, the RF-0f
+precedent); the determination roster is built in `NetworkSolveGlue` beside RF-0f's,
+keyed on the realized pin pair; loader interlock (inert with a warning without
+`sat_gf_datum`), manifest entry, run-end line in `NetworkTeardown`; suite
+`SatGfExtraBandFreeTest` (8 cases). `gnss_tests`: 2341 ran, 2340 passed, the one known
+skip (the worker's run; the manager re-ran the new suite and the two touched ones, 54
+cases, all pass). The knob is not in the snapshot fingerprint, as `sat_gf_datum` and
+`sat_isc_state` are not. Every number below was re-read from the run directories by
+the manager unless marked.
+
+**G0 PASS.** Knob OFF, new exe, against the base runs: `products.txt` and
+`network_events.csv` sha256 equal on the triple field base (`6a3ef17f5f317738`,
+`827211d3375a3ac2`), the dual field base (`72b5324bf12761d6`, `e5281e88fb4674e4`) and the
+triple sim base (`0b2a04cc9183d993`, `f72aeffa973df800`).
+
+**G1: five of seven clauses pass** (`runs/_rap_b5_tri`).
+
+| clause | bar | before | with the knob | |
+| --- | --- | --- | --- | --- |
+| assertion rows on determined extra-band columns | 0 | 22 999 | 0 (22 999 column-epochs freed) | PASS |
+| level rows | one per channel | suppressed | sum-to-zero rows suppressed 2767 to 1327 | PASS |
+| null-space gate | as the base | | equal to the base in `network_estimability.csv`; the worker reports observed equal to declared on all 720 epochs, no withhold | PASS |
+| rms of B - W over the consumer's satellites | 0.30 m | 2.647 | 0.483 (G28 alone +1.277; 0.241 without it, the worker's figure) | FAIL |
+| consumer band-5 code residual p50 by half hour | 0.35 m | 0.78 to 1.16 | 0.10 0.08 0.12 0.10 0.13 0.26 0.13 0.10 | PASS |
+| consumer band-2 code residual p50 by half hour | 0.15 m | 0.20 to 0.38 | 0.12 0.11 0.14 0.12 0.14 0.19 0.22 0.19 | FAIL in three of eight |
+| network band-2 code post-fit, station-median per satellite, sd across satellites | 0.15 m | 0.740 | 0.119 (band 5: 0.791 to 0.123; band 1: 0.240 to 0.186) | PASS |
+
+The wire now carries 2.780 m of the 2.973 m per-satellite truth (0.430 m before).
+
+**B1 FAIL, B2 FAIL on the first hour alone, B3 FAIL narrowly, B4 not reached.**
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | 3D p50, half hours 1 to 3 (m) | median Up, half hours 1 to 3 (m) | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| `_rf0hv5_field6` (dual pair) | 0.43 0.07 0.06 0.08 0.08 0.07 | 603 | 1.27 0.18 0.07 | +1.07 +0.17 -0.01 | 0.0069 / 0.0128 |
+| `_rap_lF_tri` (triple, knob OFF) | 1.47 0.21 0.09 0.11 0.09 0.03 | 314 | 3.64 0.73 0.29 | +3.54 +0.67 +0.27 | 0.0073 / 0.0182 |
+| **`_rap_b5_tri`** (triple, knob ON) | **0.68 0.09 0.06 0.11 0.09 0.04** | **390** | 1.30 0.31 0.10 | +1.12 +0.30 +0.08 | 0.0072 / 0.0188 |
+| `_rap_tB_nocode5_net` (the emulation) | 0.27 0.10 0.05 0.04 0.06 0.02 | 535 | 0.58 0.16 0.13 | -0.17 +0.02 +0.01 | 0.0078 / 0.0153 |
+| `_rap_b5_dual_on_b5tri` (B3: a dual consumer on the knob's wire) | 0.61 0.11 0.08 0.09 0.13 0.06 | 349 | 1.26 0.24 0.11 | +1.08 +0.23 0.00 | |
+| `_rap_tR_dual_on_tri` (the same on the old wire) | 1.48 0.16 0.10 0.11 0.14 0.07 | 226 | 3.76 0.61 0.21 | +3.25 +0.60 +0.18 | |
+| `_rf0hv5_sim6` (sim dual pair) | 0.60 0.10 0.10 0.06 0.06 0.05 | 448 | | | |
+| `_rap_lS_tri` (sim triple, knob OFF) | 0.56 0.16 0.08 0.04 0.04 0.04 | 430 | | | |
+| **`_rap_b5_simtri`** (sim triple, knob ON) | **0.75 0.06 0.05 0.03 0.03 0.05** | **534** | | | |
+
+B1: the first hour is 0.25 m over the dual pair and the fourth 0.03 m over; 390 epochs
+against 570; the wire passes on the consumer's satellites (0.0072 m) and fails over all
+(0.0188 against 0.0140 m); against the emulation the first hour is 0.41 m worse. B2:
+hours 2 to 6 are all better than the sim dual pair and 534 epochs pass; the first hour
+is 0.75 against 0.60 m. B3: 0.61 and 0.11 m against 0.50 and 0.10 m. The 12 h arm was run
+as a diagnostic only (`runs/_rap_b5_tri12` against `runs/_rap_lD_dual12`): 0.68 0.09 0.06
+0.11 0.09 0.04 0.04 0.06 0.13 0.22 0.24 0.21 m and 648 epochs against 0.43 0.07 0.06 0.08
+0.08 0.07 0.08 0.06 0.06 0.14 0.19 0.17 m and 994; worst from hour 3 is 0.08 m over.
+
+**R3 and R5.** No extra-band column was undetermined on either bed (field 22 999 freed,
+0 carried, 0 held; sim 22 586, 0, 0), so the carry and hold paths are unit-tested and
+never exercised; the deferral is field-inert on this day by that count. The level
+re-referenced three times on the field and once on the sim, all at first
+appearances, marking no satellite. The consumer's band-5 code-bias discontinuity
+bumps go from 29 to 37 (the worker's count).
+
+**Reading.** The assertion is gone and the datum is right: the wire carries the
+per-satellite truth, the network no longer pushes it into band 2, and the consumer's
+band-5 code fits at a decimetre. On the triple posture the knob is a gain in the
+first three hours (0.68 0.09 0.06 against 1.47 0.21 0.09 m; 390 against 314 epochs) and
+on the sim from hour 2 (534 against 430 and against 448 of the dual pair). It does not
+reach the emulation, and the L5 adoption bars fail, so L5 stays out of the working
+bases and the knob is not recommended for arming; it is inert on a dual lineage
+(zero extra-band rows).
+
+**The emulation removed a second thing.** Without the band-5 code the wide-lane
+detector has no band-5 pair. `T0_mw_detect` / `mw_wl_slip`: 66 on the knob arm, 15 on
+the emulation, 15 on the dual pair; 55 of the 66 name an L5 signal, 47 of them
+refloat, 28 fall in the first hour and 18 at MAC100AUS. `T0_band_scope` is 705
+against 461 with 404 against 225 of action `all`, and `T4_attrib` 230 against 158. The
+gap between the knob arm and the emulation is therefore a lead on the band-5
+wide-lane pair's detections at ignition, which no arm of this card separates from
+the datum; whether they are slips is not read. Also open: G28's column sits 1.28 m
+from the raw combination although 37 of 37 stations determine it (the worker's
+census); a warm resume across a flip of the knob would carry the previous frame's
+code biases into the new frame with no gate (untested; every arm here is cold; a
+blocking deferral for a warm lineage, inert for the cold beds).
+
+**Standing of the knob.** Built, default OFF, byte-identical OFF, the mechanism
+verified; not armed; no ledger row yet (owed with the decision on the band-5
+detector lead). The card stays open for that decision.

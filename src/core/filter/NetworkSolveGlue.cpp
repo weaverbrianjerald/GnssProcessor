@@ -247,6 +247,9 @@ this_epoch_gf_pin_real.clear();
 ctx.carry.this_epoch_family_gf_pin_real.clear();
 this_epoch_cb_ifpin.clear();   // Card 2: this epoch's IF-pin pairs (persisted at harvest)
 this_epoch_cb_reseed.clear();  // Card 2: this epoch's re-seeds (merged into the pending disc set at the emit site — withheld epochs never reach it)
+// B5D: this epoch's HELD extra-band keys, on the same unconditional per-epoch clear —
+// a stale hold would withhold a bias the current epoch actually determined.
+ctx.carry.this_epoch_extra_band_held.clear();
 if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
     // Carrier frequency of a (sat,signal) from any present station's model.
     auto freqOf = [&](const std::string& sat, const std::string& sig) -> double {
@@ -333,6 +336,52 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         }
     }
 
+    // --- B5D: the EXTRA-BAND DETERMINATION ROSTER --------------------------------
+    // Which (satellite, extra signal) code-bias columns the data determine this epoch,
+    // for a given pin pair.  The test is per SATELLITE and per CELL, not per channel:
+    // with the pinned pair fixing that station's slant ionosphere and the satellite
+    // clock, one station carrying code on the pair's FIRST band, on its SECOND band and
+    // on the extra signal determines d_k up to the family constant its own receiver
+    // extra-band code bias absorbs.  The channel being dense network-wide does not: three
+    // stations each holding one of the three codes leave the ionosphere free at all three.
+    //
+    // Keyed on the pin pair's BAND DIGITS as well as the satellite and signal, because
+    // the builder's realized pair is not always (L1, L2) — clock_signal_basis_hold can
+    // hold or re-latch it — and a roster that answered for the wrong pair would free a
+    // column nothing determines.  Built here rather than in the row builder because only
+    // the driver sees the stations; empty unless the knob is armed, so the builder's
+    // lookups are never reached on an unarmed run.
+    std::set<std::string> extra_band_determined;
+    if (config_.getNetworkConfig().sat_gf_extra_band_free) {
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (!present[i] || !stations[i].sm) continue;
+            // sat -> the code signals THIS station holds for it (the sat-bias state map
+            // is code-only: NetworkBiasAdmission admits raw 'C' observables alone).
+            std::map<std::string, std::set<std::string>> by_sat;
+            for (const auto& kv : stations[i].sm->getSatBiasStates()) {
+                const auto parts = StateKeys::parseSatBiasKey(kv.first);
+                if (parts) by_sat[parts->satellite].insert(parts->signal);
+            }
+            for (const auto& [sat, sigs] : by_sat) {
+                std::set<char> bands;
+                for (const auto& s : sigs)
+                    if (s.size() >= 2) bands.insert(s[1]);
+                if (bands.size() < 3) continue;   // a pair plus an extra band, or nothing
+                for (const auto& sk : sigs) {
+                    if (sk.size() < 2) continue;
+                    for (const char b1 : bands) {
+                        if (b1 == sk[1]) continue;
+                        for (const char b2 : bands) {
+                            if (b2 == b1 || b2 == sk[1]) continue;
+                            extra_band_determined.insert(sat + "|" + sk + "|"
+                                                         + std::string{b1, b2});
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     const auto cbd = NetworkSbasis::buildCodeBiasDatumRows(
         est, registered_code_keys, freqOf,
         cb_time_linked, clock_signal_basis_hold, emit_clock_disc,
@@ -345,6 +394,8 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         config_.getNetworkConfig().sat_if_level_datum,
         config_.getNetworkConfig().sat_gf_datum_time_linked,
         config_.getNetworkConfig().sat_isc_state, isc_bridged,
+        // B5D: the extra-band columns the data determine, and the knob that frees them.
+        config_.getNetworkConfig().sat_gf_extra_band_free, extra_band_determined,
         gf_family_constellations,
         code_bias_prev_, code_bias_ifpin_pair_,
         code_bias_sat_seen_, code_bias_datum_resumed_,
@@ -392,6 +443,18 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
             ctx.counters.n_isc_observed += static_cast<std::size_t>(cbd.n_isc_observed);
             ctx.counters.n_isc_pinned   += static_cast<std::size_t>(cbd.n_isc_pinned);
+            // B5D: the three extra-band dispositions, and the sum-to-zero level
+            // re-references (invariant #7's decoupling edge) the freed channels now have.
+            ctx.counters.n_extra_band_free    += static_cast<std::size_t>(cbd.n_extra_band_free);
+            ctx.counters.n_extra_band_carried += static_cast<std::size_t>(cbd.n_extra_band_carried);
+            ctx.counters.n_extra_band_held    += static_cast<std::size_t>(cbd.n_extra_band_held);
+            ctx.counters.n_s2z_reseed_rows    += static_cast<std::size_t>(cbd.n_s2z_reseed_rows);
+            ctx.counters.n_s2z_reseed_sats    += static_cast<std::size_t>(cbd.n_s2z_reseed_sats);
+            // B5D: the HELD keys come back FROM the builder rather than being re-derived
+            // here (the RF-0f verdicts below are re-derived because they are a two-way
+            // test on one roster; a hold is a three-way branch over the roster AND the
+            // carry map, and a second derivation of it would drift).  Empty unless armed.
+            ctx.carry.this_epoch_extra_band_held = cbd.extra_band_held;
             // RF-0f: re-derive the per-key verdicts for the EMIT side, from the same two
             // inputs the row builder used — this epoch's realized IF pin pair (so a held
             // or re-selected pair is honoured) and the bridging roster.  Derived here

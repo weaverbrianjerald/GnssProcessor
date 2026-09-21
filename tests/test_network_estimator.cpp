@@ -4057,6 +4057,7 @@ struct CbDatumRowsHarness {
             NetworkSatGfDatum::NoneMode, kNoSatGfTargets,
             /*sat_if_level_datum=*/false, /*sat_gf_datum_time_linked=*/false,
             /*sat_isc_state=*/false, kNoIscBridged,
+            /*sat_gf_extra_band_free=*/false, kNoIscBridged,
             gf_family_constellations, code_bias_prev,
             code_bias_ifpin_pair, code_bias_sat_seen, code_bias_datum_resumed,
             held_clock_ref, this_epoch_if_pin_sel, this_epoch_if_pin_real,

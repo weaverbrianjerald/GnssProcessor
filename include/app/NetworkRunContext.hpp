@@ -835,6 +835,15 @@ namespace GnssProcessor {
         /// empty unless `network.sat_isc_state` is armed.
         std::set<std::string> this_epoch_isc_obs;
         std::set<std::string> this_epoch_isc_pinned;
+        /// B5D: THIS epoch's HELD extra-band code-bias columns, keyed `"sat|signal"` — a
+        /// column on a band outside the pin pair that no present station determined and
+        /// that had no previous solved value to carry, so a level row in the channel's own
+        /// frame holds it and its bias is WITHHELD from the wire (the RF-0f rule: a
+        /// consumer cannot tell a fabricated value from an estimate by value).  Filled by
+        /// the row builder through @c CodeBiasDatumRows, cleared each epoch by the solve
+        /// glue, read by the emit prep; empty unless `network.sat_gf_extra_band_free` is
+        /// armed.
+        std::set<std::string> this_epoch_extra_band_held;
         // FAMILY-GF: the RUN-LATCHED family census.
         // Odijk rd 3b re-derives PER RECEIVER CHANNEL FAMILY when the station population
         // partitions (the Galileo C/Q-vs-X tracking split), because the primary pin is
@@ -3204,6 +3213,18 @@ namespace GnssProcessor {
         // signals, vs pinned at 0 because none did.  The pinned ones are the part of a
         // C2X product that is asserted rather than estimated, and they are not emitted.
         size_t n_isc_observed = 0, n_isc_pinned = 0;
+        // B5D: the three dispositions of an EXTRA-BAND code-bias column under
+        // `network.sat_gf_extra_band_free` — FREED because some station's cell carried
+        // the pin pair's two bands and the signal, CARRIED at its own previous solved
+        // geometry-free combination because none did this epoch, or HELD by a level row
+        // in the channel's own frame at a first sighting with nothing to carry (and then
+        // withheld from the wire).  Standing invariant #4: 0 freed with the knob armed
+        // means the run exercised nothing.  `n_s2z_reseed_*` is invariant #7's DECOUPLING
+        // edge on the level the freed channels now stand on: the re-seeds of the
+        // veteran-linked sum-to-zero row, and the satellites they marked for the
+        // consumer's discontinuity channel.
+        size_t n_extra_band_free = 0, n_extra_band_carried = 0, n_extra_band_held = 0;
+        size_t n_s2z_reseed_rows = 0, n_s2z_reseed_sats = 0;
         // #station-epochs whose joint
         // coupling-row covariance was non-SPD after the ridge retry and fell back to the
         // Card-1 per-row scalar marginalization.  Warned once at run end.

@@ -95,10 +95,12 @@ record the program is re-founding **on**.
   correlation 0.947 field, 0.962 sim); the misfit is pushed into band 2 and the WIRE carries the
   damage; band-5 code removed at the stations alone: 0.27 0.10 0.05 0.04 0.06 0.02 m, 535 epochs
   below a decimetre (314 with it, 603 dual); no config-only cure; L5 adoption bars frozen.
-- [B5D](refound/B5D_band5_code_datum_2026-09-20.md): open, 2026-09-20: build card, the band-5
-  code datum; an extra-band code-bias column left free where the data determine it, each
-  signal family closed by its sum-to-zero row (`network.sat_gf_extra_band_free`, default OFF);
-  requirements, gates and bars frozen.
+- [B5D](refound/B5D_band5_code_datum_2026-09-20.md): open (built 2026-09-20, NOT armed), build
+  card, the band-5 code datum (`network.sat_gf_extra_band_free`, default OFF): the zero
+  inter-signal assertion is gone, the wire carries 2.78 of the 2.97 m truth, the band-2
+  contamination is cured; triple field 314 to 390 epochs below a decimetre, which fails the
+  L5 adoption bars (dual pair 603, emulation 535); the emulation had also removed the band-5
+  wide-lane detector pair, an unread lead.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

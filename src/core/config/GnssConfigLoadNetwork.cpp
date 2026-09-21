@@ -3138,6 +3138,14 @@ namespace GnssProcessor {
         // per-satellite difference rather than an asserted zero.
         network_config_.sat_isc_state =
             jval<bool>(json, "network.sat_isc_state", "sat_isc_state", false);
+        // B5D: leave an EXTRA-BAND column free where the data determine it, and let the
+        // channel's sum-to-zero row carry the level.  The band-5 half of the same
+        // principle RF-0f applied to the band-2 companion — there the correction is
+        // centimetres and estimable without ionosphere, here it is metres and estimable
+        // with the pinned pair's ionosphere and clock (card TBI section 5).
+        network_config_.sat_gf_extra_band_free =
+            jval<bool>(json, "network.sat_gf_extra_band_free",
+                       "sat_gf_extra_band_free", false);
 
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
@@ -3547,6 +3555,46 @@ namespace GnssProcessor {
                           "unobservable ISC: its companion is pinned at 0 as before, counted, "
                           "and its bias is NOT emitted — the wire carries isc=obs only on "
                           "records whose ISC the data actually determined.");
+            }
+        }
+
+        // --- B5D validation: the extra-band code datum ---------------------------
+        if (network_config_.sat_gf_extra_band_free) {
+            if (!sat_gf_on) {
+                log->warn("Network (B5D): network.sat_gf_extra_band_free is INERT without "
+                          "network.sat_gf_datum — it decides which EXTRA-BAND columns that "
+                          "datum does NOT pin, and without the datum nothing is pinned.");
+            } else {
+                log->info("Network producer (B5D): EXTRA-BAND satellite code-bias columns "
+                          "left FREE where the data determine them — the broadcast T_GD pin "
+                          "applies to the ionosphere-free pair only, and a signal on a THIRD "
+                          "band (GPS C5Q/C5X beside the C1/C2 pair) gets NO geometry-free "
+                          "row wherever some station carries code on both of the pair's "
+                          "bands and on that signal for that satellite.  With the slant "
+                          "ionosphere and the clock fixed by the pinned pair, d_k is then "
+                          "determined up to ONE constant per (constellation, signal) family "
+                          "— the constant the receiver's own extra-band code bias absorbs — "
+                          "and the channel's sum-to-zero row is that constant's datum, "
+                          "re-enabled automatically because a freed column is not in the "
+                          "pinned set.  RF-0d's row asserted an inter-signal correction of "
+                          "ZERO, which is centimetres between same-band channels and METRES "
+                          "across a band (card TBI: the Block III satellites sit 4 to 5 m "
+                          "above the Block IIF ones in the estimator-free triple-code "
+                          "combination).  A column the data do NOT determine this epoch is "
+                          "carried at its own previous solved geometry-free combination, "
+                          "or, at a first sighting with nothing to carry, HELD by a level "
+                          "row in the channel's own frame and WITHHELD from the wire — the "
+                          "absolute broadcast target is never folded into a family that now "
+                          "stands in the sum-to-zero frame.");
+                if (!network_config_.sat_gf_datum_time_linked)
+                    log->warn("Network (B5D): network.sat_gf_datum_time_linked is OFF.  The "
+                              "extra-band columns the data do not determine still CARRY "
+                              "their own previous solved combination (R3 forbids the "
+                              "absolute target in the sum-to-zero frame), so those rows are "
+                              "time-linked while every other geometry-free row on this "
+                              "posture re-asserts its absolute target each epoch.  That is "
+                              "the mixed-frame pull RF-0e measured; arm "
+                              "sat_gf_datum_time_linked with this knob.");
             }
         }
 

@@ -540,6 +540,8 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
     const std::map<std::string, double>& sat_gf_target_m,
     bool sat_if_level_datum, bool sat_gf_datum_time_linked,
     bool sat_isc_state, const std::set<std::string>& isc_bridged,
+    bool sat_gf_extra_band_free,
+    const std::set<std::string>& extra_band_determined,
     const std::set<std::string>& gf_family_constellations,
     const std::map<std::string, std::map<std::string, double>>& code_bias_prev_,
     const std::map<std::string, std::pair<std::string, std::string>>& code_bias_ifpin_pair_,
@@ -933,6 +935,88 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             }
                             ++out.n_isc_pinned;         // unobservable: pinned below, flagged
                         }
+                        // --- B5D: the EXTRA BAND is not a companion ------------------
+                        // RF-0f freed the band-2 companion because its difference to the
+                        // pinned signal is a pure inter-signal correction the data reach
+                        // without any ionosphere.  A THIRD BAND is a different quantity
+                        // and needs a different argument, which card TBI supplied: with
+                        // the slant ionosphere and the satellite clock already fixed by
+                        // the PINNED pair, a cell carrying code on both of the pair's
+                        // bands and on this signal determines d_k too — up to one
+                        // constant per (constellation, signal) family, and that constant
+                        // is exactly what the receiver's own extra-band code bias
+                        // absorbs.  The channel's sum-to-zero row is the constant's
+                        // datum, and it re-enables by itself below, because the
+                        // completeness test only suppresses a channel every one of whose
+                        // columns this loop PINNED.
+                        //
+                        // WHAT THE PIN COST, measured (TBI section 5).  The row asserts
+                        // an inter-signal correction of zero; between same-band channels
+                        // that is centimetres, across a band it is metres.  The
+                        // estimator-free triple-code combination on DOY-129 puts the six
+                        // Block III satellites 4 to 5 m above the eleven Block IIF ones;
+                        // the wire carried 0.43 m of that 2.97 m truth, the network
+                        // pushed the rest into band 2 (post-fit station-median sd across
+                        // satellites 0.740 m against 0.066 m on the dual run), and a DUAL
+                        // consumer replayed on the triple wire lagged by the same amount.
+                        //
+                        // WHERE THE DATA DO NOT REACH IT, the row must still not assert
+                        // the broadcast value.  Once the family stands in the sum-to-zero
+                        // frame, folding c*T_GD on one of its columns is the RF-0d defect
+                        // in reverse — an absolute target and a carried level pulling on
+                        // the same channel at the same gauge weight.  So: carry the
+                        // column's OWN previous geometry-free combination when there is
+                        // one, and at a first sighting HOLD it with a level row in the
+                        // channel's own frame (below) and keep it off the wire.  Both are
+                        // counted; standing invariant #3 wants the "inert" claim carrying
+                        // data, and this count is the data.
+                        bool extra_band_carry = false;
+                        bool extra_band_hold  = false;
+                        if (sat_gf_extra_band_free && sig1.size() >= 2 && sig2.size() >= 2
+                            && sk[1] != sig1[1] && sk[1] != sig2[1]) {
+                            // The roster is keyed on the pin pair the builder REALIZED,
+                            // not on an assumed (L1, L2): a held or re-selected pair
+                            // changes which two bands the determination needs.
+                            const std::string dkey = sat + "|" + sk + "|"
+                                                   + std::string{sig1[1], sig2[1]};
+                            if (extra_band_determined.count(dkey)) {
+                                ++out.n_extra_band_free;   // free: the data determine it
+                                continue;
+                            }
+                            double q1 = 0.0, qk = 0.0;
+                            if (prevCb(sat, sig1, q1) && prevCb(sat, sk, qk)) {
+                                extra_band_carry = true;   // its own previous combination
+                                ++out.n_extra_band_carried;
+                            } else {
+                                extra_band_hold = true;    // first sighting: hold + withhold
+                            }
+                        }
+                        if (extra_band_hold) {
+                            // A single +1 on the column, target 0: the channel's own
+                            // frame, in which the sum-to-zero row puts the family's level
+                            // near zero, so this asserts "this newborn sits at its
+                            // family's level" rather than "this newborn sits at the
+                            // broadcast T_GD".  Deliberately NOT recorded in
+                            // sat_gf_pinned: the channel's sum-to-zero row is what the
+                            // hold's zero is referred to, so suppressing it would leave
+                            // the hold pointing at nothing.  The value never reaches a
+                            // consumer (NetworkSolPrep withholds it) — a fabricated bias
+                            // is indistinguishable from an estimate by value alone, which
+                            // is the RF-0f rule.
+                            Eigen::VectorXd hrow = Eigen::VectorXd::Zero(nshared);
+                            bool h_ok = false;
+                            try {
+                                hrow(est.codeBiasColumn(sat, sk)) = 1.0;
+                                h_ok = true;
+                            } catch (...) { hrow.setZero(); h_ok = false; }
+                            if (h_ok) {
+                                rows.push_back(std::move(hrow));
+                                zs.push_back(0.0);
+                                ++out.n_extra_band_held;
+                                out.extra_band_held.insert(sat + "|" + sk);
+                            }
+                            continue;
+                        }
                         Eigen::VectorXd krow = Eigen::VectorXd::Zero(nshared);
                         bool k_ok = false;
                         try {
@@ -946,8 +1030,15 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                             // combination (d_k - d_ref)/(mu_k - 1).  Reusing the pair's
                             // carried value here would time-link the extra column to a
                             // combination it is not part of.
+                            // B5D: an undetermined extra-band column carries even when
+                            // the e2 time link is off — R3's "never an absolute
+                            // broadcast-frame value in a sum-to-zero family" is a
+                            // property of THIS knob, not of that one (the loader warns
+                            // about the mixed frame the combination leaves).  The guard
+                            // is only reached with both previous values in hand, so the
+                            // anchored fallback below is unreachable for it.
                             double k_target = target;
-                            if (sat_gf_datum_time_linked) {
+                            if (sat_gf_datum_time_linked || extra_band_carry) {
                                 double q1 = 0.0, qk = 0.0;
                                 if (prevCb(sat, sig1, q1) && prevCb(sat, sk, qk)) {
                                     k_target = (qk - q1) / (mu_k - 1.0);
@@ -1198,10 +1289,22 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
             const auto tl = NetworkSbasis::codeS2zTimeLink(present_sats, prev_vals);
             for (const auto& sat : tl.jac_sats) srow(col_of[sat]) += 1.0;
             zval = tl.rhs;
-            if (tl.reseed)
+            if (tl.reseed) {
+                // B5D / standing invariant #7: a re-seed IS the channel's level
+                // re-referencing, so it is an event at both edges.  The marks (the
+                // DECOUPLING edge) already existed and drive the emit-site disc bumps;
+                // what was missing is the COUNT, without which "the level never
+                // re-referenced" and "nothing was ever instrumented" read the same in a
+                // run summary.  Counted here rather than at the emit site because a
+                // withheld epoch never reaches that site and its re-seed is still a fact
+                // about the datum this run realized.
+                ++out.n_s2z_reseed_rows;
                 for (const auto& sat : present_sats)
-                    if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_)
+                    if (code_bias_sat_seen_.count(sat) || code_bias_datum_resumed_) {
                         this_epoch_cb_reseed.insert(sat);
+                        ++out.n_s2z_reseed_sats;
+                    }
+            }
         } else {
             for (const auto& [sat, col] : entries) srow(col) += 1.0;
         }

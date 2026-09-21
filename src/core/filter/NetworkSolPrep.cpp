@@ -181,12 +181,24 @@ NetworkSolPrepResult networkSolPrep(
     // consumer that — withholding is the only honest signal, and it is the one the card
     // asks for ("emitted only when its ISC is observed").  Both sets are empty unless
     // network.sat_isc_state is armed, so the record stream is byte-identical otherwise.
+    // --- B5D: the HELD extra-band column, off the wire ------------------------------
+    // Same rule, one band further out.  A column on a band outside the pin pair that no
+    // station determined this epoch and that had nothing to carry is held by a level row
+    // in its channel's own frame — a number chosen to keep the rank, not measured — so it
+    // is ERASED from the record for exactly the reason RF-0f erases an unobservable ISC:
+    // nothing about the value tells a consumer it is an assertion.  A FREED column is a
+    // genuine estimate and is emitted normally; a CARRIED one is the previous epoch's own
+    // estimate and is emitted normally too.  The set is empty unless
+    // network.sat_gf_extra_band_free is armed, so the record stream is byte-identical
+    // otherwise.
     if (!ctx.carry.this_epoch_isc_obs.empty()
-        || !ctx.carry.this_epoch_isc_pinned.empty()) {
+        || !ctx.carry.this_epoch_isc_pinned.empty()
+        || !ctx.carry.this_epoch_extra_band_held.empty()) {
         for (auto& s : sol.sats) {
             for (auto it = s.code_bias_m.begin(); it != s.code_bias_m.end(); ) {
                 const std::string key = s.sat + "|" + it->first;
-                if (ctx.carry.this_epoch_isc_pinned.count(key)) {
+                if (ctx.carry.this_epoch_isc_pinned.count(key)
+                    || ctx.carry.this_epoch_extra_band_held.count(key)) {
                     it = s.code_bias_m.erase(it);
                 } else {
                     if (ctx.carry.this_epoch_isc_obs.count(key))

@@ -1597,6 +1597,14 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      : nc.sat_gf_datum == NetworkSatGfDatum::BroadcastTgd
                                          ? "broadcast_tgd" : "none")
                        : std::string())
+               // B5D: WHICH extra-band code columns the product asserted and which it
+               // estimated is part of the frame the two fields above declare — a freed
+               // band-5 column stands in its channel's sum-to-zero frame while a pinned
+               // one stands in the broadcast one, and the B records look identical.
+               // Emitted ONLY when armed (the sat_gf_datum precedent above), so an
+               // unarmed run's manifest bytes are unchanged.
+               << (nc.sat_gf_extra_band_free
+                       ? std::string("\"sat_gf_extra_band_free\":true,") : std::string())
                // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §3.5 / §7.1): the
                // AMBIGUITY VEHICLE is the product's provenance, so the manifest records
                // it — and §3.5's whole reason for the q knob existing is that its 0.0
