@@ -101,6 +101,14 @@ record the program is re-founding **on**.
   contamination is cured; triple field 314 to 390 epochs below a decimetre, which fails the
   L5 adoption bars (dual pair 603, emulation 535); the emulation had also removed the band-5
   wide-lane detector pair, an unread lead.
+- [L5P](refound/L5P_l5_phase_posture_2026-09-21.md): open, 2026-09-21: build card, the L5 phase
+  posture; two default-OFF knobs (`network.cycle_slip.mw_detect_pairs`,
+  `network.extra_band_code_sigma_scale`) separate the band-5 wide-lane detector pairs from the
+  band-5 code rows (the gap 390 to 535 epochs below a decimetre); gates, attribution and the
+  unchanged L5 adoption bars frozen.
+- [MSC](refound/MSC_multi_site_consumer_2026-09-21.md): open, 2026-09-21: the multi-site consumer
+  census; independent consumers replayed at 16 sites outside the roster on the recorded wires
+  of 2026-09-20 (12 s per replay); site rule, statistics and reading frozen.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

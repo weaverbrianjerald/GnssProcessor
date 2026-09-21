@@ -174,3 +174,31 @@ Open with the arming: the latch effect is a station subset whose cause is not re
 posture under the priority latch is slow (1.47 m); hours 10 to 12 are soft on every
 12 h arm. The promotion-ledger rows of the two knobs, and the KEEP_OFF row of
 `network.canonical_pair_admission`, are being written in step.
+
+## 6. 2026-09-21: CSL-2 pre-registration: the four-station split (a per-station scope of the rule)
+
+Section 4 left the consumer's gain complete with four of the six stations that move
+to L1W (KOKV00USA, STHL00GBR, ULAB00MNG, WIND00NAM; `lE_cov085`, 610 epochs below a
+decimetre against 162 on the count latch), with equal first-epoch margins at three of
+them, so a coverage floor cannot split further.
+
+**Build.** `processing.canonical_signal_priority_stations` (array of station names,
+default empty). Empty: the rule of `processing.canonical_signal_rule` applies to every
+station, as today. Non-empty: `priority` applies at the listed stations only and
+`count` at the others. Byte-identical when empty; the consumer stays on `count`.
+
+**G1.** The four stations listed, rule `priority`, floor 0.5: the latch equals
+`lE_cov085`'s at every station and the wire is byte-identical to it.
+
+**Arms (dual field base, 6 h):** each of the four alone (4 arms) and each leave-one-out
+of the four (4 arms). Controls on disk: `gD_dual` (none, 162), `lE_cov085` (the four,
+610), `lD_dual` (all six, 603).
+
+**Reading (frozen).** The gain is 162 to 610 epochs. A station CARRIES it if it alone
+reaches 311 or more, or if leaving it out of the four falls below 461. One carrier: a
+station-local cause, read next at that station (its band-1 phase, the two signals'
+arcs, its share of the L1W phase-bias columns). Several partial carriers: a support
+effect after all, and the count of L1W stations per satellite column is read against
+the consumer's satellites. Every arm is also replayed at the sites of card MSC when
+that list exists, because a split graded by one consumer at one site is what this
+section is trying to get beyond.
