@@ -76,6 +76,13 @@ inline constexpr std::string_view kDcbInfix = "DCB";
 /// disjoint from the receiver code-bias namespace (Card 3, §4c).
 inline constexpr std::string_view kRpbInfix = "RPB";
 
+/// Receiver INTER-SIGNAL code-bias infix ("GPS_ISC_C1W", card SCC, §4d).
+/// Same disjointness argument as @c kRpbInfix: the surrounding underscores make
+/// "_ISC_" un-producible by @c makeIfbKey / @c makeDcbKey, and the infix itself
+/// shares no substring with "IFB" or "DCB", so the three receiver code-bias
+/// namespaces never collide.
+inline constexpr std::string_view kIscInfix = "ISC";
+
 /// Narrow-lane infix in NlWl-basis ambiguity keys ("G01_NL_1").
 inline constexpr std::string_view kNlInfix = "NL";
 
@@ -578,6 +585,92 @@ parseReceiverPhaseBiasKey(std::string_view key) {
     if (pos == std::string_view::npos) return std::nullopt;
     if (pos == 0 || pos + needle.size() >= key.size()) return std::nullopt;
     return ReceiverPhaseBiasKeyParts{
+        std::string(key.substr(0, pos)),
+        std::string(key.substr(pos + needle.size())),
+    };
+}
+
+// ===========================================================================
+// 4d. Receiver INTER-SIGNAL code-bias keys — "<system>_ISC_<signal>"
+// ---------------------------------------------------------------------------
+// Examples: "GPS_ISC_C1W", "GPS_ISC_C1X"
+//
+//   system : system name string from PppUtils::getSystemString()
+//            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
+//   signal : full RINEX CODE signal code (3 chars).
+//
+// Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R2).  With
+// `network.second_code_channel` a station contributes every allow-listed band-1
+// code it tracks, not only its latched canonical one.  The receiver group delay
+// of the second code differs from the canonical one by an inter-signal
+// correction, and the per-band receiver key (§4, "<sys>_DCB" for a pin band)
+// cannot express it: C1C and C1W both resolve to "GPS_DCB" with the SAME
+// coefficient, so a second band-1 code would ASSERT a zero receiver inter-signal
+// bias and push the difference into the satellite column.  (Card B5D is the
+// record of what an asserted zero inter-signal bias costs on a third band.)
+//
+// So the non-canonical code gets its own per-(receiver, system, signal) state
+// with UNIT coefficient — an absolute receiver delay in the frame the clock and
+// ionosphere datum leave free, rather than the ionosphere-referenced difference
+// the DCB state carries.  The one null direction that creates (every receiver
+// inter-signal bias against every satellite one) is closed by the satellite
+// family's own time-linked sum-to-zero row, which is why card SCC changes no
+// datum row (R3).
+//
+// NAMESPACE.  The key must match NEITHER parseIfbKey NOR parseDcbKey NOR
+// isGlonassPerSlotIfbKey: Application::networkSplitStation_ DROPS every receiver
+// column whose key contains "_IFB", and the receiver code-bias zero-mean datum
+// prior is gated on parseDcbKey and must not act on this state (it carries no
+// zero-mean prior — R2).  "ISC" shares no substring with either infix, so all
+// three reject by construction; the property is pinned by the negative parser
+// tests in tests/test_network_second_code_scope.cpp.
+//
+// Constructed in:  StateInitializer (resolveReceiverBias, SCC branch)
+// Stored in:       StateManager::code_bias_indices_ (beside the IFB/DCB states,
+//                  so the receiver code-bias CARRY restores it — R2)
+// Parsed in:       Application::networkSplitStation_ (the R5 sigma scale),
+//                  the network teardown (the R7 state census)
+// ===========================================================================
+
+/// Decomposed receiver inter-signal code-bias key ("<system>_ISC_<signal>").
+struct ReceiverIscKeyParts {
+    std::string system;  ///< system name string (e.g. "GPS", "Galileo").
+    std::string signal;  ///< full RINEX code signal (e.g. "C1W").
+};
+
+/// Build a receiver inter-signal code-bias key "<system>_ISC_<signal>".
+inline std::string makeReceiverIscKey(std::string_view system,
+                                      std::string_view signal) {
+    std::string out;
+    out.reserve(system.size() + 2 + kIscInfix.size() + signal.size());
+    out.append(system);
+    out.push_back(kCodeBiasDelimiter);   // '_'
+    out.append(kIscInfix);
+    out.push_back(kCodeBiasDelimiter);   // '_'
+    out.append(signal);
+    return out;
+}
+
+/// True iff @p key carries the "_ISC_" infix with a non-empty system and signal
+/// on either side (cheap namespace test, the @c isReceiverPhaseBiasKey twin).
+inline bool isReceiverIscKey(std::string_view key) {
+    const std::string_view needle = "_ISC_";
+    const auto pos = key.find(needle);
+    return pos != std::string_view::npos
+        && pos > 0
+        && pos + needle.size() < key.size();
+}
+
+/// Parse a receiver inter-signal code-bias key.  Returns @c std::nullopt unless
+/// the key has the exact form "<system>_ISC_<signal>" with non-empty system and
+/// signal.  Inverse of @c makeReceiverIscKey.
+inline std::optional<ReceiverIscKeyParts>
+parseReceiverIscKey(std::string_view key) {
+    const std::string_view needle = "_ISC_";
+    const auto pos = key.find(needle);
+    if (pos == std::string_view::npos) return std::nullopt;
+    if (pos == 0 || pos + needle.size() >= key.size()) return std::nullopt;
+    return ReceiverIscKeyParts{
         std::string(key.substr(0, pos)),
         std::string(key.substr(pos + needle.size())),
     };

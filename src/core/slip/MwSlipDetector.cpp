@@ -875,7 +875,18 @@ namespace GnssProcessor {
         //      L5 under signal_mode=dual).
         // This mirrors the same preference logic the KF uses to populate
         // obs.observed in @c PppModel::buildFrequencyBandMap.
+        // Card SCC (R4): a COMPANION code row is not KF-chosen for this detector's
+        // purposes.  With `network.second_code_channel` the KF estimates a second
+        // band-1 code, so an unguarded `obs.observed` test would promote C1W over C1C
+        // at every station that reports both — silently moving the detector's code for
+        // the band, and with it every MW arc, every threshold and every slip event the
+        // run reports.  The card's rule is that the detector is UNCHANGED, so a
+        // companion reads exactly as it did before the knob: absent from obs.observed.
+        // `companion_codes` is empty on every unarmed posture, so this costs one
+        // lookup on an empty set and the verdict is byte-identical.  A FALLBACK code is
+        // deliberately not in that set and stays eligible exactly as today.
         auto isKfChosen = [&obs](const std::string& key) {
+            if (obs.companion_codes.count(key)) return false;
             return obs.observed.find(key) != obs.observed.end();
         };
         auto priorityOf = [&obs](const std::string& key) -> int {
@@ -901,6 +912,14 @@ namespace GnssProcessor {
             const char prefix = key[0];
             if (prefix != 'C' && prefix != 'L') continue;
             if (key.find('_') != std::string::npos) continue;
+            // Card SCC (R4), the other half of the guard.  When `source` is
+            // obs.observed (mw_frequency_mode Mirror) a companion key would ENTER the
+            // bucket that never held it before the knob; skip it, so Mirror sees the
+            // exact key set it saw unarmed.  When `source` is obs.raw_observed the key
+            // was always there — dropping it would CHANGE the unarmed behaviour — so
+            // it stays, and the isKfChosen guard above is what keeps it from winning
+            // the band.  Empty set OFF ⇒ byte-identical on both paths.
+            if (!use_raw && obs.companion_codes.count(key)) continue;
             const char band = key[1];
             if (band < '1' || band > '9') continue;
             // Band-scope filter (empty set = "no filter").

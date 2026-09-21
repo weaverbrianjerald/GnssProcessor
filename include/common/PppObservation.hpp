@@ -21,6 +21,7 @@
 #include "math/TimeUtils.hpp"
 #include <Eigen/Dense>
 #include <map>
+#include <set>
 #include <string>
 
 namespace GnssProcessor {
@@ -60,6 +61,28 @@ namespace GnssProcessor {
         double mf_d;                                 /**< Narrow-lane / difference combination frequency value (Hz) or coefficient */
         bool broadcast_only = false;                 /**< True when the range model is broadcast-grade (metre level): phase observables have been dropped and only code is used for this satellite. */
         double eph_toe_age_s = 0.0;                   /**< Signed age (s, obs epoch − ephemeris toe) of the broadcast ephemeris used for this satellite; |value| is the extrapolation magnitude. Real-time BSSD pivot selection avoids seating a much-staler-than-peers satellite as the pivot. 0 when no live ephemeris (post-processing / SP3). */
+        /**
+         * @brief Card SCC (R1): the band-1 CODE keys this observation carries as
+         *        COMPANIONS of the station's latched canonical code.
+         *
+         * EMPTY unless `network.second_code_channel` is armed on the network path, so
+         * every other posture allocates nothing and behaves exactly as before.  The
+         * keys are also in @ref observed / @ref modeled / @ref variances (the
+         * measurement model needs all three to accept a row); this set is what makes a
+         * companion row DISTINGUISHABLE from the canonical one it accompanies, which
+         * two consumers need:
+         *
+         *  - the Melbourne-Wubbena detector (R4) must keep choosing the band's code
+         *    exactly as it did before the knob — a companion is not KF-chosen for its
+         *    purposes, or an armed run would silently move the detector's code from
+         *    C1C to C1W at 22 stations and move every slip event with it;
+         *  - the run-end telemetry (R7) counts companion CELLS and their two edges,
+         *    which it cannot do from the row set alone (a fallback code is also a
+         *    non-canonical code and is deliberately NOT in here).
+         *
+         * @ref raw_observed is unrelated and still holds every raw signal.
+         */
+        std::set<std::string> companion_codes;
     };
 
 } // namespace GnssProcessor

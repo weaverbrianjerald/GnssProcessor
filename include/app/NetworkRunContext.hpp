@@ -3342,6 +3342,31 @@ namespace GnssProcessor {
         /// from the per-station NetStation counters at teardown, as the gross-LOS
         /// row counter is.
         long long n_eb_rows_deweighted = 0, n_eb_rows_no_pin = 0;
+        /// Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R7) — the
+        /// second code channel's run-end telemetry, BOTH edges of standing invariant
+        /// #7 included.  Everything except @c rows / @c fallback_rows is reduced in the
+        /// SERIAL post-PASS-A sweep; those two are summed from the per-station
+        /// NetStation counters at teardown, as the L5P row counter is.
+        ///
+        /// Standing invariant #4: @c rows == 0 with the knob armed means the run
+        /// exercised NOTHING — no station reported a second allow-listed band-1 code —
+        /// and the teardown warns rather than reporting a clean run.
+        struct SecondCode {
+            long long cells = 0;          ///< COMPANION (station, satellite, signal) cells open, summed over epochs.
+            long long cell_open = 0;      ///< Cell openings (the re-coupling edge): a cell that was not open last epoch.
+            long long cell_close = 0;     ///< Cell closings (the decoupling edge): a cell that was open last epoch and is gone.
+            long long rows = 0;           ///< COMPANION code rows folded into the solve, over the run.
+            long long fallback_rows = 0;  ///< Rows routed through the inter-signal state that were NOT companions (R2's fallback case).
+            long long isc_states_max = 0; ///< Receiver inter-signal states alive network-wide, MAXIMUM over epochs.
+            long long isc_reseeds = 0;    ///< States created at a station that had held that state before and was not restored by the receiver code-bias carry.
+            /// (satellite, signal) columns that reached the >= 2-station registration
+            /// bar ONLY through companions — i.e. would have had fewer than two
+            /// supporting stations without this card.  Per epoch, summed.  This is the
+            /// card's THESIS as a number: zero of these means the second code channel
+            /// added rows without ever adding a column the wire did not already carry.
+            long long cols_via_companion = 0;
+        };
+        SecondCode second_code;
         /// COMMON-BAND SCOPE CENSUS (network.cycle_slip.common_band_scope,
         /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and,
         /// like the MW admission census above, collected KNOB-INDEPENDENTLY —

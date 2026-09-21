@@ -230,6 +230,43 @@ struct NetStation {
     /// Those rows keep their unscaled weight; a nonzero count means the knob is
     /// partly inert and the run-end line says so (standing invariant #4).
     long long eb_rows_no_pin{ 0 };
+
+    // --- card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md) ----------
+    /// THIS epoch's COMPANION cells at this station, as "<satellite>|<signal>" keys
+    /// (@c StateKeys::makeSatBiasKey's shape).  Republished SERIALLY from the PASS-A
+    /// observations, before the parallel PASS-B produce reads it (station-local ⇒
+    /// thread-safe), which is what lets @ref Application::networkSplitStation_ tell a
+    /// COMPANION row from a FALLBACK row: both route through the receiver inter-signal
+    /// state, and only the companion arrived beside its canonical code.  EMPTY on
+    /// every unarmed posture, so the split never reads it and the assembly is
+    /// byte-identical.
+    std::set<std::string> scc_cells;
+    /// Card SCC (R7, standing invariant #7): the PREVIOUS epoch's @ref scc_cells, so
+    /// the serial sweep can diff the two and emit the opening and closing edges.  Not
+    /// cleared between epochs — a station absent this epoch keeps its set, and its
+    /// cells close when it returns without them.
+    std::set<std::string> scc_cells_prev;
+    /// Card SCC (R7): receiver inter-signal state keys this station held at the END of
+    /// the previous epoch.  A key that is absent here and present now, at a station
+    /// that has held it before, is a RESEED — the state cold-started rather than being
+    /// restored by the receiver code-bias carry, which is the one way this card can
+    /// silently determine a receiver bias from a single epoch of code.
+    std::set<std::string> scc_isc_prev;
+    /// Card SCC (R7): receiver inter-signal state keys this station has EVER held.
+    /// The reseed test needs "had one before", not "had one last epoch" — a state that
+    /// legitimately disappears for an hour and returns is still a reseed.
+    std::set<std::string> scc_isc_seen;
+    /// Card SCC (R7): COMPANION code rows this station folded over the run.
+    /// Accumulated inside the PARALLEL produce phase, so it lives per-station and is
+    /// summed into the run-end report at teardown (the @c eb_rows_deweighted
+    /// precedent).
+    long long scc_rows{ 0 };
+    /// Card SCC (R7): code rows this station routed through the receiver inter-signal
+    /// state that were NOT companions, i.e. a band-1 code that arrived without its
+    /// latched canonical beside it (the FALLBACK case R2 covers).  On a lineage whose
+    /// canonical latch is decided this reads 0; a nonzero count means some station's
+    /// canonical code is regularly missing, which is a finding about the latch.
+    long long scc_fallback_rows{ 0 };
 };
 
 /// One SD extra-wide-lane INTEGER decision for a (station, constellation, satellite),

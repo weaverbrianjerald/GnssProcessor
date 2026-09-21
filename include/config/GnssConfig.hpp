@@ -3998,6 +3998,52 @@ namespace GnssProcessor {
             return network_config_.extra_band_code_sigma_scale;
         }
 
+        /**
+         * @brief Card SCC — is the SECOND CODE CHANNEL armed?
+         *
+         * `network.second_code_channel`.  When true a network station contributes,
+         * as code-only rows, every allow-listed band-1 code it reports besides the
+         * one its canonical latch selected, each modelled with its own receiver
+         * inter-signal-bias state (@c StateKeys::makeReceiverIscKey).  Default OFF
+         * and byte-identical; the loader refuses it with `processing.channel_mode:
+         * all` and without @ref networkCarryRxCodeBias.
+         *
+         * @return True when the second code channel is armed.
+         */
+        bool networkSecondCodeChannel() const {
+            return network_config_.second_code_channel;
+        }
+
+        /**
+         * @brief Card SCC — the band-1 code signals a station may contribute.
+         *
+         * `network.second_code_signals`, validated at load: every entry is a
+         * 3-character code type on band 1.  Read by
+         * @c PppModel::selectUncombinedSignals (which codes to add) and by
+         * @c StateInitializer::resolveReceiverBias (which codes route through the
+         * inter-signal state).  Meaningless unless @ref networkSecondCodeChannel.
+         *
+         * @return The allow-list, in configured order.
+         */
+        const std::vector<std::string>& networkSecondCodeSignals() const {
+            return network_config_.second_code_signals;
+        }
+
+        /**
+         * @brief Card SCC (R5) — sigma multiplier for the second code's rows.
+         *
+         * Applied in @c Application::networkSplitStation_ to every code row whose
+         * receiver bias is the inter-signal state, i.e. the companion rows and any
+         * fallback code.  1.0 is the default and is never applied (byte-identical);
+         * the loader refuses a value below 1.  The closed-loop consumer is pinned to
+         * 1 with the knob itself.
+         *
+         * @return The multiplier; 1.0 (no scaling) by default.
+         */
+        double networkSecondCodeSigmaScale() const {
+            return network_config_.second_code_sigma_scale;
+        }
+
         /// @brief SPEC_slip_relevel_walk §6 — latch a detector-marked arc's free
         ///        epoch where the leveling-carry inject can still see it (the
         ///        pending-reseed mark is consumed by the PASS-B measurement

@@ -12,6 +12,7 @@ in parallel, and prints one scorecard.
          [--drop-station NAME ...] [--rinex "OP;key=val;..." ...]
   run    --tags a b c [--jobs 4] [--exe <gnss_processor exe>]      (Release exe only)
   score  <tag or run_dir> ... [--pf]
+  draws  --op "OP;..." [--op ...] --ids G01,G02,...                (the constants a bias op draws)
   selftest
 
 RINEX ops (GPS by default, `sys=` to change).  Common selectors:
@@ -52,8 +53,21 @@ Ops:
                                       where=causal;keep=N deletes a partial epoch that comes
                                       before the satellite's first good epoch or more than N
                                       epochs after its last good one (a rule a filter can run)
+  clone;from=C1C;to=C1W;noise=0.3;seed=7
+                                      ADD an observation type `to` as a copy of `from` plus
+                                      white noise N(0, noise) metres drawn per (seed, station,
+                                      satellite, epoch).  The type is appended to the header
+                                      (count and continuation lines rebuilt), a blank source
+                                      field stays blank, and the LLI / signal-strength digits
+                                      are copied.  The new column is visible to every LATER op,
+                                      so `clone` followed by `bias;types=<to>` gives the second
+                                      signal known receiver and satellite inter-signal biases —
+                                      which is how a sim bed whose files carry ONE band-1 code
+                                      gets a second one (card SCC, R9).  Put the clone FIRST.
 An op on a phase type is given in metres and applied in cycles.  Every draw is keyed
 on (seed, station, satellite), so the same spec gives the same file in every arm.
+`draws` prints those constants without writing a file, so an injected truth can be
+compared against what a wire carries.
 """
 import argparse
 import concurrent.futures as cf
@@ -89,7 +103,8 @@ def parse_op(text):
     for kv in parts[1:]:
         k, v = kv.split("=", 1)
         op[k.strip()] = v.strip()
-    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip", "primaryonly"), op
+    assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip",
+                        "primaryonly", "clone"), op
     assert op["op"] == "strip" or not (set(op) & {"tow_from", "tow_to"}), \
         "tow_from / tow_to are selectors of the strip op only: " + text
     return op
@@ -258,28 +273,44 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
         if op["op"] == "holes":
             lines, n = apply_holes(lines, i, codes, system, op)
             n_holes += n
-    new_codes, drop = list(codes), set()
+    # A CLONE appends a new observation type, so every later step works against the
+    # WIDENED type list: a `bias;types=C1W` that follows a `clone;to=C1W` has to find
+    # the column the clone created, which is why the clone is parsed first and why
+    # match_types reads `work` below.  With no clone op `work` IS `codes`, so every
+    # index, the header block and every record line are byte-for-byte what they were.
+    clones = []
+    for op in ops:
+        if op["op"] != "clone":
+            continue
+        src_code, dst_code = op["from"], op["to"]
+        assert src_code in codes, (src, "clone source type not in the file", src_code)
+        assert dst_code not in codes, (src, "clone target type already exists", dst_code)
+        assert dst_code not in [c["to"] for c in clones], (src, "cloned twice", dst_code)
+        clones.append({"to": dst_code, "src": codes.index(src_code),
+                       "noise": float(op.get("noise", 0.0)), "seed": op.get("seed", "1")})
+    work = codes + [c["to"] for c in clones]
+    new_codes, drop = list(work), set()
     for op in ops:
         # A WINDOWED strip never touches the header: the types exist outside the window.
         if op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None:
-            drop |= set(match_types(codes, op["types"]))
+            drop |= set(match_types(work, op["types"]))
         if op["op"] == "primaryonly":
             prio = op.get("_prio") or []
             for b in op.get("bands", "12"):
-                cand = [t for t in prio if t[0] == "L" and t[1] == b and t in codes] or \
-                    sorted(t for t in codes if t[0] == "L" and t[1] == b)
+                cand = [t for t in prio if t[0] == "L" and t[1] == b and t in work] or \
+                    sorted(t for t in work if t[0] == "L" and t[1] == b)
                 if cand:
-                    drop |= {k for k, c in enumerate(codes) if c[1] == b and c[2] != cand[0][2]}
+                    drop |= {k for k, c in enumerate(work) if c[1] == b and c[2] != cand[0][2]}
         if op["op"] == "relabel":
-            for k in match_types(codes, op["from"]):
-                new_codes[k] = "".join(t if t != "?" else c for t, c in zip(op["to"], codes[k]))
-    keep = [k for k in range(len(codes)) if k not in drop]
+            for k in match_types(work, op["from"]):
+                new_codes[k] = "".join(t if t != "?" else c for t, c in zip(op["to"], work[k]))
+    keep = [k for k in range(len(work)) if k not in drop]
     out = lines[:blk[0]] + type_block(system, [new_codes[k] for k in keep]) + lines[blk[1]:i]
     width = 3 + 16 * len(codes)
-    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly")
+    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone")
                and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None)]
     for op in rec_ops:
-        op["_idx"] = match_types(codes, op["types"])
+        op["_idx"] = match_types(work, op["types"])
         op["_win"] = op_window(op)
     state, sod, tow = {}, 0.0, None
     while i < len(lines):
@@ -303,6 +334,21 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
             sat = norm_sat(ln[:3])
             p = ln.ljust(width)
             fld = [p[3 + 16 * k: 19 + 16 * k] for k in range(len(codes))]
+            # The cloned columns, formed from the RAW source field before any record
+            # op touches it, so `clone` then `bias;types=<to>` injects the bias once
+            # and the source column keeps its own value.  A blank source stays blank
+            # (the clone inherits the tracking gaps of the signal it copies), and the
+            # LLI / signal-strength digits are carried over verbatim.
+            for c in clones:
+                f = fld[c["src"]]
+                if not f[:14].strip():
+                    fld.append(" " * 16)
+                    continue
+                d = 0.0
+                if c["noise"] > 0.0:
+                    d = draw(c["seed"], "clone", c["to"], station, sat,
+                             "%.3f" % sod).gauss(0.0, c["noise"])
+                fld.append(f"{float(f[:14]) + d:14.3f}" + f[14:16])
             for n_op, op in enumerate(rec_ops):
                 if not sat_selected(sat, op["sats"]):
                     continue
@@ -310,7 +356,7 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                 if w is not None and not (w[0] <= tow <= w[1]):
                     continue
                 if op["op"] == "dropslip":
-                    dropslip(op, n_op, station, sat, codes, fld, sod, state, system)
+                    dropslip(op, n_op, station, sat, work, fld, sod, state, system)
                     continue
                 for k in op["_idx"]:
                     if not fld[k][:14].strip():
@@ -318,9 +364,9 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                     if op["op"] == "strip":
                         fld[k] = " " * 16
                         continue
-                    d = delta_m(op, n_op, station, sat, codes[k], sod, state)
-                    if codes[k][0] == "L":
-                        d *= FREQ[system][codes[k][1]] / C
+                    d = delta_m(op, n_op, station, sat, work[k], sod, state)
+                    if work[k][0] == "L":
+                        d *= FREQ[system][work[k][1]] / C
                     fld[k] = f"{float(fld[k][:14]) + d:14.3f}" + fld[k][14:16]
             ln = (p[:3] + "".join(fld[k] for k in keep)).rstrip()
         out.append(ln)
@@ -522,6 +568,37 @@ def cmd_score(a):
         print("  ".join(str(r.get(c, "")).ljust(w[c]) for c in cols))
 
 
+# ----------------------------------------------------------------------------- draws
+def cmd_draws(a):
+    """Print the constants the `bias` ops of a spec list draw, without writing a file.
+
+    The draw key of a bias includes the op's INDEX in the per-file record-op list, so
+    a spec cannot be graded in isolation: the same `bias;per=sat;seed=12` draws
+    different numbers depending on what precedes it.  The whole list is therefore
+    given here exactly as `make --rinex` takes it, in the same order, and the indices
+    are rebuilt the way rewrite_rinex builds them (a clone, a relabel, a holes, a
+    primaryonly and a whole-file strip are structural and take no index).
+    """
+    ops = [parse_op(t) for t in a.op]
+    rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone")
+               and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None)]
+    ids = [x.strip() for x in a.ids.split(",") if x.strip()]
+    n_printed = 0
+    for n_op, op in enumerate(rec_ops):
+        if op["op"] != "bias":
+            continue
+        per, seed = op.get("per", "station"), op.get("seed", "1")
+        sigma = float(op.get("sigma", 1.0))
+        print(f"# op[{n_op}] bias;types={op.get('types', '')};per={per};sigma={sigma};seed={seed}"
+              f"  (metres, key = {per})")
+        for x in ids:
+            key = x if per == "station" else norm_sat(x)
+            print(f"{x} {draw(seed, n_op, 'bias', key).gauss(0.0, sigma):+.6f}")
+        n_printed += 1
+    if not n_printed:
+        print("# no bias op in the spec list: nothing is drawn")
+
+
 # ----------------------------------------------------------------------------- selftest
 def cmd_selftest(_):
     hdr = ["     3.04           OBSERVATION DATA    M (MIXED)           RINEX VERSION / TYPE",
@@ -674,6 +751,62 @@ def cmd_selftest(_):
         "another satellite untouched inside the window")
     rewrite_rinex(src, d + "/w3.rnx", [parse_op("strip;types=?5?")], "AAAA")
     chk(open(d + "/w3.rnx").read() == open(d + "/b.rnx").read(), "no window: byte-for-byte the old path")
+    # 12: card SCC — `clone` adds an observation type as a noisy copy, the header count
+    #     and its continuation lines are rebuilt, a blank source stays blank, the
+    #     LLI / signal-strength digits are copied, and a LATER op sees the new column.
+    rewrite_rinex(src, d + "/x.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0.3;seed=7")], "AAAA")
+    x = open(d + "/x.rnx").read().split("\n")
+    chk(x[1].startswith("G    7 C1C C2W C5Q L1C L2W L5Q C1W"), f"clone header {x[1]!r}")
+    chk(x[2] == hdr[2], "the cloned system's block did not displace another system's")
+    g3 = x[5].ljust(3 + 16 * 7)
+    chk(len(x[5].rstrip()) == 3 + 16 * 7, f"clone appends one 16-char field {len(x[5].rstrip())}")
+    off, dv = 3 + 16 * 6, float(g3[3 + 16 * 6:3 + 16 * 6 + 14]) - 2.0e7
+    chk(abs(dv) > 1e-4 and abs(dv) < 3.0, f"clone value is the source plus noise {dv}")
+    chk(g3[off + 14:off + 16] == " 7", "clone copies the LLI / signal-strength digits")
+    chk(x[5][3:3 + 16] == body[1][3:3 + 16], "the clone SOURCE column is untouched")
+    # deterministic, and keyed on the epoch (so the noise is white, not a constant)
+    rewrite_rinex(src, d + "/x2.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0.3;seed=7")], "AAAA")
+    chk(open(d + "/x2.rnx").read() == open(d + "/x.rnx").read(), "clone deterministic")
+    per_ep = [float(x[5 + 4 * k].ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14]) - (2.0e7 + k)
+              for k in range(4)]
+    chk(len(set(round(v, 6) for v in per_ep)) == 4, f"clone noise is per epoch {per_ep}")
+    rewrite_rinex(src, d + "/x3.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0.3;seed=8")], "AAAA")
+    chk(open(d + "/x3.rnx").read() != open(d + "/x.rnx").read(), "clone seed changes the draw")
+    # a blank source stays blank
+    src_gap = [ln for ln in hdr + body]
+    src_gap[5] = body[1][:3] + " " * 16 + body[1][3 + 16:]
+    open(d + "/y.rnx", "w", newline="\n").write("\n".join(src_gap) + "\n")
+    rewrite_rinex(d + "/y.rnx", d + "/y2.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0.3;seed=7")], "AAAA")
+    y = open(d + "/y2.rnx").read().split("\n")
+    chk(y[5].ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14].strip() == "", "blank source stays blank")
+    chk(y[6].ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14].strip() != "", "the next record still clones")
+    # a LATER op acts on the cloned column, and only on it
+    two = [parse_op("clone;from=C1C;to=C1W;noise=0;seed=7"),
+           parse_op("bias;types=C1W;per=sat;sigma=0.5;seed=12")]
+    rewrite_rinex(src, d + "/z.rnx", two, "AAAA")
+    z = open(d + "/z.rnx").read().split("\n")
+    inj = [float(z[5 + 4 * k].ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14]) - (2.0e7 + k)
+           for k in range(4)]
+    chk(len(set(round(v, 6) for v in inj)) == 1 and abs(inj[0]) > 1e-4,
+        f"a bias on the clone is one constant per satellite {inj}")
+    chk(z[5][3:3 + 16] == body[1][3:3 + 16], "the bias did not reach the source column")
+    # `draws` reproduces that constant from the spec alone — the op INDEX included.
+    # The tolerance is the FILE's: RINEX writes F14.3, so an injected truth read back
+    # out of the file is quantized to the millimetre.
+    got = draw("12", 0, "bias", "G03").gauss(0.0, 0.5)
+    chk(abs(got - inj[0]) < 1e-3, f"draws key matches the injected constant {got} vs {inj[0]}")
+    # the clone is not a record op, so it does not shift a following op's index
+    chk([op["op"] for op in two if op["op"] not in ("relabel", "holes", "primaryonly", "clone")]
+        == ["bias"], "clone takes no record-op index")
+    # header continuation: 13 types per line, so a 14th opens a second line
+    hc = list(hdr)
+    hc[1] = ("G   13 C1C C2W C5Q L1C L2W L5Q C1X C1L C2L C5X L1X L1L L2L").ljust(60) + LABEL
+    open(d + "/c13.rnx", "w", newline="\n").write("\n".join(
+        hc + ["> 2024 05 08 00 00 00.0000000  0  1", rec("G03", list(range(1, 14)))]) + "\n")
+    rewrite_rinex(d + "/c13.rnx", d + "/c14.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0;seed=7")], "AAAA")
+    c14 = open(d + "/c14.rnx").read().split("\n")
+    chk(c14[1].startswith("G   14 C1C") and c14[2].startswith("       C1W")
+        and c14[2][60:].strip() == LABEL, f"continuation line {c14[1]!r} / {c14[2]!r}")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 
@@ -697,6 +830,12 @@ def main():
     s.add_argument("tags", nargs="+")
     s.add_argument("--pf", action="store_true", help="add the median-station post-fit phase RMS per band (slow)")
     s.set_defaults(fn=cmd_score)
+    dw = sub.add_parser("draws")
+    dw.add_argument("--op", action="append", required=True,
+                    help="an op spec, repeatable, in the SAME order make --rinex takes them")
+    dw.add_argument("--ids", required=True,
+                    help="comma list of the draw keys to print (satellites for per=sat, stations for per=station)")
+    dw.set_defaults(fn=cmd_draws)
     t = sub.add_parser("selftest")
     t.set_defaults(fn=cmd_selftest)
     a = ap.parse_args()

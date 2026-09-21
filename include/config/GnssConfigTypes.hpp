@@ -1764,6 +1764,45 @@ namespace GnssProcessor {
         /// Default OFF ⇒ RF-0d's pin-everything behaviour ⇒ byte-identical.  INERT
         /// without @ref sat_gf_datum.
         bool sat_gf_extra_band_free{ false };
+        /// Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R1): a network
+        /// station contributes, as CODE-ONLY rows, every allow-listed band-1 code it
+        /// reports for a satellite besides the code its canonical latch already
+        /// selected.
+        ///
+        /// WHY.  One canonical code per station and band means a satellite's C1W code
+        /// bias is supported only by the stations that latched C1W — under the armed
+        /// `priority` latch, 19 of 60, so the wire carries a C1W bias for a median of 24
+        /// satellites per epoch against 31 for C1C and 5323 satellite-epochs lack it
+        /// (card CSL §9).  A consumer whose code bias vanishes leaves by tens of metres
+        /// (card MSC).  The two families are not competing for information, they are
+        /// competing for the same 59 stations; letting a station report both makes them
+        /// share it.
+        ///
+        /// WHAT IT IS NOT.  No second PHASE signal, no ambiguity, no phase-bias column
+        /// (the exact-integer slip witness is a different card) and NO datum change
+        /// (R3): a same-band companion of the pin's first signal is already free, and
+        /// the family's own time-linked sum-to-zero row closes the one null direction
+        /// the new receiver state opens.
+        ///
+        /// Default OFF ⇒ byte-identical.  Refused with `processing.channel_mode: all`
+        /// (which widens the PHASE side too) and without @c network.carry_rx_code_bias
+        /// (the new receiver state has to be restored across epochs like every other
+        /// receiver code bias).  Fingerprinted only when armed.
+        bool second_code_channel{ false };
+        /// Card SCC: the EXPLICIT allow-list of band-1 code signals a station may
+        /// contribute under @ref second_code_channel.  The loader refuses an entry that
+        /// is not a 3-character code type starting with 'C', and any entry whose band
+        /// digit is not '1' (band 2 is a follow-up card: it would make the
+        /// @ref sat_isc_state bridging roster non-empty for the first time).  C1X and
+        /// C1L are admitted only if listed, never by default, and are unvalidated.
+        std::vector<std::string> second_code_signals{ "C1C", "C1W" };
+        /// Card SCC (R5): multiplies the code sigma of the rows that R2 routes through
+        /// the receiver INTER-SIGNAL state — the companion rows and any fallback code.
+        /// At least 1; 1.0 is the default and is never applied (byte-identical).  Below
+        /// 1 is refused rather than clamped, on the @ref extra_band_code_sigma_scale
+        /// precedent: a config asking to TRUST a second code more than the canonical one
+        /// is asking for the opposite of this knob and is a typo, not a posture.
+        double second_code_sigma_scale{ 1.0 };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

@@ -31,6 +31,7 @@
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkExtraBandScope.hpp"  // card L5P: the extra-band / primary-pair predicates
+#include "filter/NetworkSecondCodeScope.hpp" // card SCC: secondCodeCellEdges (the two cell edges)
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
@@ -348,6 +349,55 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
         }
         st.eb_rows_deweighted += n_eb;
         st.eb_rows_no_pin     += n_nopin;
+    }
+    // --- card SCC: the SECOND CODE's rows (R5 + R7) ---------------------------
+    // (docs/refound/SCC_second_code_channel_2026-09-21.md.)  Two things at one
+    // walk, because both need the same test: which rows route through the receiver
+    // INTER-SIGNAL state rather than through the per-band DCB.
+    //
+    // The test reads the STATE SET, not the configuration: a row routes through the
+    // inter-signal state exactly when this station holds "<system>_ISC_<signal>",
+    // which is the state @c StateInitializer::resolveReceiverBias allocated from the
+    // same predicate.  Deriving it a second time from the allow-list and the latch
+    // would be a second copy of that predicate, free to drift; reading the states
+    // cannot disagree with the Jacobian.
+    //
+    // R5 scales those rows' code sigma.  R7 splits them into COMPANION rows (the
+    // cell was republished serially into st.scc_cells after PASS A) and FALLBACK
+    // rows (an allow-listed band-1 code that arrived with no canonical beside it —
+    // R2 routes it through the same state, and a nonzero count is a finding about
+    // the canonical latch, not about this card).  The counters run whether or not
+    // the scale is applied: a scale of 1 is the card's default posture, not an
+    // unarmed one.
+    //
+    // OFF ⇒ the whole block is skipped ⇒ byte-identical, and with the knob armed at
+    // scale 1 the weights are untouched (no division is performed at all).
+    if (config_.networkSecondCodeChannel() && st.sm) {
+        std::set<std::string> isc_sigs;   // signals with an inter-signal state HERE
+        for (const auto& [key, idx] : st.sm->getCodeBiasStates()) {
+            (void)idx;
+            if (const auto p = StateKeys::parseReceiverIscKey(key))
+                isc_sigs.insert(p->signal);
+        }
+        if (!isc_sigs.empty()) {
+            const double sc_scale = config_.networkSecondCodeSigmaScale();
+            const Eigen::Index mr = std::min<Eigen::Index>(
+                m, static_cast<Eigen::Index>(em.signal_types.size()));
+            long long n_comp = 0, n_fall = 0;
+            for (Eigen::Index r = 0; r < mr; ++r) {
+                const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+                if (sig.empty() || sig[0] == 'L') continue;           // PHASE UNTOUCHED
+                if (!isc_sigs.count(sig)) continue;
+                if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+                const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+                if (sat.empty()) continue;
+                if (st.scc_cells.count(StateKeys::makeSatBiasKey(sat, sig))) ++n_comp;
+                else                                                         ++n_fall;
+                if (sc_scale > 1.0) w(r) /= sc_scale * sc_scale;       // σ × scale
+            }
+            st.scc_rows          += n_comp;
+            st.scc_fallback_rows += n_fall;
+        }
     }
     y = em.innovations;
 }
@@ -1583,6 +1633,101 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         else if (!a_err[i].empty())
             log->warn("Network: station '{}' PASS A geometry threw ({}); "
                       "skipping it this epoch", stations[i].name, a_err[i]);
+    }
+
+    // --- card SCC: the second code channel's per-epoch bookkeeping (R7) --------
+    // (docs/refound/SCC_second_code_channel_2026-09-21.md.)  SERIAL, in station
+    // order, so the counters and the event rows are deterministic and the edges are
+    // diffed against a set only this thread touches.  Placed after present[] is
+    // final — an absent station's cells CLOSE, which is the decoupling edge — and
+    // before anything reads `modeled` again, which it only reads.
+    //
+    // Two jobs.  (1) Republish each station's COMPANION cell set for PASS B: the
+    // row-weight seam has the signal and the satellite of every row but no way to
+    // tell a companion from the FALLBACK case (a band-1 code that arrived without
+    // its canonical beside it), and both route through the same receiver state.
+    // (2) Count the cells, both cell edges, the receiver inter-signal states alive
+    // and their RESEEDS, and the (satellite, signal) columns that reached the
+    // two-station registration bar ONLY through companions — the card's thesis as a
+    // number.
+    //
+    // OFF ⇒ the whole block is skipped, every set stays empty and nothing is
+    // emitted, so the epoch is byte-identical.
+    if (config_.networkSecondCodeChannel()) {
+        auto& C = ctx.counters.second_code;
+        // Per-(satellite, signal): how many present stations support the column at
+        // all, and how many of those support it ONLY through a companion row.  The
+        // registration bar is two stations (see the code-bias column registration
+        // below), so a column with >= 2 supporters of which < 2 are canonical is one
+        // this card put on the wire.
+        std::map<std::string, std::pair<int, int>> col_support;   // "sat|signal" -> (total, canonical)
+        long long isc_alive = 0;
+        for (int i = 0; i < n_sta_total; ++i) {
+            NetStation& st = stations[i];
+            std::set<std::string> cells;
+            if (present[i] && i < static_cast<int>(modeled.size())) {
+                for (const auto& ob : modeled[static_cast<std::size_t>(i)]) {
+                    for (const auto& [sig, val] : ob.observed) {
+                        (void)val;
+                        if (sig.empty() || sig[0] != 'C') continue;
+                        const std::string key = StateKeys::makeSatBiasKey(ob.satellite, sig);
+                        auto& sup = col_support[key];
+                        ++sup.first;
+                        if (ob.companion_codes.count(sig)) cells.insert(key);
+                        else                               ++sup.second;
+                    }
+                }
+            }
+            // The two edges (standing invariant #7).  A cell OPENS when a station
+            // starts contributing a companion row for a satellite and signal, and
+            // CLOSES when it stops — including when the whole station drops out,
+            // which is exactly the "a station with zero rows dropped out of the map
+            // and its return read as a first sighting" failure the invariant names.
+            std::vector<std::string> opened, closed;
+            secondCodeCellEdges(st.scc_cells_prev, cells, &opened, &closed);
+            for (const auto& cell : opened) {
+                const auto parts = StateKeys::parseSatBiasKey(cell);
+                traces.emitEvent(se.time, "SCC", "companion_open",
+                                 parts ? parts->satellite : std::string{}, st.name,
+                                 std::nullopt, std::nullopt, "open",
+                                 parts ? parts->signal : cell);
+            }
+            for (const auto& cell : closed) {
+                const auto parts = StateKeys::parseSatBiasKey(cell);
+                traces.emitEvent(se.time, "SCC", "companion_close",
+                                 parts ? parts->satellite : std::string{}, st.name,
+                                 std::nullopt, std::nullopt, "close",
+                                 parts ? parts->signal : cell);
+            }
+            C.cell_open  += static_cast<long long>(opened.size());
+            C.cell_close += static_cast<long long>(closed.size());
+            C.cells      += static_cast<long long>(cells.size());
+            st.scc_cells_prev = cells;
+            st.scc_cells      = std::move(cells);
+            // The receiver inter-signal state census, and its RESEED test.  A state
+            // this station has held before, did not hold last epoch and holds now,
+            // cold-started instead of being restored by the receiver code-bias carry
+            // — the one way this card can determine a receiver bias from a single
+            // epoch of code (standing invariant #1's re-coupling edge).
+            std::set<std::string> isc_now;
+            if (st.sm) {
+                for (const auto& [key, idx] : st.sm->getCodeBiasStates()) {
+                    (void)idx;
+                    if (!StateKeys::isReceiverIscKey(key)) continue;
+                    isc_now.insert(key);
+                    if (!st.scc_isc_prev.count(key) && st.scc_isc_seen.count(key))
+                        ++C.isc_reseeds;
+                }
+            }
+            isc_alive += static_cast<long long>(isc_now.size());
+            st.scc_isc_seen.insert(isc_now.begin(), isc_now.end());
+            st.scc_isc_prev = std::move(isc_now);
+        }
+        C.isc_states_max = std::max(C.isc_states_max, isc_alive);
+        for (const auto& [key, sup] : col_support) {
+            (void)key;
+            if (sup.first >= 2 && sup.second < 2) ++C.cols_via_companion;
+        }
     }
 
     // Shared RAW slip observables (docs/SPEC_slip_qc_hardening.md §1): computed

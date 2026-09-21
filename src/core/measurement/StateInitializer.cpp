@@ -90,6 +90,54 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     if (sys_char == '\0') return result;
 
     // -----------------------------------------------------------------------
+    // Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R2): the
+    // receiver INTER-SIGNAL code bias of a second band-1 code.
+    //
+    // With `network.second_code_channel` a station contributes every allow-listed
+    // band-1 code it tracks, not only the one its canonical latch selected.  The
+    // per-band keying below cannot represent that: C1C and C1W share a band digit,
+    // so both resolve to "<sys>_DCB" with the SAME coefficient and the second code
+    // would ASSERT a zero receiver inter-signal bias, pushing the whole difference
+    // into the satellite column.  Card B5D is the record of what that costs.
+    //
+    // So a band-1 code that is not this station's LATCHED canonical code gets its
+    // own per-(receiver, system, signal) state with UNIT coefficient — an ABSOLUTE
+    // receiver delay in the frame the clock and ionosphere datum leave free, not
+    // the ionosphere-referenced difference the DCB state carries.  The one null
+    // direction that opens (every receiver inter-signal bias against every
+    // satellite one) is closed by the satellite family's own time-linked
+    // sum-to-zero row, which is why the card changes no datum row (R3).
+    //
+    // WHICH ROWS.  Both the R1 companions AND a fallback code that arrives without
+    // its canonical beside it: the test is the SIGNAL against the latch, not how
+    // the row entered, so the two cases cannot disagree about which state a row
+    // belongs to.  An UNDECIDED latch (empty, before the constellation's first
+    // observed epoch, or for a band this station never latched) keeps today's
+    // behaviour — a code is only "second" relative to a known first.
+    //
+    // NOT GLONASS: its FDMA per-slot group delay is a different state family with
+    // its own datum, handled in the branch below, and "C1C" is a legal GLONASS code
+    // that would otherwise match an allow-list written for GPS.  This sits BEFORE
+    // that branch and before the clock-reference lookup because the inter-signal
+    // correction is a pure per-signal receiver delay: it needs no pin pair.
+    //
+    // OFF ⇒ the whole block is skipped ⇒ byte-identical.
+    if (config_.networkSecondCodeChannel() && system != System::GLONASS
+        && obs_signal.size() == 3 && obs_signal[0] == 'C' && obs_signal[1] == '1') {
+        const auto& allow = config_.networkSecondCodeSignals();
+        if (std::find(allow.begin(), allow.end(), obs_signal) != allow.end()) {
+            const std::string sys = PppUtils::getSystemString(system);
+            const std::string canonical =
+                ppp_model_.latchedCanonicalCodeOnBandDigit(sys, '1');
+            if (!canonical.empty() && canonical != obs_signal) {
+                result.state_key   = StateKeys::makeReceiverIscKey(sys, obs_signal);
+                result.coefficient = 1.0;
+                return result;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // GLONASS per-FCN-slot receiver inter-frequency code bias.
     //
     // FDMA: each GLONASS slot transmits on a distinct carrier frequency

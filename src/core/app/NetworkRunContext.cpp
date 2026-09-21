@@ -793,6 +793,21 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("{}", config_.networkCarryRxClockJumpK()));
             add(fmt::format("{}", config_.networkCarryRxClockIsb()));
         }
+        // Card SCC (R6): the second code channel adds a receiver INTER-SIGNAL state per
+        // station and band-1 companion, and that state is carried by the receiver
+        // code-bias carry whose stash IS in the snapshot.  A resume across the flip
+        // would therefore restore (or fail to restore) a set of receiver code-bias
+        // columns the other side of the flip does not have, and the companion CODE rows
+        // that determine them change the local block every epoch — solve-affecting on
+        // both counts.  Armed-only append, beside the F1/F3/ZWD/iono/rxclk tags, so
+        // every pre-card snapshot fingerprint is unchanged.  The allow-list and the
+        // sigma scale join it: the list decides WHICH columns exist, and the scale
+        // decides the weight at which their rows were accumulated.
+        if (config_.networkSecondCodeChannel()) {
+            add("scc:2ndcode");
+            for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
+            add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
+        }
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

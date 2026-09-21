@@ -53,6 +53,7 @@
 #include "filter/NetworkCarryVce.hpp"       // parseComponents (prior-residual census family list)
 #include "filter/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
 #include "filter/NetworkOraclePinScope.hpp" // oraclePinParseScope (ONE grammar for the oracle_pin scope)
+#include "filter/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -3164,6 +3165,58 @@ namespace GnssProcessor {
                        network_config_.extra_band_code_sigma_scale);
             network_config_.extra_band_code_sigma_scale = 1.0;
         }
+        // Card SCC: the SECOND CODE CHANNEL.  A station contributes every allow-listed
+        // band-1 code it reports besides the one its canonical latch selected, so the
+        // C1C and C1W satellite families stop competing for the same 59 stations.  The
+        // two interlocks (channel_mode and carry_rx_code_bias) are checked in the
+        // post-parse block below, where both of their inputs are populated.
+        network_config_.second_code_channel =
+            jval<bool>(json, "network.second_code_channel", "second_code_channel", false);
+        {
+            const auto& nwj = jsection(json, "network");
+            if (nwj.contains("second_code_signals")) {
+                const auto& arr = nwj["second_code_signals"];
+                if (!arr.is_array()) {
+                    log->error("Network (card SCC): network.second_code_signals must be an "
+                               "array of RINEX code types (e.g. [\"C1C\", \"C1W\"]) — keeping "
+                               "the default list.");
+                } else {
+                    // The list is EXPLICIT (R1): a refused entry is dropped and named, never
+                    // silently coerced, and an all-refused list leaves the allow-list empty
+                    // so the knob is inert rather than wrong.
+                    std::vector<std::string> sigs;
+                    for (const auto& s : arr) {
+                        if (!s.is_string()) {
+                            log->error("Network (card SCC): network.second_code_signals holds a "
+                                       "non-string entry — ignored.");
+                            continue;
+                        }
+                        const std::string sig = s.get<std::string>();
+                        std::string why;
+                        if (!secondCodeAllowEntryValid(sig, &why)) {
+                            log->error("Network (card SCC): network.second_code_signals entry "
+                                       "'{}' is refused ({}) — ignored.", sig, why);
+                            continue;
+                        }
+                        if (std::find(sigs.begin(), sigs.end(), sig) != sigs.end()) continue;
+                        sigs.push_back(sig);
+                    }
+                    network_config_.second_code_signals = std::move(sigs);
+                }
+            }
+        }
+        network_config_.second_code_sigma_scale =
+            jval<double>(json, "network.second_code_sigma_scale",
+                         "second_code_sigma_scale", 1.0);
+        if (!(network_config_.second_code_sigma_scale >= 1.0)) {
+            log->error("Network (card SCC): network.second_code_sigma_scale = {} is not at or "
+                       "above 1 (or is not a number) — falling back to 1.0 (no scaling).  The "
+                       "knob only ever DEWEIGHTS the code rows that route through the receiver "
+                       "inter-signal state.",
+                       network_config_.second_code_sigma_scale);
+            network_config_.second_code_sigma_scale = 1.0;
+        }
+
         if (network_config_.extra_band_code_sigma_scale > 1.0)
             log->info("Network (card L5P): network.extra_band_code_sigma_scale = {:.3f} — "
                       "EXTRA-BAND code rows fold at sigma x {:.3f} (information / {:.3f}) in "
@@ -10791,6 +10844,53 @@ namespace GnssProcessor {
                           network_rx_cb_carry_q_);
             }
         }
+        // Card SCC (R6): the second code channel's two INTERLOCKS.  Checked here, after
+        // the rx-CB carry block, because both inputs are only final at this point — the
+        // carry itself can still be FORCED OFF above, and channel_mode belongs to the
+        // processing section.  A refused interlock disarms the knob rather than failing
+        // the load: the posture is then exactly the unarmed one, which is a valid run.
+        if (network_config_.second_code_channel) {
+            if (channel_mode_ == ChannelMode::All) {
+                log->error("Network (card SCC): network.second_code_channel is REFUSED with "
+                           "processing.channel_mode = 'all' — that mode already widens every "
+                           "band to every tracking attribute, PHASE side included, so the two "
+                           "mechanisms would fight over the same rows and the companion's "
+                           "receiver state would be asserted against an ambiguity that also "
+                           "exists.  DISARMED; set channel_mode to 'single' to use this card.");
+                network_config_.second_code_channel = false;
+            } else if (!network_carry_rx_code_bias_) {
+                log->error("Network (card SCC): network.second_code_channel requires "
+                           "network.carry_rx_code_bias — the receiver INTER-SIGNAL state the "
+                           "card creates is a receiver code bias like any other and has to be "
+                           "restored across epochs by that carry, or it cold-starts every "
+                           "epoch and determines itself from one epoch of code.  DISARMED.");
+                network_config_.second_code_channel = false;
+            } else if (network_config_.second_code_signals.size() < 2) {
+                log->error("Network (card SCC): network.second_code_channel is armed but "
+                           "network.second_code_signals holds {} admitted entr(y/ies) — a "
+                           "second code needs at least two band-1 codes in the list to ever be "
+                           "one.  DISARMED.", network_config_.second_code_signals.size());
+                network_config_.second_code_channel = false;
+            } else {
+                log->info("Network (card SCC): SECOND CODE CHANNEL armed — a station "
+                          "contributes every allow-listed band-1 code it reports [{}] besides "
+                          "the one its canonical latch selected, as CODE-ONLY rows, each "
+                          "modelled with its own receiver inter-signal state "
+                          "(<system>_ISC_<signal>, unit coefficient, no zero-mean prior).  No "
+                          "phase row, no ambiguity, no phase-bias column and no datum change; "
+                          "the Melbourne-Wubbena detector ignores the added rows.  Code sigma "
+                          "x {:.3f} on the rows that route through the new state.",
+                          [&] {
+                              std::string s;
+                              for (const auto& sig : network_config_.second_code_signals) {
+                                  if (!s.empty()) s += ", ";
+                                  s += sig;
+                              }
+                              return s;
+                          }(),
+                          network_config_.second_code_sigma_scale);
+            }
+        }
         // Card S2H (docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1):
         // the S-consistent harvest.  Validated BEFORE the LV-2/LV-5 guards because it
         // SUPERSEDES them: both mechanisms act on the same channel (the carried
@@ -11938,6 +12038,14 @@ namespace GnssProcessor {
         // graded the consumer's band-5 code residual at its own weight).  Pin it
         // at 1 so an arm of this knob moves the WIRE alone.
         c.network_config_.extra_band_code_sigma_scale = 1.0;
+        // Card SCC (R6): the second code channel is a PRODUCER-side mechanism — it
+        // exists so the satellite C1C and C1W families share the network's stations.
+        // A consumer is one station and has no family to support; arming it there
+        // would only add a receiver inter-signal state and a second code row to the
+        // held-out solution, which is a separate variable and not the one under test.
+        // Pin it OFF (and its scale at 1) so an arm of this knob moves the WIRE alone.
+        c.network_config_.second_code_channel     = false;
+        c.network_config_.second_code_sigma_scale = 1.0;
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates
         // integer RECOVERY on the held-out station from the producer's products.

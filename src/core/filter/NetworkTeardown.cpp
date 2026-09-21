@@ -2847,6 +2847,63 @@ int networkTeardown(
                       "clock-reference entry answers 'nothing is extra-band' by design).");
     }
 
+    // ---- SCC: the SECOND CODE CHANNEL (network.second_code_channel) ----------
+    // (docs/refound/SCC_second_code_channel_2026-09-21.md, R7.)  Armed-only run-end
+    // line.  Nothing else can say what this card did: a companion code row is
+    // indistinguishable from a canonical one in every trace and on the wire, and the
+    // whole claim is about which SATELLITE columns reached the two-station
+    // registration bar — so the run has to state it (standing invariant #4).  The
+    // ROW counts are accumulated inside the PARALLEL produce phase and live
+    // per-station (the eb_rows_deweighted precedent); sum them here, before the
+    // block reads them.
+    if (config_.networkSecondCodeChannel()) {
+        auto& C = ctx.counters.second_code;
+        C.rows          = 0;
+        C.fallback_rows = 0;
+        for (const auto& st : stations) {
+            C.rows          += st.scc_rows;
+            C.fallback_rows += st.scc_fallback_rows;
+        }
+        if (C.rows == 0 && C.cells == 0) {
+            log->warn("Network (SECOND CODE CHANNEL, card SCC): ARMED but NO companion code "
+                      "row was ever added — no station reported a second allow-listed band-1 "
+                      "code besides its latched canonical one, so this run exercised nothing "
+                      "and is byte-equivalent to the unarmed posture (standing invariant #4).  "
+                      "A single-band-1-code bed (every simulated file today) reads this way by "
+                      "construction; on the field roster it means the allow-list names codes "
+                      "the stations do not track.");
+        } else {
+            log->info("Network (SECOND CODE CHANNEL, card SCC): {} companion cell-epoch(s) over "
+                      "{} opening(s) and {} closing(s) (standing invariant #7's two edges), "
+                      "folding {} companion code row(s) at sigma x {:.3f}; {} row(s) took the "
+                      "FALLBACK path (an allow-listed band-1 code with no latched canonical "
+                      "beside it — a finding about the latch, not about this card).  Receiver "
+                      "inter-signal states alive at the busiest epoch: {}, of which {} "
+                      "RESEED(s) over the run — a reseed is a state a station had held before, "
+                      "did not hold last epoch and holds again, i.e. one the receiver "
+                      "code-bias carry did not restore, so it re-determined itself from one "
+                      "epoch of code.  {} (satellite, signal) column-epoch(s) reached the "
+                      "two-station registration bar ONLY through companions: that number is "
+                      "the card's thesis, and a zero means the channel added rows without "
+                      "ever adding a column the wire did not already carry.",
+                      C.cells, C.cell_open, C.cell_close, C.rows,
+                      config_.networkSecondCodeSigmaScale(), C.fallback_rows,
+                      C.isc_states_max, C.isc_reseeds, C.cols_via_companion);
+            if (C.isc_states_max == 0)
+                log->warn("Network (SECOND CODE CHANNEL, card SCC): companion rows were folded "
+                          "but NO receiver inter-signal state ever existed — every companion "
+                          "row therefore ASSERTED a zero receiver inter-signal bias and pushed "
+                          "the difference into the satellite column, which is the defect card "
+                          "B5D measured at metres on a third band.  Check that "
+                          "estimate_ifb / the network satellite code bias are on.");
+            if (C.cols_via_companion == 0)
+                log->warn("Network (SECOND CODE CHANNEL, card SCC): NO (satellite, signal) "
+                          "column reached the two-station bar only through companions — the "
+                          "channel added rows to columns the wire already carried and widened "
+                          "no family's roster.");
+        }
+    }
+
     // ---- COMMON-BAND SCOPE (network.cycle_slip.common_band_scope, §14) ------
     // Printed ALWAYS, armed or not, for the same reason as the clause above: the
     // would-narrow count sizes the card on a lineage without running it armed,

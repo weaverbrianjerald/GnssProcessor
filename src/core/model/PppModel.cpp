@@ -30,6 +30,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
+#include "filter/NetworkSecondCodeScope.hpp"   // secondCodeCompanions (card SCC, R1)
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -840,7 +841,12 @@ std::vector<std::string> activeFrequencyBands(
             std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
-            if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type)) {
+            // Card SCC (R1): the companion codes this call adds, if any, land on the
+            // observation so every downstream consumer can tell a companion row from a
+            // canonical one — the Melbourne-Wubbena guard (R4) and the cell telemetry
+            // (R7).  The set stays empty unless the knob is armed on the network path.
+            if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type,
+                               &ppp_obs.companion_codes)) {
                 note_drop(obs.satellite, DropReason::NoModel);
                 continue;
             }
@@ -1224,7 +1230,8 @@ std::vector<std::string> activeFrequencyBands(
         const RinexObservation& obs, const std::string& system_str,
         const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
         const std::vector<std::string>& freq_bands,
-        std::vector<std::pair<std::string, std::string>>& selected_signals) const {
+        std::vector<std::pair<std::string, std::string>>& selected_signals,
+        std::set<std::string>* companion_out) const {
 
         selected_signals.clear();
         for (const auto& band : freq_bands) {
@@ -1283,6 +1290,72 @@ std::vector<std::string> activeFrequencyBands(
                             band, obs.satellite, system_str, sig);
                         break;
                     }
+                }
+            }
+        }
+
+        // --- Card SCC: the SECOND CODE CHANNEL --------------------------------
+        // (docs/refound/SCC_second_code_channel_2026-09-21.md, R1.)  One canonical
+        // code per station and band means a satellite's C1W code bias is supported
+        // only by the stations that latched C1W, so the C1C and C1W satellite
+        // families compete for the same roster rather than sharing it.  Add, as
+        // CODE-ONLY rows, every allow-listed band-1 code this station reports for
+        // this satellite besides the one the band map already selected.
+        //
+        // WHY NOT the channel_mode=All widening above.  That one adds the PHASE
+        // channel too (each becoming its own ambiguity and phase-bias column) and
+        // every tracking attribute, admitted or not; this card wants ONE extra code
+        // row and nothing else, which is why the loader refuses the two together.
+        //
+        // WHY BAND 1 ONLY.  A band-2 companion would make the network.sat_isc_state
+        // bridging roster non-empty for the first time; the loader refuses a band-2
+        // allow-list entry and the card defers it (§4).  The allow-list is validated
+        // at load, so membership here already implies "3-char code type on band 1".
+        //
+        // The added key goes into selected_signals because the measurement model
+        // needs all three of observed / modeled / variances to accept a row, and it
+        // is ALSO reported through @p companion_out: that set is what makes a
+        // companion row distinguishable downstream, and R4's Melbourne-Wubbena
+        // guard and R7's cell telemetry both read it.  obs.raw_observed is filled
+        // from every raw key regardless and is untouched by this block.
+        //
+        // NETWORK ONLY, and ARMED ONLY: off the network path or with the knob down
+        // the block is skipped whole, so the selection is byte-identical.
+        if (config_.networkSecondCodeChannel()
+            && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
+            for (const auto& band : freq_bands) {
+                const auto band_it = freq_band_to_signal.find(band);
+                if (band_it == freq_band_to_signal.end()) continue;
+                const std::string& best_code = band_it->second.first;
+                // Band 1 is the card's scope, tested on the signal's own RINEX band
+                // DIGIT: the band NAME is constellation-specific ("L1" on GPS, "E1" on
+                // Galileo, "B1C" on BeiDou) while the digit is what the allow-list and
+                // the receiver-side latch test both speak.
+                if (best_code.size() < 2 || best_code[1] != '1') continue;
+                // The band's selected code must be PRESENT this epoch, not merely
+                // named: with it missing there is no canonical row for the companion
+                // to accompany, and a lone second code is the FALLBACK case the
+                // receiver side handles and counts separately.
+                if (!obs.measurements.count(best_code)) continue;
+                // What this station reports for this satellite, filtered by the
+                // network coverage gate — the same gate the band map and the
+                // channel_mode widening both apply, so a non-admitted channel can
+                // never enter through this path either.
+                std::set<std::string> reported;
+                for (const auto& [sig, val] : obs.measurements) {
+                    (void)val;
+                    if (sig.size() != 3 || sig[0] != 'C' || sig[1] != '1') continue;
+                    if (!signalAdmitted(system_str, sig)) continue;
+                    reported.insert(sig);
+                }
+                for (const auto& sig : secondCodeCompanions(
+                         reported, best_code, config_.networkSecondCodeSignals())) {
+                    selected_signals.emplace_back(sig, "");
+                    if (companion_out) companion_out->insert(sig);
+                    log_manager_.getLogger("ppp_model")->trace(
+                        "Uncombined band {} for {} {}: companion code {} added beside "
+                        "the latched {} (card SCC)",
+                        band, obs.satellite, system_str, sig, best_code);
                 }
             }
         }
@@ -1478,7 +1551,8 @@ std::vector<std::string> activeFrequencyBands(
 
     bool PppModel::selectSignals(const RinexObservation& obs, const std::string& system_str,
         std::vector<std::pair<std::string, std::string>>& selected_signals,
-        bool& is_iono_free, std::string& comb_type) {
+        bool& is_iono_free, std::string& comb_type,
+        std::set<std::string>* companion_out) {
 
         auto it = signal_priorities_.find(system_str);
         const auto& signals = it != signal_priorities_.end() ? it->second : std::vector<std::string>{};
@@ -1523,7 +1597,8 @@ std::vector<std::string> activeFrequencyBands(
         comb_type = freq_bands.size() >= 3 ? "triple" : freq_bands.size() == 2 ? "dual" : "single";
 
         if (config_.isUncombinedEnabled()) {
-            if (!selectUncombinedSignals(obs, system_str, freq_band_to_signal, freq_bands, selected_signals)) {
+            if (!selectUncombinedSignals(obs, system_str, freq_band_to_signal, freq_bands,
+                                         selected_signals, companion_out)) {
                 log_manager_.getLogger("ppp_model")->warn("No valid signals for {} {} at TOW {:.3f}",
                     obs.satellite, system_str, obs.time.tow);
                 return false;

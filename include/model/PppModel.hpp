@@ -614,6 +614,41 @@ namespace GnssProcessor {
         std::size_t restoreCanonicalSignals(const std::vector<CanonicalSignal>& entries);
 
         /**
+         * @brief The CODE signal this station LATCHED on one RINEX band digit.
+         *
+         * A const read of @c constellation_canonical_, which
+         * @c decideConstellationCanonicals fills on the constellation's first observed
+         * epoch and then locks for the run (or which @ref restoreCanonicalSignals
+         * refills at a warm resume).  Card SCC needs it OUTSIDE this class: the
+         * receiver side (R2) routes a band-1 code through an inter-signal state exactly
+         * when it is not the station's latched canonical code, and the row-weight seam
+         * (R5) has to reach the same verdict from the assembly.
+         *
+         * Keyed on the signal's own BAND DIGIT rather than on the band NAME the map
+         * uses, because that name is constellation-specific ("L1" on GPS, "E1" on
+         * Galileo, "B1C" on BeiDou) while the card's scope — "band 1" — is the digit in
+         * the RINEX code.  The two are 1:1 within a constellation: the prefix table
+         * maps each "C<digit>" to exactly one band name.
+         *
+         * An EMPTY return means the latch does not know this cell yet, which every
+         * caller must read as "change nothing" — not as "no signal is canonical".
+         *
+         * @param system     System name string, e.g. "GPS".
+         * @param band_digit RINEX band digit, e.g. '1'.
+         * @return The latched RINEX code signal, or empty when undecided.
+         */
+        std::string latchedCanonicalCodeOnBandDigit(const std::string& system,
+                                                    char band_digit) const {
+            const auto cit = constellation_canonical_.find(system);
+            if (cit == constellation_canonical_.end()) return {};
+            for (const auto& [key, sig] : cit->second) {
+                if (key.second != 'C') continue;
+                if (sig.size() >= 2 && sig[1] == band_digit) return sig;
+            }
+            return {};
+        }
+
+        /**
          * @brief Set the label this model prints in the canonical-signal rider (RS-8).
          *
          * The network producer sets it to the station name at construction; the
@@ -787,7 +822,8 @@ namespace GnssProcessor {
          */
         bool selectSignals(const RinexObservation& obs, const std::string& system_str,
             std::vector<std::pair<std::string, std::string>>& selected_signals,
-            bool& is_iono_free, std::string& comb_type);
+            bool& is_iono_free, std::string& comb_type,
+            std::set<std::string>* companion_out = nullptr);
 
         /**
          * @brief Map available RINEX measurements to frequency bands.
@@ -810,11 +846,22 @@ namespace GnssProcessor {
 
         /**
          * @brief Select individual code/phase signals per band (PPP-RTK uncombined).
+         *
+         * @param companion_out Optional; card SCC (R1).  When non-null and
+         *        `network.second_code_channel` is armed on the network path, receives
+         *        the allow-listed band-1 CODE signals this call added BESIDES the one
+         *        the band map selected.  Those keys are also in @p selected_signals —
+         *        the measurement model needs all three of observed / modeled /
+         *        variances to accept a row — so the set is what tells every downstream
+         *        consumer which rows are companions (the Melbourne-Wubbena guard, R4,
+         *        and the cell telemetry, R7).  Left untouched when the knob is off, so
+         *        an unarmed run never allocates.
          */
         bool selectUncombinedSignals(const RinexObservation& obs, const std::string& system_str,
             const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
             const std::vector<std::string>& freq_bands,
-            std::vector<std::pair<std::string, std::string>>& selected_signals) const;
+            std::vector<std::pair<std::string, std::string>>& selected_signals,
+            std::set<std::string>* companion_out = nullptr) const;
 
         /**
          * @brief Select best iono-free code+phase pairs from available bands.
