@@ -3371,6 +3371,32 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief How a station's canonical tracking attribute is chosen per band (card CSL).
+     *
+     * @c ChannelMode::Single keeps ONE tracking attribute per band and
+     * observation type; this enum selects the rule that decides which one, at
+     * the station's first processed epoch, in
+     * @c PppModel::decideConstellationCanonicals.
+     *
+     *  - @c Count : the signal observed on the most satellites of that epoch,
+     *    ties to the earlier entry of the priority list.  The historical rule
+     *    and the default.  One satellite missing the semi-codeless pair at that
+     *    epoch is enough to latch the civil signal (L1C) for the whole run.
+     *  - @c Priority : the FIRST signal of the priority list whose satellite
+     *    count reaches @c canonical_signal_min_coverage times the largest count
+     *    of that band and observation type, after which the CODE follows the
+     *    PHASE's tracking attribute when that code exists at the station under
+     *    the same coverage condition (so a station that latches L1W takes C1W).
+     *
+     * Selected by @c processing.canonical_signal_rule.  @c Count is
+     * structurally byte-identical to the pre-card producer.
+     */
+    enum class CanonicalSignalRule {
+        Count,   ///< Highest satellite count wins, ties to priority order (default, historical).
+        Priority ///< Priority-list order wins above a coverage floor; code follows the phase attribute.
+    };
+
+    /**
      * @brief MW slip detector frequency-band scope.
      *
      * Independent of the KF's @c FrequencyMode so the detector can be

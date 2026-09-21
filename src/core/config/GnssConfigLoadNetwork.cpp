@@ -11798,6 +11798,15 @@ namespace GnssProcessor {
             c.amb_level_check_mode_ =
                 (cl.amb_level_check_mode == "observe") ? "observe" : "act";
         }
+        // Card CSL: the canonical-signal rule is a NETWORK-side lever.  The
+        // derived consumer is a full copy of the producer config and runs its own
+        // PppModel, so without this line processing.canonical_signal_rule would
+        // silently re-decide the HELD-OUT station's per-band tracking attribute
+        // too — and the consumer's latch is a separate, already-graded variable
+        // (card CSL section 1: moving the consumer to the civil family costs it
+        // 162 → 80 epochs below a decimetre).  Pin the consumer on the historical
+        // rule so an arm of this knob changes the producer alone.
+        c.canonical_signal_rule_ = CanonicalSignalRule::Count;
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates
         // integer RECOVERY on the held-out station from the producer's products.

@@ -341,6 +341,42 @@ namespace GnssProcessor {
             else { log->warn("Invalid channel_mode '{}', defaulting to single", raw); channel_mode_ = ChannelMode::Single; }
             log->info("Channel mode: {}{}", raw, explicit_channel ? "" : " (defaulted)");
         }
+        // ----- Canonical-signal rule (card CSL) -----
+        // Which tracking attribute a station latches per band at its first
+        // processed epoch.  "count" is the historical rule and the default, so an
+        // absent key is byte-identical.  "priority" walks the priority list and
+        // takes the first entry that clears the coverage floor, then makes the
+        // code follow the phase's attribute.
+        {
+            std::string raw = jval<std::string>(json, "processing.canonical_signal_rule",
+                                                "canonical_signal_rule", std::string{"count"});
+            std::string low = toLower(raw);
+            if      (low == "count")    canonical_signal_rule_ = CanonicalSignalRule::Count;
+            else if (low == "priority") canonical_signal_rule_ = CanonicalSignalRule::Priority;
+            else {
+                log->warn("Invalid canonical_signal_rule '{}', defaulting to count", raw);
+                canonical_signal_rule_ = CanonicalSignalRule::Count;
+            }
+            canonical_signal_min_coverage_ = jval<double>(json,
+                "processing.canonical_signal_min_coverage",
+                "canonical_signal_min_coverage", 0.5);
+            if (!(canonical_signal_min_coverage_ >= 0.0 && canonical_signal_min_coverage_ <= 1.0)) {
+                log->warn("canonical_signal_min_coverage {} outside [0, 1]; clamping",
+                          canonical_signal_min_coverage_);
+                canonical_signal_min_coverage_ =
+                    std::min(1.0, std::max(0.0, canonical_signal_min_coverage_));
+            }
+            if (canonical_signal_rule_ == CanonicalSignalRule::Priority)
+                log->info("Canonical-signal rule: priority (min_coverage {:.2f}) — each station "
+                          "latches the first priority-list signal of the band that reaches "
+                          "{:.0f}% of the band's largest satellite count, and its code follows "
+                          "the phase's tracking attribute.",
+                          canonical_signal_min_coverage_,
+                          100.0 * canonical_signal_min_coverage_);
+            else
+                log->info("Canonical-signal rule: count (highest satellite count per band, "
+                          "ties to priority order).");
+        }
         // ----- MW frequency mode (prefer new name; accept legacy mw_signals as filter→mirror, all→all) -----
         {
             std::string raw = jval<std::string>(json, "processing.mw_frequency_mode", "mw_frequency_mode", "");

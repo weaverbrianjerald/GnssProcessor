@@ -475,6 +475,68 @@ namespace GnssProcessor {
         };
 
         /**
+         * @struct CanonicalCandidate
+         * @brief One channel offered to the canonical-signal decision (card CSL).
+         *
+         * The caller supplies these in PRIORITY-LIST ORDER, already filtered by
+         * the network coverage allowlist and already resolved to a band name, so
+         * the decision itself is a pure function of counts and order.
+         */
+        struct CanonicalCandidate {
+            std::string signal;          /**< RINEX code, e.g. "L1W". */
+            std::string band;            /**< Band name from the system→bands table, e.g. "L1". */
+            char        obs_type{ 'C' }; /**< 'C' (code) or 'L' (phase). */
+            int         count{ 0 };      /**< Satellites observing @c signal at the decision epoch. */
+        };
+
+        /**
+         * @struct CanonicalPick
+         * @brief The latch and its runner-up for one (band, obs-type) (card CSL).
+         */
+        struct CanonicalPick {
+            std::string signal;             /**< The latched RINEX code. */
+            int         count{ 0 };         /**< Its satellite count at the decision epoch. */
+            std::string runner_up;          /**< What the same rule would latch without @c signal; empty when there is no alternative. */
+            int         runner_up_count{ 0 };/**< The runner-up's satellite count; 0 when there is none. */
+        };
+
+        /**
+         * @brief Decide the per-(band, obs-type) canonical signals (card CSL).
+         *
+         * Pure: no member state, no logging, no I/O — the rule the network
+         * producer's latch is built from, exposed so it can be pinned directly
+         * (tests/test_canonical_signal_latch.cpp).
+         *
+         * Candidates with a non-positive count, an empty band or an obs-type
+         * that is neither 'C' nor 'L' are ignored.  Within a (band, obs-type)
+         * the candidate order is the caller's priority-list order.
+         *
+         *  - @c CanonicalSignalRule::Count — the highest count wins and a tie
+         *    goes to the earlier candidate, i.e. the historical rule exactly.
+         *  - @c CanonicalSignalRule::Priority — the FIRST candidate whose count
+         *    is at least @p min_coverage times the largest count of that (band,
+         *    obs-type) wins.  Afterwards every CODE row follows its band's PHASE
+         *    tracking attribute, if a code candidate with that attribute exists
+         *    and clears the same floor; the displaced pick becomes the runner-up.
+         *
+         * The runner-up is defined under the SAME rule: what would have been
+         * latched had the winner not been offered (so under @c Count it is the
+         * second-highest count, and under @c Priority the next eligible entry of
+         * the priority list, its floor recomputed over the remaining candidates).
+         *
+         * @param candidates   Channels in priority-list order (any band, any type).
+         * @param rule         The decision rule.
+         * @param min_coverage Coverage floor for @c Priority; clamped to [0, 1]
+         *                     internally, unread under @c Count.
+         * @return (band, obs-type) → pick, for every (band, obs-type) that had at
+         *         least one candidate with a positive count.
+         */
+        static std::map<std::pair<std::string, char>, CanonicalPick>
+        decideCanonicalPicks(const std::vector<CanonicalCandidate>& candidates,
+                             CanonicalSignalRule rule,
+                             double min_coverage);
+
+        /**
          * @brief Export the locked canonical-signal latch (RS-8, §21.16).
          *
          * One entry per DECIDED (constellation, band, obs-type) triple, in

@@ -411,6 +411,83 @@ std::vector<std::string> activeFrequencyBands(
         }
     }
 
+    std::map<std::pair<std::string, char>, PppModel::CanonicalPick>
+    PppModel::decideCanonicalPicks(const std::vector<CanonicalCandidate>& candidates,
+                                   CanonicalSignalRule rule,
+                                   double min_coverage) {
+        using Key = std::pair<std::string, char>;
+        // Group by (band, obs-type), preserving the caller's priority order.
+        std::map<Key, std::vector<const CanonicalCandidate*>> by_key;
+        for (const auto& c : candidates) {
+            if (c.count <= 0) continue;
+            if (c.band.empty()) continue;
+            if (c.obs_type != 'C' && c.obs_type != 'L') continue;
+            by_key[Key{ c.band, c.obs_type }].push_back(&c);
+        }
+        const double cov = std::min(1.0, std::max(0.0, min_coverage));
+
+        // The rule itself, optionally with one signal withheld — that second
+        // form IS the runner-up ("what would have been latched instead").
+        auto choose = [&](const std::vector<const CanonicalCandidate*>& v,
+                          const std::string& withheld) -> const CanonicalCandidate* {
+            if (rule == CanonicalSignalRule::Priority) {
+                int max_count = 0;
+                for (const auto* c : v)
+                    if (c->signal != withheld) max_count = std::max(max_count, c->count);
+                for (const auto* c : v) {
+                    if (c->signal == withheld) continue;
+                    if (static_cast<double>(c->count) >= cov * static_cast<double>(max_count))
+                        return c;
+                }
+                return nullptr;
+            }
+            // Count: strictly-greater replacement over the priority order, so the
+            // earlier (higher-priority) entry keeps a tie — the historical rule.
+            const CanonicalCandidate* best = nullptr;
+            for (const auto* c : v) {
+                if (c->signal == withheld) continue;
+                if (!best || c->count > best->count) best = c;
+            }
+            return best;
+        };
+
+        std::map<Key, CanonicalPick> out;
+        for (const auto& [key, v] : by_key) {
+            const CanonicalCandidate* win = choose(v, std::string{});
+            if (!win) continue;
+            const CanonicalCandidate* run = choose(v, win->signal);
+            out[key] = CanonicalPick{ win->signal, win->count,
+                                      run ? run->signal : std::string{},
+                                      run ? run->count : 0 };
+        }
+        if (rule != CanonicalSignalRule::Priority) return out;
+
+        // The code follows the phase's tracking attribute where that code exists
+        // at this station and clears the same floor.  A station that latches L1W
+        // takes C1W, so the pair the semi-codeless receiver actually tracks stays
+        // together; a station with no matching code keeps its own pick.
+        for (auto& [key, pick] : out) {
+            if (key.second != 'C') continue;
+            const auto phase_it = out.find(Key{ key.first, 'L' });
+            if (phase_it == out.end() || phase_it->second.signal.empty()) continue;
+            const char attr = phase_it->second.signal.back();
+            if (!pick.signal.empty() && pick.signal.back() == attr) continue;  // already follows
+            const auto& v = by_key[key];
+            int max_count = 0;
+            for (const auto* c : v) max_count = std::max(max_count, c->count);
+            for (const auto* c : v) {
+                if (c->signal.empty() || c->signal.back() != attr) continue;
+                if (static_cast<double>(c->count) < cov * static_cast<double>(max_count)) break;
+                pick.runner_up       = pick.signal;
+                pick.runner_up_count = pick.count;
+                pick.signal          = c->signal;
+                pick.count           = c->count;
+                break;
+            }
+        }
+        return out;
+    }
+
     void PppModel::decideConstellationCanonicals(const std::vector<RinexObservation>& observations) {
         // Group observations by constellation so per-constellation tallies
         // only consider that constellation's satellites.
@@ -444,17 +521,15 @@ std::vector<std::string> activeFrequencyBands(
             auto sit = system_to_bands.find(cons);
             if (sit == system_to_bands.end()) continue;
 
-            // For each (band, obs_type), the canonical is the priority-list
-            // signal with the highest observation count across this
-            // constellation's satellites this epoch.  Ties are broken by
-            // priority order: since we iterate the priority list once and
-            // only replace when strictly higher count, the earlier
-            // (higher-priority) signal naturally wins ties.
-            struct Candidate {
-                std::string signal;
-                int count{ 0 };
-            };
-            std::map<std::pair<std::string, char>, Candidate> best;
+            // Tally every admitted priority-list channel of this constellation at
+            // this epoch, IN PRIORITY ORDER, then hand the ordered candidates to
+            // the pure rule (card CSL).  Under the default
+            // CanonicalSignalRule::Count that rule is the historical one: per
+            // (band, obs_type) the highest observation count wins, and because
+            // the list is walked once with strictly-greater replacement, the
+            // earlier (higher-priority) signal keeps a tie.
+            std::vector<CanonicalCandidate> candidates;
+            candidates.reserve(signals.size());
 
             for (const auto& sig : signals) {
                 if (sig.size() < 3) continue;
@@ -478,11 +553,19 @@ std::vector<std::string> activeFrequencyBands(
                     if (obs->measurements.count(sig)) ++count;
                 if (count == 0) continue;
 
-                const auto key = std::make_pair(band_name, obs_type);
-                auto bit = best.find(key);
-                if (bit == best.end() || count > bit->second.count)
-                    best[key] = { sig, count };
+                candidates.push_back(CanonicalCandidate{ sig, band_name, obs_type, count });
             }
+
+            const auto picks = decideCanonicalPicks(candidates,
+                                                    config_.canonicalSignalRule(),
+                                                    config_.canonicalSignalMinCoverage());
+            struct Candidate {
+                std::string signal;
+                int count{ 0 };
+            };
+            std::map<std::pair<std::string, char>, Candidate> best;
+            for (const auto& [key, pick] : picks)
+                best[key] = Candidate{ pick.signal, pick.count };
 
             // Build a stable trace string for the decision log.
             std::string summary;
@@ -542,6 +625,30 @@ std::vector<std::string> activeFrequencyBands(
                 "Canonical signals decided for {} station '{}' ({} sats this epoch): {}",
                 cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
                 sat_obs_list.size(), summary);
+
+            // Card CSL: one line per station and constellation naming the latch
+            // AND its runner-up with both counts, under EITHER rule, so a run
+            // states which tracking attribute every band actually carries and by
+            // what margin the alternative lost.  Trace-class — nothing downstream
+            // reads it, and products / event ledgers are unaffected.
+            std::string latch_detail;
+            for (const auto& [key, pick] : picks) {
+                if (!latch_detail.empty()) latch_detail += ", ";
+                latch_detail += key.first + std::string(1, key.second) + "="
+                              + pick.signal + "(" + std::to_string(pick.count) + ")";
+                latch_detail += pick.runner_up.empty()
+                              ? " [sole]"
+                              : " over " + pick.runner_up + "("
+                                + std::to_string(pick.runner_up_count) + ")";
+            }
+            log_manager_.getLogger("main_log")->info(
+                "Canonical latch for {} station '{}' (rule={}, min_coverage={:.2f}, "
+                "{} sats this epoch): {}",
+                cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
+                config_.canonicalSignalRule() == CanonicalSignalRule::Priority
+                    ? "priority" : "count",
+                config_.canonicalSignalMinCoverage(), sat_obs_list.size(),
+                latch_detail.empty() ? std::string("(none)") : latch_detail);
         }
     }
 

@@ -232,6 +232,31 @@ namespace GnssProcessor {
         ChannelMode getChannelMode() const { return channel_mode_; }
 
         /**
+         * @brief Gets the canonical-signal decision rule (card CSL).
+         *
+         * Read once per station by @c PppModel::decideConstellationCanonicals at
+         * that station's first processed epoch.  @c CanonicalSignalRule::Count
+         * is the default and reproduces the pre-card latch exactly.
+         *
+         * @return The rule selected by @c processing.canonical_signal_rule.
+         */
+        CanonicalSignalRule canonicalSignalRule() const { return canonical_signal_rule_; }
+
+        /**
+         * @brief Coverage floor for @c CanonicalSignalRule::Priority (card CSL).
+         *
+         * A priority-list signal is eligible when its satellite count at the
+         * decision epoch is at least this fraction of the largest count of the
+         * same band and observation type.  Parsed from
+         * @c processing.canonical_signal_min_coverage and clamped to [0, 1];
+         * 0 accepts any tracked signal, 1 demands the maximum count.  Ignored
+         * under @c CanonicalSignalRule::Count.
+         *
+         * @return The clamped fraction; default 0.5.
+         */
+        double canonicalSignalMinCoverage() const { return canonical_signal_min_coverage_; }
+
+        /**
          * @brief Gets the MW slip detector frequency mode (raw, including Mirror sentinel).
          *
          * Prefer @c getResolvedMwFrequencyMode at call sites that need a
@@ -7734,6 +7759,12 @@ namespace GnssProcessor {
         ChannelMode     channel_mode_;         ///< KF tracking-mode channel multiplicity per band.
         MwFrequencyMode mw_frequency_mode_;///< MW detector frequency mode (Mirror inherits KF).
         MwChannelMode   mw_channel_mode_;    ///< MW detector channel mode (Mirror inherits KF).
+        /// Card CSL: per-band canonical tracking-attribute rule.  @c Count is the
+        /// historical, byte-identical default; @c Priority walks the priority list.
+        CanonicalSignalRule canonical_signal_rule_{ CanonicalSignalRule::Count };
+        /// Card CSL: coverage floor for @c CanonicalSignalRule::Priority, clamped to
+        /// [0, 1] at load.  Unread under @c Count.
+        double canonical_signal_min_coverage_{ 0.5 };
         bool enable_inhouse_bias_estimation_;         ///< In-house per-(sat, sig-pair) MW phase bias estimation; default off.
         double mw_init_frac_threshold_;                 ///< First-epoch sanity check: max |frac| (WL cycles) before forcing a slip-on-init.  Raise for code-noisy combinations (L1C-based MW).
         double mw_cross_sat_ewma_alpha_;                 ///< EWMA factor (0,1] for smoothing the MW cross-sat σ warmup floor; smaller = smoother. Default 0.1.
