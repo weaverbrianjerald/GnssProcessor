@@ -376,6 +376,37 @@ namespace GnssProcessor {
             else
                 log->info("Canonical-signal rule: count (highest satellite count per band, "
                           "ties to priority order).");
+            // ----- Card CSL-2: the per-station scope of the rule -----
+            // Empty (the default) leaves the rule global, so an absent key is
+            // byte-identical.  A non-empty list is a SCOPE: the listed stations
+            // decide under Priority and every other station under Count, which is
+            // what separates a station-local cause from a support count (CSL §6).
+            // Names are upper-cased here so the comparison at the decision site is
+            // a plain equality on the station label the network already carries.
+            canonical_signal_priority_stations_.clear();
+            {
+                const auto& arr = jsection(json, "processing.canonical_signal_priority_stations",
+                                           "canonical_signal_priority_stations");
+                if (arr.is_array()) {
+                    for (const auto& v : arr) {
+                        if (!v.is_string()) {
+                            log->warn("canonical_signal_priority_stations: ignoring a non-string "
+                                      "entry (every entry must be a station name)");
+                            continue;
+                        }
+                        std::string name = v.get<std::string>();
+                        if (name.empty()) continue;
+                        for (char& c : name)
+                            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                        canonical_signal_priority_stations_.push_back(std::move(name));
+                    }
+                }
+            }
+            if (!canonical_signal_priority_stations_.empty())
+                log->info("Canonical-signal rule SCOPED (card CSL-2) to {} station(s): {} — those "
+                          "stations decide under 'priority', every other station under 'count'.",
+                          canonical_signal_priority_stations_.size(),
+                          joinStrings(canonical_signal_priority_stations_));
         }
         // ----- MW frequency mode (prefer new name; accept legacy mw_signals as filter→mirror, all→all) -----
         {

@@ -1081,6 +1081,31 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Which Melbourne-Wubbena PAIRS the network's wide-lane detector forms
+     *        (`network.cycle_slip.mw_detect_pairs`, card L5P).
+     *
+     * On a two-band lineage there is one pair and the knob is inert.  On the
+     * three-band lineage of card B5D the detector forms three pairs per
+     * satellite, and the two that carry band 5 produced 55 of the 66
+     * `mw_wl_slip` detections of `runs/_rap_b5_tri`, 28 of them in the first
+     * hour.  The band-5-code-removed emulation that reached 535 epochs below a
+     * decimetre had removed those pairs AND the band-5 code rows of the solve in
+     * one step; this knob is the half that removes the pairs alone, so the two
+     * can be attributed separately (L5P section 2).
+     *
+     * @c Primary forms only the pair whose two signals both sit on the
+     * constellation's ionosphere-free pin bands, which on a lineage that latches
+     * one signal per band is the station's latched band-1 / band-2 pair.  The
+     * band-5 phase keeps every other response it has (LLI, gap re-entry, IF-TD,
+     * the band scope); only the wide-lane pair goes, which is what standing
+     * invariant #1 is graded on for this knob (gate G2).
+     */
+    enum class NetworkMwDetectPairs {
+        All,     ///< (default) every pair the detector produced — the pre-knob path, byte-identical.
+        Primary  ///< Only the primary pair (both signals on the pin bands); a pair carrying any other band is not formed.
+    };
+
+    /**
      * @brief The network producer's time-linked parameter classes — the key
      *        space of the @c network.process_noise table.
      *
@@ -1816,6 +1841,20 @@ namespace GnssProcessor {
         /// other detection-shaping knob.  Inert without
         /// @c network.cycle_slip.if_phase_td.
         NetworkIfPhaseTdPairs cycle_slip_if_phase_td_pairs{ NetworkIfPhaseTdPairs::First };
+        /// Card L5P: which MW pairs the network forms (@ref NetworkMwDetectPairs).
+        /// Default @c All is the pre-knob path, byte-identical.  DETECTION-SHAPING
+        /// when armed (a pair that is not formed cannot flag, refloat or feed the
+        /// common-band scope), and inert on a two-band lineage and without
+        /// @c network.cycle_slip.mw_detect.
+        NetworkMwDetectPairs cycle_slip_mw_detect_pairs{ NetworkMwDetectPairs::All };
+        /// Card L5P: multiplier on the CODE sigma of an EXTRA-BAND signal (one whose
+        /// band is neither band of the constellation's ionosphere-free pin pair) in
+        /// the NETWORK solve.  1.0 is the default and is byte-identical — the scale
+        /// is never applied at 1, so the row weight keeps the exact 1/sigma^2 value.
+        /// Values below 1 are refused at load.  The closed-loop consumer is pinned
+        /// to 1 in @c deriveClosedLoopConsumerConfig: this is a producer-side lever,
+        /// and the consumer's own code weighting is a separate graded variable.
+        double extra_band_code_sigma_scale{ 1.0 };
         /// §12.7 ANCHOR-SLIP HANDOVER (docs/SPEC_event_harness.md): when a slip
         /// response frees the arc that ANCHORS a (sat, signal) phase-bias family,
         /// stage the one-epoch candidacy ban so the SAME epoch's election hands the

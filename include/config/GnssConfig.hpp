@@ -257,6 +257,23 @@ namespace GnssProcessor {
         double canonicalSignalMinCoverage() const { return canonical_signal_min_coverage_; }
 
         /**
+         * @brief Stations the canonical-signal rule is scoped to (card CSL-2).
+         *
+         * Empty (the default) means the rule of @ref canonicalSignalRule applies
+         * at every station, which is the pre-card behaviour.  A non-empty list
+         * scopes it: a listed station decides its latch under
+         * @c CanonicalSignalRule::Priority and every other station under
+         * @c CanonicalSignalRule::Count.  Names are compared case-insensitively
+         * and are stored upper-cased by the loader.  Parsed from
+         * @c processing.canonical_signal_priority_stations.
+         *
+         * @return The scoped station names; empty when the knob is unset.
+         */
+        const std::vector<std::string>& canonicalSignalPriorityStations() const {
+            return canonical_signal_priority_stations_;
+        }
+
+        /**
          * @brief Gets the MW slip detector frequency mode (raw, including Mirror sentinel).
          *
          * Prefer @c getResolvedMwFrequencyMode at call sites that need a
@@ -3910,6 +3927,50 @@ namespace GnssProcessor {
          */
         NetworkIfPhaseTdPairs networkCycleSlipIfPhaseTdPairs() const {
             return network_config_.cycle_slip_if_phase_td_pairs;
+        }
+
+        /**
+         * @brief Which Melbourne-Wubbena PAIRS the network's wide-lane detector
+         *        forms (@c network.cycle_slip.mw_detect_pairs, card L5P).
+         *
+         * `all` (default) forms every pair the detector produced and is the
+         * pre-knob path.  `primary` forms only the pair whose two signals both sit
+         * on the constellation's ionosphere-free pin bands — the station's latched
+         * band-1 / band-2 pair on a lineage that latches one signal per band — so a
+         * pair carrying band 5 never becomes a candidate, never refloats an arc and
+         * never enters the common-band scope's evidence.
+         *
+         * Detection-shaping when armed, inert on a two-band lineage (there is only
+         * the primary pair) and inert without @ref networkCycleSlipMwDetect.
+         *
+         * @return The configured pair scope.
+         */
+        NetworkMwDetectPairs networkCycleSlipMwDetectPairs() const {
+            return network_config_.cycle_slip_mw_detect_pairs;
+        }
+
+        /**
+         * @brief Sigma multiplier for EXTRA-BAND CODE rows in the network solve
+         *        (@c network.extra_band_code_sigma_scale, card L5P).
+         *
+         * An extra-band signal is one whose band is neither band of the
+         * constellation's ionosphere-free pin pair (card B5D's vocabulary; GPS
+         * band 5 against the pinned L1/L2 on the RF-0hv posture).  Its code rows
+         * fold at sigma x scale, i.e. at information / scale squared, in the
+         * NETWORK solve only: the same weight the pre-fit census, the post-fit
+         * screens and @c network_pf_rows.csv read, because they all read the one
+         * row-weight vector this scale is applied to.
+         *
+         * With card B5D armed the band-5 code-bias column stays determined by the
+         * band-5 code rows alone, so the wire keeps a band-5 code bias while the
+         * rows lose their pull on the shared states.  1.0 is the default and is
+         * never applied, so an unarmed run is byte-identical; the loader refuses a
+         * value below 1.  The closed-loop consumer is pinned to 1.
+         *
+         * @return The multiplier; 1.0 (no scaling) by default.
+         */
+        double networkExtraBandCodeSigmaScale() const {
+            return network_config_.extra_band_code_sigma_scale;
         }
 
         /// @brief SPEC_slip_relevel_walk §6 — latch a detector-marked arc's free
@@ -7765,6 +7826,10 @@ namespace GnssProcessor {
         /// Card CSL: coverage floor for @c CanonicalSignalRule::Priority, clamped to
         /// [0, 1] at load.  Unread under @c Count.
         double canonical_signal_min_coverage_{ 0.5 };
+        /// Card CSL-2: stations the rule is scoped to, upper-cased at load.  Empty is
+        /// the byte-identical default (the rule applies everywhere); a non-empty list
+        /// puts the listed stations on @c Priority and every other station on @c Count.
+        std::vector<std::string> canonical_signal_priority_stations_;
         bool enable_inhouse_bias_estimation_;         ///< In-house per-(sat, sig-pair) MW phase bias estimation; default off.
         double mw_init_frac_threshold_;                 ///< First-epoch sanity check: max |frac| (WL cycles) before forcing a slip-on-init.  Raise for code-noisy combinations (L1C-based MW).
         double mw_cross_sat_ewma_alpha_;                 ///< EWMA factor (0,1] for smoothing the MW cross-sat σ warmup floor; smaller = smoother. Default 0.1.

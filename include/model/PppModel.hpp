@@ -537,6 +537,35 @@ namespace GnssProcessor {
                              double min_coverage);
 
         /**
+         * @brief Scope the canonical-signal rule to a station list (card CSL-2).
+         *
+         * Pure: the per-station half of @ref decideCanonicalPicks' rule argument.
+         * CSL section 4 left the consumer's gain complete with four of the six
+         * stations that move to L1W, with equal first-epoch margins at three of
+         * them, so a coverage floor cannot split them further and the next split
+         * needs a per-station override.
+         *
+         * An EMPTY @p priority_stations is the pre-card default: @p rule applies
+         * at every station.  A non-empty list is a SCOPE, and it decides on its
+         * own: a listed station runs @c CanonicalSignalRule::Priority and every
+         * other station runs @c CanonicalSignalRule::Count, whatever @p rule says.
+         * That is the card's definition, so a list alone is sufficient to arm the
+         * scope and @p rule cannot silently widen it.
+         *
+         * The comparison is case-insensitive and the empty station label (the
+         * off-network path, which has no label) is never a member.
+         *
+         * @param rule              The configured global rule.
+         * @param priority_stations The scope; empty means "no scope".
+         * @param station           This station's label (@ref setCanonicalTraceLabel).
+         * @return The rule this station decides its latch under.
+         */
+        static CanonicalSignalRule
+        canonicalRuleForStation(CanonicalSignalRule rule,
+                                const std::vector<std::string>& priority_stations,
+                                const std::string& station);
+
+        /**
          * @brief Export the locked canonical-signal latch (RS-8, §21.16).
          *
          * One entry per DECIDED (constellation, band, obs-type) triple, in

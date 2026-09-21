@@ -101,11 +101,12 @@ record the program is re-founding **on**.
   contamination is cured; triple field 314 to 390 epochs below a decimetre, which fails the
   L5 adoption bars (dual pair 603, emulation 535); the emulation had also removed the band-5
   wide-lane detector pair, an unread lead.
-- [L5P](refound/L5P_l5_phase_posture_2026-09-21.md): open, 2026-09-21: build card, the L5 phase
-  posture; two default-OFF knobs (`network.cycle_slip.mw_detect_pairs`,
-  `network.extra_band_code_sigma_scale`) separate the band-5 wide-lane detector pairs from the
-  band-5 code rows (the gap 390 to 535 epochs below a decimetre); gates, attribution and the
-  unchanged L5 adoption bars frozen.
+- [L5P](refound/L5P_l5_phase_posture_2026-09-21.md): open (built 2026-09-21, NOT armed), the L5
+  phase posture; two default-OFF knobs (`network.cycle_slip.mw_detect_pairs`,
+  `network.extra_band_code_sigma_scale`); the gap is the band-5 CODE ROWS (scale 10: 597 epochs
+  below a decimetre at WTZZ00DEU, every hour better than the dual pair), not the detector
+  pairs (391); the scale fails the clock-wire bar and does not transfer across the 16 census
+  sites; L5 not adopted.
 - [MSC](refound/MSC_multi_site_consumer_2026-09-21.md): open (MSC-1 result 2026-09-21), the
   multi-site consumer census; WTZZ00DEU is not representative (603 epochs below a decimetre
   against a median of 145 at 16 independent sites); by the frozen count rule no adoption of

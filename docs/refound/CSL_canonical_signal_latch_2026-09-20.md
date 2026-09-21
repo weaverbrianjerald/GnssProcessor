@@ -236,3 +236,20 @@ follow the phase. Byte-identical at the default; the consumer stays on `count`.
 - **B3 sim** byte-identical (one signal per band).
 - A pass makes a recommendation to replace the armed value in the working bases; the
   author decides.
+
+## 8. 2026-09-21: the per-station scope is built; its gate fails on the premise, which is the code half again
+
+`processing.canonical_signal_priority_stations` is built (card L5P's build, suite
+`CanonicalSignalStationScope`, byte-identical when empty, the consumer's list
+cleared). The gate G1 of section 6 FAILS: `runs/_rap_pC_four` (the four stations
+listed) is not byte-identical to `runs/_rap_lE_cov085`. The band-1 PHASE latch is
+identical at all 60 stations (the worker's read of the latch lines); the band-1 CODE
+latch differs at 16 unlisted stations, C1W under the scope against C1C under the
+global rule, because the code follows the phase only under `priority`, and
+`lE_cov085` ran `priority` everywhere. The premise of G1 was wrong, not the build.
+Re-read by the manager: `pC_four` 0.17 0.09 0.07 0.07 0.08 0.05 m and 634 epochs below
+a decimetre against `lE_cov085` 0.37 0.07 0.05 0.09 0.08 0.05 m and 610: with the code
+left on C1W at those 16 stations the first hour halves, which agrees with section 7.
+The split arms of section 6 are deferred until the reader defect of card RXP is
+fixed and the code half of section 7 is settled, because both move the base the
+split would be graded against; their control is then `pC_four`, not `lE_cov085`.

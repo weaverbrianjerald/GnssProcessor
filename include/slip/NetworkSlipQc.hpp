@@ -367,6 +367,12 @@ struct PassABuffers {
         long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob ON).
         long long evidence_would_admit{ 0 };  ///< Knob OFF; the evidence rule alone would have.
         long long legacy_admitted{ 0 };       ///< Admitted by today's integer gate.
+        /// Card L5P (`network.cycle_slip.mw_detect_pairs: primary`): detector rows
+        /// the network did NOT form, because the pair carries a band outside the
+        /// constellation's ionosphere-free pin pair.  Zero under the default
+        /// `all` and on a two-band lineage, so a nonzero count is the ON-path
+        /// evidence that the scope actually bit (standing invariant #4).
+        long long scope_skipped{ 0 };
     };
     std::vector<MwAdmitCounts> sta_mw_admit;
 

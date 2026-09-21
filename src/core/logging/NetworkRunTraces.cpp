@@ -1605,6 +1605,21 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.sat_gf_extra_band_free
                        ? std::string("\"sat_gf_extra_band_free\":true,") : std::string())
+               // Card L5P: both knobs are SOLVE-AFFECTING when armed — the pair
+               // scope changes which arcs refloat, the sigma scale changes the
+               // normal equations — so an archived logs/ folder has to be able to
+               // say which side of them produced the products.  Emitted ONLY when
+               // armed (the sat_gf_extra_band_free precedent above), so an unarmed
+               // run's manifest bytes are unchanged.
+               << ((nc.cycle_slip_mw_detect_pairs != NetworkMwDetectPairs::All
+                    || nc.extra_band_code_sigma_scale > 1.0)
+                       ? fmt::format("\"mw_detect_pairs\":\"{}\","
+                                     "\"extra_band_code_sigma_scale\":{},",
+                                     nc.cycle_slip_mw_detect_pairs
+                                         == NetworkMwDetectPairs::Primary
+                                             ? "primary" : "all",
+                                     nc.extra_band_code_sigma_scale)
+                       : std::string())
                // RF-1 (docs/refound/RF-1_float_ambiguities_design.md §3.5 / §7.1): the
                // AMBIGUITY VEHICLE is the product's provenance, so the manifest records
                // it — and §3.5's whole reason for the q knob existing is that its 0.0

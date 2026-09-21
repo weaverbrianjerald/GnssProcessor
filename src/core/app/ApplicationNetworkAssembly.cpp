@@ -30,6 +30,7 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "filter/NetworkSbasis.hpp"
+#include "filter/NetworkExtraBandScope.hpp"  // card L5P: the extra-band / primary-pair predicates
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
@@ -296,6 +297,57 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
             ++n_dw;
         }
         st.gl_rows_deweighted += n_dw;
+    }
+    // --- card L5P: the EXTRA-BAND code deweight -------------------------------
+    // (docs/refound/L5P_l5_phase_posture_2026-09-21.md section 1.)  The code rows
+    // of a signal whose band is neither band of the constellation's
+    // ionosphere-free pin pair fold at σ × scale.  This is the ONE place the row
+    // weight is formed, so the solve, the pre-fit census and every post-fit screen
+    // read the same number — they all read R.w, which is this vector.
+    //
+    // WHY CODE ONLY, and why here rather than at the measurement model.  The card
+    // separates two things the band-5-code-removed emulation removed together: the
+    // band-5 PAIRS of the wide-lane detector (the mw_detect_pairs knob) and the
+    // pull the band-5 CODE rows have on the shared states.  With B5D armed the
+    // band-5 code-bias column is determined by those same rows, so deweighting
+    // them keeps the wire's band-5 code bias — a drop would not — while shrinking
+    // their contribution to the clock, the code biases and the slant ionosphere.
+    // The band-5 PHASE rows are deliberately untouched: the posture exists to USE
+    // the L5 phase.
+    //
+    // Thread-safety: networkPinBandsFor is a const read of the product cache's
+    // clock-reference map, filled once at product load and never mutated in the
+    // epoch loop — the same contract StateInitializer::resolveReceiverBias already
+    // relies on from this parallel produce.  The per-system result is memoized
+    // locally so each station resolves each constellation once.
+    //
+    // OFF byte-identity: at the default 1.0 the whole block is skipped, so `w`
+    // keeps the exact cwiseInverse result with zero additional floating-point
+    // operations.
+    const double eb_scale = config_.networkExtraBandCodeSigmaScale();
+    if (eb_scale > 1.0) {
+        const Eigen::Index mr = std::min<Eigen::Index>(
+            m, static_cast<Eigen::Index>(em.signal_types.size()));
+        std::map<char, NetworkPinBands> pin_by_sys;
+        long long n_eb = 0, n_nopin = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            if (sig.empty() || sig[0] == 'L') continue;           // PHASE UNTOUCHED
+            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+            if (sat.empty()) continue;
+            auto pit = pin_by_sys.find(sat[0]);
+            if (pit == pin_by_sys.end())
+                pit = pin_by_sys.emplace(sat[0], networkPinBandsFor(sat[0])).first;
+            // Invariant #4: a constellation with no resolvable pin pair is COUNTED,
+            // never silently treated as all-extra-band or as all-primary.
+            if (!pit->second.valid()) { ++n_nopin; continue; }
+            if (!networkSignalIsExtraBand(sig, pit->second)) continue;
+            w(r) /= eb_scale * eb_scale;                           // σ × scale
+            ++n_eb;
+        }
+        st.eb_rows_deweighted += n_eb;
+        st.eb_rows_no_pin     += n_nopin;
     }
     y = em.innovations;
 }
@@ -1405,8 +1457,39 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         const bool   ev_on    = config_.networkCycleSlipMwEvidenceRefloat();
                         const double ev_ratio = config_.networkCycleSlipMwEvidenceRatioMin();
                         const int    ev_narc  = config_.networkCycleSlipMwEvidenceMinArcEpochs();
+                        // Card L5P: the PAIR SCOPE.  Under 'primary' the network
+                        // forms only the pair whose two signals both sit on the
+                        // constellation's ionosphere-free pin bands — on a lineage
+                        // that latches one signal per band, the station's latched
+                        // band-1 / band-2 pair.  A pair carrying any other band is
+                        // not formed at all: no candidate, no refloat, and no entry
+                        // in the common-band scope's evidence below, so the
+                        // detector's view of the epoch is the two-band one.  The
+                        // band-5 PHASE keeps LLI, gap re-entry, IF-TD and the band
+                        // scope, which is what gate G2 grades (invariant #1).
+                        // 'all' (the default) evaluates the lambda to true for
+                        // every pair, so an unarmed run is byte-identical.
+                        const bool mw_pairs_primary =
+                            config_.networkCycleSlipMwDetectPairs()
+                                == NetworkMwDetectPairs::Primary;
+                        std::map<char, NetworkPinBands> mw_pin_by_sys;
+                        const auto mw_pair_ok =
+                            [&](const std::string& sat, const std::string& s1,
+                                const std::string& s2) {
+                                if (!mw_pairs_primary) return true;
+                                if (sat.empty()) return true;
+                                auto pit = mw_pin_by_sys.find(sat[0]);
+                                if (pit == mw_pin_by_sys.end())
+                                    pit = mw_pin_by_sys.emplace(
+                                              sat[0], networkPinBandsFor(sat[0])).first;
+                                return networkMwPairInPrimaryScope(s1, s2, pit->second);
+                            };
                         for (const auto& r : mwr) {
                             if (r.sig1.empty() || r.sig2.empty()) continue;
+                            if (!mw_pair_ok(r.satellite, r.sig1, r.sig2)) {
+                                ++pa.sta_mw_admit[i].scope_skipped;
+                                continue;
+                            }
                             const auto d = networkMwAdmitCandidate(
                                 r.slip_wl_known, r.slip_wl_cycles, r.slip_frac, frac_max,
                                 r.evidence_ratio, r.arc_epochs, r.bia_corrected,
@@ -1438,10 +1521,18 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         // Per-station slot, no shared write.  The IF-TD half is
                         // a network-POOLED decision and is previewed serially in
                         // the verdict seam.
+                        // Card L5P: the pair scope applies HERE TOO.  A pair the
+                        // network did not form must not testify about which bands
+                        // an epoch implicated — leaving it in the evidence would
+                        // mean the detector still "formed" it, just without a
+                        // candidate, which is not what the knob claims.  Under
+                        // 'all' the predicate is true for every pair, so an
+                        // unarmed run's evidence is byte-identical.
                         auto& cbev = pa.sta_cb_ev[i];
                         for (const auto& [pkey, pst] : st.mw_slip->getEpochPairStatus()) {
                             std::string csat, cs1, cs2;
                             if (!parseIfPairResetKey(pkey, csat, cs1, cs2)) continue;
+                            if (!mw_pair_ok(csat, cs1, cs2)) continue;
                             CommonBandProcessed cp;
                             cp.arc_n     = pst.arc_n_at_sample;
                             cp.flagged   = pst.flagged;
@@ -1453,6 +1544,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         }
                         for (const auto& r : mwr) {
                             if (r.sig1.empty() || r.sig2.empty()) continue;
+                            if (!mw_pair_ok(r.satellite, r.sig1, r.sig2)) continue;
                             cbev[r.satellite].flagged_pairs.insert({r.sig1, r.sig2});
                         }
                         for (const auto& obs : modeled[i])
@@ -1568,8 +1660,24 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             const bool   ev_on    = config_.networkCycleSlipMwEvidenceRefloat();
             const double ev_ratio = config_.networkCycleSlipMwEvidenceRatioMin();
             const int    ev_narc  = config_.networkCycleSlipMwEvidenceMinArcEpochs();
+            // Card L5P: the same pair scope as the parallel scan above — the datum
+            // station must never drift to a different pair set any more than to a
+            // different admission gate.
+            const bool dm_pairs_primary =
+                config_.networkCycleSlipMwDetectPairs() == NetworkMwDetectPairs::Primary;
+            std::map<char, NetworkPinBands> dm_pin_by_sys;
             for (const auto& r : mwr) {
                 if (r.sig1.empty() || r.sig2.empty()) continue;
+                if (dm_pairs_primary && !r.satellite.empty()) {
+                    auto pit = dm_pin_by_sys.find(r.satellite[0]);
+                    if (pit == dm_pin_by_sys.end())
+                        pit = dm_pin_by_sys.emplace(
+                                  r.satellite[0], networkPinBandsFor(r.satellite[0])).first;
+                    if (!networkMwPairInPrimaryScope(r.sig1, r.sig2, pit->second)) {
+                        ++pa.sta_mw_admit[0].scope_skipped;
+                        continue;
+                    }
+                }
                 const auto d = networkMwAdmitCandidate(
                     r.slip_wl_known, r.slip_wl_cycles, r.slip_frac, frac_max,
                     r.evidence_ratio, r.arc_epochs, r.bia_corrected,
@@ -1601,6 +1709,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         ctx.counters.n_mw_evidence_would_admit += ac.evidence_would_admit;
         ctx.counters.n_mw_drop_loose           += ac.drop_loose;
         ctx.counters.n_mw_drop_unknown         += ac.drop_unknown;
+        ctx.counters.n_mw_pair_scope_skipped   += ac.scope_skipped;   // card L5P
     }
 
     // Serial slip-QC drains (INC-6): bodies relocated VERBATIM to

@@ -31,6 +31,7 @@
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -488,6 +489,24 @@ std::vector<std::string> activeFrequencyBands(
         return out;
     }
 
+    CanonicalSignalRule
+    PppModel::canonicalRuleForStation(CanonicalSignalRule rule,
+                                      const std::vector<std::string>& priority_stations,
+                                      const std::string& station) {
+        if (priority_stations.empty()) return rule;   // no scope: the global rule
+        if (station.empty()) return CanonicalSignalRule::Count;
+        const auto ieq = [](const std::string& a, const std::string& b) {
+            if (a.size() != b.size()) return false;
+            for (std::size_t i = 0; i < a.size(); ++i)
+                if (std::toupper(static_cast<unsigned char>(a[i]))
+                    != std::toupper(static_cast<unsigned char>(b[i]))) return false;
+            return true;
+        };
+        for (const auto& s : priority_stations)
+            if (ieq(s, station)) return CanonicalSignalRule::Priority;
+        return CanonicalSignalRule::Count;
+    }
+
     void PppModel::decideConstellationCanonicals(const std::vector<RinexObservation>& observations) {
         // Group observations by constellation so per-constellation tallies
         // only consider that constellation's satellites.
@@ -556,8 +575,15 @@ std::vector<std::string> activeFrequencyBands(
                 candidates.push_back(CanonicalCandidate{ sig, band_name, obs_type, count });
             }
 
-            const auto picks = decideCanonicalPicks(candidates,
-                                                    config_.canonicalSignalRule(),
+            // Card CSL-2: the rule is scoped per STATION.  With no list configured
+            // this is config_.canonicalSignalRule() exactly, so the pre-card path
+            // is byte-identical; with one, the listed stations decide under
+            // 'priority' and the rest under 'count'.
+            const auto station_rule =
+                canonicalRuleForStation(config_.canonicalSignalRule(),
+                                        config_.canonicalSignalPriorityStations(),
+                                        canonical_trace_label_);
+            const auto picks = decideCanonicalPicks(candidates, station_rule,
                                                     config_.canonicalSignalMinCoverage());
             struct Candidate {
                 std::string signal;
@@ -641,12 +667,20 @@ std::vector<std::string> activeFrequencyBands(
                               : " over " + pick.runner_up + "("
                                 + std::to_string(pick.runner_up_count) + ")";
             }
+            // Card CSL-2: the rule NAMED here is the one this station actually
+            // decided under, not the global key — a scoped run whose line said
+            // "priority" at a station running 'count' would be the trace lying
+            // about the lever under test.  With no scope the two are the same
+            // value, so an unscoped run's bytes are unchanged.
             log_manager_.getLogger("main_log")->info(
-                "Canonical latch for {} station '{}' (rule={}, min_coverage={:.2f}, "
+                "Canonical latch for {} station '{}' (rule={}{}, min_coverage={:.2f}, "
                 "{} sats this epoch): {}",
                 cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
-                config_.canonicalSignalRule() == CanonicalSignalRule::Priority
-                    ? "priority" : "count",
+                station_rule == CanonicalSignalRule::Priority ? "priority" : "count",
+                config_.canonicalSignalPriorityStations().empty()
+                    ? std::string()
+                    : fmt::format(" [scoped to {} station(s)]",
+                                  config_.canonicalSignalPriorityStations().size()),
                 config_.canonicalSignalMinCoverage(), sat_obs_list.size(),
                 latch_detail.empty() ? std::string("(none)") : latch_detail);
         }

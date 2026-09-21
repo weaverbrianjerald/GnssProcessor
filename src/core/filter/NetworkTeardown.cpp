@@ -2803,6 +2803,50 @@ int networkTeardown(
                   C.n_mw_drop_unknown);
     }
 
+    // ---- L5P: the MW PAIR SCOPE (network.cycle_slip.mw_detect_pairs) --------
+    // Printed only when the scope is armed — it has nothing to say otherwise (the
+    // counter is structurally 0 under `all`).  Standing invariant #4: the count IS
+    // the ON-path telemetry, and an armed run reporting 0 on a three-band lineage
+    // is the wiring being inert, not the detector being quiet.
+    if (config_.networkCycleSlipMwDetectPairs() == NetworkMwDetectPairs::Primary) {
+        const auto& C = ctx.counters;
+        log->info("Network (card L5P, MW pair scope = primary): {} detector row(s) NOT "
+                  "formed because the pair carried a band outside the constellation's "
+                  "ionosphere-free pin pair.  Those bands keep every other slip response "
+                  "they had (LLI, gap re-entry, IF-TD, the band scope) — only the "
+                  "wide-lane pair is gone.", C.n_mw_pair_scope_skipped);
+        if (C.n_mw_pair_scope_skipped == 0)
+            log->warn("Network (card L5P, MW pair scope): INERT — the scope was armed and "
+                      "refused NOTHING.  Expected on a two-band lineage (there is only the "
+                      "primary pair); on a three-band one it means the detector produced no "
+                      "extra-band pair at all, so check mw_detect and the pin pair before "
+                      "reading this arm as a scoped one.");
+    }
+
+    // ---- L5P: the EXTRA-BAND code deweight (network.extra_band_code_sigma_scale)
+    // Same contract.  The fold runs inside the PARALLEL produce phase, so its row
+    // counts live per-station (the gl_rows_deweighted precedent); sum them here,
+    // once, before the block reads them.
+    if (config_.networkExtraBandCodeSigmaScale() > 1.0) {
+        auto& C = ctx.counters;
+        C.n_eb_rows_deweighted = 0;
+        C.n_eb_rows_no_pin     = 0;
+        for (const auto& st : stations) {
+            C.n_eb_rows_deweighted += st.eb_rows_deweighted;
+            C.n_eb_rows_no_pin     += st.eb_rows_no_pin;
+        }
+        const double s = config_.networkExtraBandCodeSigmaScale();
+        log->info("Network (card L5P, extra-band code sigma x {:.3f}): {} code row(s) folded "
+                  "at the scaled sigma (information / {:.3f}); {} code row(s) left unscaled "
+                  "because their constellation has no resolvable ionosphere-free pin pair.",
+                  s, C.n_eb_rows_deweighted, s * s, C.n_eb_rows_no_pin);
+        if (C.n_eb_rows_deweighted == 0)
+            log->warn("Network (card L5P, extra-band code sigma): INERT — the scale was armed "
+                      "and NO code row was ever extra-band.  Expected on a two-band lineage; "
+                      "on a three-band one check the pin pair (a constellation with no "
+                      "clock-reference entry answers 'nothing is extra-band' by design).");
+    }
+
     // ---- COMMON-BAND SCOPE (network.cycle_slip.common_band_scope, §14) ------
     // Printed ALWAYS, armed or not, for the same reason as the clause above: the
     // would-narrow count sizes the card on a lineage without running it armed,

@@ -3146,6 +3146,32 @@ namespace GnssProcessor {
         network_config_.sat_gf_extra_band_free =
             jval<bool>(json, "network.sat_gf_extra_band_free",
                        "sat_gf_extra_band_free", false);
+        // Card L5P: the CODE-WEIGHT half of the band-5-code-removed emulation.  With
+        // B5D armed the extra-band code-bias column stays determined by the extra-band
+        // code rows alone, so raising their sigma keeps the wire's band-5 code bias
+        // while the rows lose their pull on the shared states.  1.0 is the default and
+        // is never applied (byte-identical); below 1 is refused rather than clamped —
+        // a config that asks to TRUST an extra band more than the pinned pair is asking
+        // for the opposite of this knob and is a typo, not a posture.
+        network_config_.extra_band_code_sigma_scale =
+            jval<double>(json, "network.extra_band_code_sigma_scale",
+                         "extra_band_code_sigma_scale", 1.0);
+        if (!(network_config_.extra_band_code_sigma_scale >= 1.0)) {
+            log->error("Network (card L5P): network.extra_band_code_sigma_scale = {} is not at "
+                       "or above 1 (or is not a number) — falling back to 1.0 (no scaling).  "
+                       "The knob only ever DEWEIGHTS the code rows of a signal whose band is "
+                       "neither band of the constellation's ionosphere-free pin pair.",
+                       network_config_.extra_band_code_sigma_scale);
+            network_config_.extra_band_code_sigma_scale = 1.0;
+        }
+        if (network_config_.extra_band_code_sigma_scale > 1.0)
+            log->info("Network (card L5P): network.extra_band_code_sigma_scale = {:.3f} — "
+                      "EXTRA-BAND code rows fold at sigma x {:.3f} (information / {:.3f}) in "
+                      "the network solve; the closed-loop consumer stays at 1.",
+                      network_config_.extra_band_code_sigma_scale,
+                      network_config_.extra_band_code_sigma_scale,
+                      network_config_.extra_band_code_sigma_scale
+                          * network_config_.extra_band_code_sigma_scale);
 
         if (estimate_network_sat_code_bias_) {
             estimate_sat_biases_   = true;   // promote the satellite code bias to a state
@@ -5248,6 +5274,29 @@ namespace GnssProcessor {
         network_cycle_slip_mw_detect_ =
             jval<bool>(json, "network.cycle_slip.mw_detect",
                        "network_cycle_slip_mw_detect", false);
+        // Card L5P: which MW PAIRS the network forms.  Detection-shaping when
+        // armed and defaults to today's every-pair detector, so an unarmed run is
+        // byte-identical (invariant #6).  Same loader shape as if_phase_td_pairs
+        // above: a typo must not silently narrow a detector, so it is named,
+        // refused and defaulted loudly.
+        {
+            const std::string s = jval<std::string>(json, "network.cycle_slip.mw_detect_pairs",
+                                                    "network_cycle_slip_mw_detect_pairs",
+                                                    std::string{"all"});
+            if (s.empty() || s == "all")
+                network_config_.cycle_slip_mw_detect_pairs = NetworkMwDetectPairs::All;
+            else if (s == "primary")
+                network_config_.cycle_slip_mw_detect_pairs = NetworkMwDetectPairs::Primary;
+            else {
+                network_config_.cycle_slip_mw_detect_pairs = NetworkMwDetectPairs::All;
+                log->error("Network (card L5P): network.cycle_slip.mw_detect_pairs = '{}' is not "
+                           "one of all|primary — falling back to 'all' (today's every-pair "
+                           "wide-lane detector).  'primary' forms only the pair whose two "
+                           "signals sit on the constellation's ionosphere-free pin bands, so "
+                           "no pair carrying an extra band (GPS band 5 on this posture) becomes "
+                           "a candidate, refloats an arc or enters the common-band evidence.", s);
+            }
+        }
         // IF-phase triple-difference slip DETECTION (this increment): between-
         // satellite, between-epoch ionosphere-free phase OMC.  Detection-only — a
         // flagged IF pair refloats BOTH band ambiguities (pending-reseed) so the
@@ -5944,6 +5993,20 @@ namespace GnssProcessor {
                       "is not armed — disabling datum_station_detect.  Arm mw_detect (or "
                       "network.phase_leveling, which auto-arms it) first.");
             network_cycle_slip_datum_station_detect_ = false;
+        }
+
+        // Card L5P: the pair scope is a scope ON the MW drain, so without that
+        // drain it is inert.  Warn rather than refuse (the B5D interlock
+        // precedent): the knob changes nothing on its own, and silently accepting
+        // it would let an arm read as armed while the detector it scopes never
+        // ran.  Checked AFTER the invariant-#1 auto-arm above, so a leveling run
+        // that auto-armed mw_detect never trips it.
+        if (network_config_.cycle_slip_mw_detect_pairs == NetworkMwDetectPairs::Primary
+            && !network_cycle_slip_mw_detect_) {
+            log->warn("Network (card L5P): network.cycle_slip.mw_detect_pairs = 'primary' is "
+                      "INERT without network.cycle_slip.mw_detect — it scopes the wide-lane "
+                      "detector's pairs and that detector is not armed, so no pair is formed "
+                      "either way.");
         }
     }
 
@@ -11855,6 +11918,19 @@ namespace GnssProcessor {
         // 162 → 80 epochs below a decimetre).  Pin the consumer on the historical
         // rule so an arm of this knob changes the producer alone.
         c.canonical_signal_rule_ = CanonicalSignalRule::Count;
+        // Card CSL-2: the per-station SCOPE is the same network-side lever, and a
+        // scope that happened to name the held-out station would put the consumer
+        // on 'priority' through the back door (the scope decides on its own, so
+        // pinning the rule alone is not enough).  Clear the list too, which is the
+        // configuration that makes the rule pin above authoritative.
+        c.canonical_signal_priority_stations_.clear();
+        // Card L5P: the extra-band code deweight is a PRODUCER-side lever on the
+        // network's own normal equations.  The derived consumer is a full copy of
+        // the producer config and would otherwise deweight its own band-5 code as
+        // well — a separate variable, and not the one under test (B5D section 3
+        // graded the consumer's band-5 code residual at its own weight).  Pin it
+        // at 1 so an arm of this knob moves the WIRE alone.
+        c.network_config_.extra_band_code_sigma_scale = 1.0;
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates
         // integer RECOVERY on the held-out station from the producer's products.

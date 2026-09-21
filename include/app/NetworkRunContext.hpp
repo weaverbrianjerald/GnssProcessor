@@ -3331,6 +3331,17 @@ namespace GnssProcessor {
         long long n_mw_admit_legacy = 0, n_mw_evidence_admitted = 0,
                   n_mw_evidence_would_admit = 0, n_mw_drop_loose = 0,
                   n_mw_drop_unknown = 0;
+        /// Card L5P (network.cycle_slip.mw_detect_pairs): detector rows the network
+        /// did NOT form under `primary`, summed over stations.  Zero under the
+        /// default `all` and on a two-band lineage; a `primary` run reporting zero
+        /// on a three-band lineage is dead wiring (standing invariant #4).
+        long long n_mw_pair_scope_skipped = 0;
+        /// Card L5P (network.extra_band_code_sigma_scale): CODE rows folded at the
+        /// scaled sigma, and code rows whose constellation had no resolvable
+        /// ionosphere-free pin pair (those keep their unscaled weight).  Summed
+        /// from the per-station NetStation counters at teardown, as the gross-LOS
+        /// row counter is.
+        long long n_eb_rows_deweighted = 0, n_eb_rows_no_pin = 0;
         /// COMMON-BAND SCOPE CENSUS (network.cycle_slip.common_band_scope,
         /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and,
         /// like the MW admission census above, collected KNOB-INDEPENDENTLY —

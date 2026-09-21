@@ -187,6 +187,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkInvariantCarryDriver.cpp
     src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
+    src/core/filter/NetworkExtraBandScope.cpp
     src/core/filter/NetworkPhaseDatum.cpp
     src/core/filter/NetworkChainDatum.cpp
     src/core/filter/NetworkAnchorHygiene.cpp
@@ -494,6 +495,9 @@ add_executable(gnss_tests
     tests/test_amb_float_vehicle.cpp
     tests/test_phase_held_basis.cpp
     tests/test_canonical_signal_latch.cpp
+    tests/test_canonical_signal_station_scope.cpp
+    tests/test_mw_detect_pair_scope.cpp
+    tests/test_extra_band_code_sigma.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

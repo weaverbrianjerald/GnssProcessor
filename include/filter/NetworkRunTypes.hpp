@@ -219,6 +219,17 @@ struct NetStation {
     /// per-station; summed into the run-end report at teardown (the
     /// @c iono_var_epochs_fed / @c sd_ewl_ctr precedent).
     long long si_rows_demoted{ 0 };
+    /// Card L5P (`network.extra_band_code_sigma_scale`): CODE rows of an EXTRA-BAND
+    /// signal (one whose band is neither band of the constellation's ionosphere-free
+    /// pin pair) this station folded at the scaled sigma over the run.  Accumulated
+    /// inside the PARALLEL produce phase, so it lives per-station and is summed into
+    /// the run-end report at teardown (the @c gl_rows_deweighted precedent).
+    long long eb_rows_deweighted{ 0 };
+    /// Card L5P: code rows the scale could NOT be decided for, because the row's
+    /// constellation has no resolvable ionosphere-free pin pair in the BIA product.
+    /// Those rows keep their unscaled weight; a nonzero count means the knob is
+    /// partly inert and the run-end line says so (standing invariant #4).
+    long long eb_rows_no_pin{ 0 };
 };
 
 /// One SD extra-wide-lane INTEGER decision for a (station, constellation, satellite),
