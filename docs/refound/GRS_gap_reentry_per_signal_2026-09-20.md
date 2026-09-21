@@ -224,3 +224,25 @@ records of the day for N = 3 (3.4 % of the GPS records), most of it long stretch
 which a receiver tracks a satellite without ever holding the semi-codeless pair.
 
 The rule is the build card [CPA](CPA_canonical_pair_admission_2026-09-20.md).
+
+## 7. 2026-09-20: the 12 h dual field arm of the rider
+
+Dual field posture, 12 h, 1440 consumer epochs, exe `gnss_processor_grs.exe` for the
+last two rows (the first two are the arms of AB2 section 15).
+
+| arm | consumer 3D p50 by hour, hours 1 to 12 (m) | sub-dm of 1440 | T4_attrib | CLK_ANCHOR | clock wire over 12 h, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| `d12_off` (no re-entry response) | 0.57 0.17 0.11 0.10 0.13 0.11 0.11 0.13 0.17 0.16 0.18 0.40 | 223 | 1069 | 1354 | 0.0406 / 0.0440 |
+| `d12_on` (the working base) | 0.53 0.11 0.09 0.10 0.14 0.12 0.14 0.15 0.13 0.12 0.17 0.35 | 321 | 702 | 1066 | 0.0203 / 0.0303 |
+| `d12_grs` (with the per-signal rider) | 0.53 0.11 0.10 0.11 0.12 0.11 0.16 0.16 0.14 0.11 0.17 0.12 | 275 | 370 | 628 | 0.0148 / 0.0251 |
+| `d12_cpa` (rider and the causal admission emulation, 3 epochs) | 0.19 0.08 0.06 0.07 0.09 0.07 0.09 0.07 0.06 0.13 0.19 0.17 | 962 | 351 | 511 | 0.0138 / 0.0327 |
+
+Read with the rule that was frozen for the row-level response (not worse than the
+control by more than 0.03 m of consumer p50 in any hour from 3 to 12, clock wire
+better): the rider passes. Its largest loss against the working base is 0.02 m (hour
+7), it removes the loss of hour 12 (0.12 against 0.35 m), it halves the post-fit
+refloats again (702 to 370) and the clock wire improves on both satellite sets. Its
+epochs below a decimetre are fewer (275 against 321), as on the 6 h arm; the hourly
+medians are equal within 0.02 m, so the count moves because the consumer sits close
+to the 0.10 m line, and it is reported, not explained. The 12 h arm owed by section 4 is
+delivered; the recommendation and the arming remain the author's decision.

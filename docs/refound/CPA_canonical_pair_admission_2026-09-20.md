@@ -57,3 +57,25 @@ on.
 - **Not adopted by this card:** arming anything in the working bases, and the triple
   posture, are separate decisions. A 12 h arm of the dual field posture is owed
   before a recommendation (the lesson of AB2 section 14).
+
+## 4. 2026-09-20: the 12 h emulation arm (before the build)
+
+The rule emulated in the RINEX files (`holes;where=causal;keep=3`) on the dual field
+posture with the rider, 12 h, exe `gnss_processor_grs.exe`.
+
+| arm | consumer 3D p50 by hour, hours 1 to 12 (m) | sub-dm of 1440 | T4_attrib | CLK_ANCHOR | clock wire over 12 h, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| `d12_off` (no re-entry response) | 0.57 0.17 0.11 0.10 0.13 0.11 0.11 0.13 0.17 0.16 0.18 0.40 | 223 | 1069 | 1354 | 0.0406 / 0.0440 |
+| `d12_on` (the working base) | 0.53 0.11 0.09 0.10 0.14 0.12 0.14 0.15 0.13 0.12 0.17 0.35 | 321 | 702 | 1066 | 0.0203 / 0.0303 |
+| `d12_grs` (with the per-signal rider) | 0.53 0.11 0.10 0.11 0.12 0.11 0.16 0.16 0.14 0.11 0.17 0.12 | 275 | 370 | 628 | 0.0148 / 0.0251 |
+| `d12_cpa` (rider and the causal admission emulation, 3 epochs) | 0.19 0.08 0.06 0.07 0.09 0.07 0.09 0.07 0.06 0.13 0.19 0.17 | 962 | 351 | 511 | 0.0138 / 0.0327 |
+
+With the rule 962 of 1440 epochs are below a decimetre (321 on the working base, 223
+at the start of the day), the first hour is 0.19 m, hours 2 to 9 are at 0.06 to 0.09
+m, and no hour from 3 to 12 is worse than the working base by more than 0.02 m
+(hours 10 and 11). The clock wire on the consumer's satellites is 0.0138 m over the
+12 h (0.0203); on all satellites it is 8 % worse than the working base and 30 % worse
+than the rider alone (0.0327 against 0.0303 and 0.0251), which is the one number that
+does not improve and is owed a read once the build exists. Hours 10 to 12 are softer than hours 2 to 9 on every arm.
+The long-window condition that the row-level response had to meet is met by the
+emulation; the build's own 12 h arm is still owed.
