@@ -388,3 +388,24 @@ removes most of them; re-read after SCC.
 **Invariants pre-flight.** 1: this is the missing response of a stiff carried quantity to a
 change of its definition. 7: the decoupling edge is bounded by the erase; the re-coupling
 edge is the existing re-birth of the family. 4: counters in both knob states. 6: G0.
+
+### 6.1 Amendment before any build or run (2026-09-21): the sim gate, and the size of the class
+
+Measured on the two baselines after section 6 was frozen (`network_events.csv`):
+
+| bed | edges where rows survive their column | clock-anchor trips (`reason=nis`), 6 h | of which in an edge epoch | epochs with 8 or more trips |
+| --- | --- | --- | --- | --- |
+| field `runs/_rap_r6_dual` | 13 | 50 | 49 | 3 |
+| sim `runs/_rf0hv5_sim6` | 0 | 1 | 0 | 0 |
+
+Nearly the whole clock-anchor trip population of the field bed is this defect, and the sim
+bed cannot show it: every sim station tracks the same signals, so no family ever thins to
+one tracker beside a mature carry. E4 as frozen would be vacuous. It is replaced by:
+
+- E4a. Unmodified sim, knob ON: the three files of G0 identical to the sim baseline.
+- E4b. The ingredient ADDED on the truth bed: five sim stations relabelled to the W family
+  on band 1 (`relabel;from=?1C;to=?1W`, the station list chosen once so that the OFF arm
+  shows at least eight edges with a carried survivor in 6 h, and recorded). Knob OFF must
+  reproduce the class (edges with a carried jump above 0.5 m, clock trips in those epochs).
+  Knob ON: no carried jump above 0.5 m at an edge, no epoch with eight or more trips, and
+  every hourly consumer p50 within 0.03 m of the OFF arm or better.
