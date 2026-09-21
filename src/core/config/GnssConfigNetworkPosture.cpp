@@ -735,6 +735,27 @@ namespace GnssProcessor {
               "ONLY, so the carry folds in the RETIRED frame and the clock absorbs it (1e10:1). "
               "24-sta/1h/GPS sim: clock episodes 7 -> 1, sum|dev| 160.5 -> 1.5 m, datum-free C "
               "contrast 18.66 -> 0.50 m. n=1, field arm OWED; eq34 owns eq34_reref instead" },
+            // --- Card EV7, the DROP EDGE of the phase_datum_min_stations coverage gate
+            //     (ledger row landed 2026-09-22).  The gate's own comment promises that a
+            //     gated-out key costs nothing because the surviving station's FLOAT
+            //     ambiguity absorbs the removed bias; on the FLOAT vehicle that ambiguity
+            //     is a CARRIED state at a centimetre prior and absorbs the whole bias in
+            //     one epoch, and the satellite clocks pay for what the prior will not
+            //     yield.  Regime = the float vehicle AND the gate AND the re-reference
+            //     erase this knob rides: without phase_anchor_carry_reref the edges are
+            //     counted and nothing is erased (the loader WARNS), and at
+            //     min_stations 1 no edge can exist at all.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && network_phase_datum_min_stations_ >= 2
+                  && network_phase_anchor_carry_reref_,
+              network_phase_datum_gate_drop_erase_,
+              Tier::SCOPED, false, "network.phase_datum_gate_drop_erase",
+              "erase a gated phase-bias family's carried ambiguities at the coverage gate's "
+              "DROP edge (the survivor's carried ambiguity otherwise absorbs the removed bias "
+              "in one epoch, metres against a centimetre prior): field 6 h clock-anchor trips "
+              "50 -> 1 and no all-satellite decouple (3), clock wire 0.0107 -> 0.0072 m on the "
+              "consumer's satellites, 13 of 16 census sites better, 12 h trips 134 -> 8; "
+              "byte-identical on the sim" },
             { !network_phase_datum_prioritized_ && !network_phase_datum_eq34_
                   && network_phase_leveling_ && network_cycle_slip_mw_detect_,
               network_cycle_slip_datum_station_detect_,
