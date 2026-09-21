@@ -5446,6 +5446,49 @@ namespace GnssProcessor {
         int networkPhaseDatumMinStations() const { return network_phase_datum_min_stations_; }
 
         /**
+         * @brief Card EV7 §6 — erase the family's carried ambiguities at the
+         *        coverage gate's DROP EDGE
+         *        (@c network.phase_datum_gate_drop_erase).
+         *
+         * @ref networkPhaseDatumMinStations promises that a gated-out key "costs
+         * the product nothing but that bias: the tracking stations' PHASE rows stay
+         * in the solve and serve the satellite clock through their own float
+         * ambiguities".  That is true where the float ambiguity is REFLOATED at the
+         * edge.  On the FLOAT vehicle (@c network.ambiguity_vehicle = float_kf) the
+         * surviving station's ambiguity is a CARRIED state with a centimetre prior,
+         * so it absorbs the whole removed bias in ONE epoch with no refloat, no
+         * re-seed and no variance inflation — measured on the field bed as
+         * VOIM00MDG G30 L1W +15.829 m against a variance of 2.8e-4 m^2, and what
+         * the prior would not yield landed in the satellite clock: all 26 emitted
+         * clocks tripped the Q3 anchor gate in that epoch, and the consumer at
+         * WTZZ00DEU held a +0.019 m plateau to the end of the run.  13 such edges
+         * in 6 h; 49 of the run's 50 clock-anchor trips sat in one of them
+         * (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3, §6.1).
+         *
+         * Armed, a drop edge — a key the gate excluded this epoch that HAD an
+         * anchor incumbent last epoch — is added to the epoch's re-reference set,
+         * so @c networkApplyPhaseAnchorCarryReref erases every station's carried
+         * ambiguity of the family before assembly, exactly as the family's RETURN
+         * already does.  The re-born ambiguity absorbs the bias once at birth
+         * strength and is carried normally afterwards; the erase never repeats on
+         * the following gated epochs, because by then the key has no incumbent.
+         *
+         * INERT without @ref networkPhaseAnchorCarryReref (which is what supplies
+         * the re-reference set) and without the gate itself
+         * (@c phase_datum_min_stations > 1).  OFF (default) is byte-identical: the
+         * edges are still DETECTED and counted — so an OFF run reports the size of
+         * the class (standing invariant #4) — but nothing is inserted anywhere and
+         * the only artifact is extra @c PHASE_ANCHOR / @c gate_drop trace rows.
+         * Not fingerprinted: a forward-only response, no carried state changes
+         * meaning.
+         *
+         * @see networkPhaseDatumMinStations, networkPhaseAnchorCarryReref
+         */
+        bool networkPhaseDatumGateDropErase() const {
+            return network_phase_datum_gate_drop_erase_;
+        }
+
+        /**
          * @brief Card DG — RELATIVE eigenvalue tolerance of the shared-border
          *        null-space rank gate (@c network.rank_gate_tol).
          *
@@ -8313,6 +8356,7 @@ namespace GnssProcessor {
         bool   network_phase_datum_candidacy_satellite_{true}; ///< COLD ANCHOR-FALLBACK iteration 2 (SPEC_event_harness §15.8): resolve a satellite's handover JOINTLY — every family of the satellite moving this epoch takes ONE successor (the first coverage-ranked candidate usable for the most of them; a family it is not usable for is pinned THERE through the cold path, which is a frame step, not a split), and a PARTIAL handover prefers the station already anchoring the satellite's other families.  Iteration 1's per-family screen bought producer quality with split references (0.0 → 0.9/3) and cost the consumer 49 %.  Default TRUE; INERT unless network_phase_datum_candidacy_usable_; OFF = iteration 1 exactly (the single-knob A/B).
         int    network_phase_datum_candidacy_min_age_ep_{60}; ///< COLD ANCHOR-FALLBACK maturity bar in loop epochs (n_loop_epochs − LocalCarry::birth_ep); 0 = no age test, unknown age = mature (the restored-entry convention — a warm-resume-restored entry carries LocalCarry::kBirthEpRestored, SPEC_event_harness §15.4).  Sized on the §15 census: cold successors p50 39 ep vs continuous p50 236 ep.  INERT unless network_phase_datum_candidacy_usable_.
         bool   network_phase_anchor_carry_reref_{false};   ///< QUEUE item 1(d) (SPEC_pivot_visibility_gauge_defect §5.07.5 R1): at a PHASE_ANCHOR handover, marginalize the (sat,signal) family's shared PB carry for ONE epoch (the eq34_reref treatment) and erase its phase-leveling local carries at every station — the retired-frame prior is not folded against the re-realized design matrix, so the frame step lands on the FREE phase bias instead of being absorbed by the satellite clock (measured 41 sigma on G21). INERT unless network_phase_datum_prioritized_ and not ensemble/eq34. OFF = byte-identical (the set is never populated).
+        bool   network_phase_datum_gate_drop_erase_{false};///< Card EV7 §6: at the coverage gate's DROP EDGE (a key excluded this epoch that had an anchor incumbent last epoch) add the family to the epoch's re-reference set, so every station's CARRIED ambiguity of it is erased before assembly — the response the drop edge has never had (the return edge already has it). Closes the float-vehicle defect where the surviving station's carried float absorbs the whole removed bias in one epoch against a centimetre prior (+15.829 m measured), kicking the satellite clocks. INERT without network_phase_anchor_carry_reref_ and without the gate (min_stations > 1). OFF = byte-identical (edges detected + counted only).
         int    network_phase_datum_min_stations_{1};       ///< Coverage-threshold gate on the prioritized anchored union: register/emit a shared per-(sat,signal) phase-bias column only when >= this many present stations track it with a usable ambiguity (1 = no gating, byte-identical; 2-3 excludes the thin columns behind one-station-pool re-levels and part of the clock↔PB split leak — gated keys' phase rows still serve the clock via their local ambiguities). INERT unless network_phase_datum_prioritized_.
         bool   network_cb_kaula_prior_{false};             ///< Card KP (network.cb_kaula_prior): fold a LOOSE physical-bound prior (value 0, info 1/sigma^2) onto every ADMITTED satellite code-bias column, lifting a CODE-dominated near-null direction the phase drop-and-heal structurally cannot reach (it anchors PB columns only). Real prior information — satellite OSBs are bounded at tens of ns — not a fudge. Folded through the diagonal SharedPrior channel, NOT into the tight kCodeBiasGaugeWeight datum rows, so declared_dimension is unchanged by construction. OFF = byte-identical; INERT unless estimate_sat_code_bias.
         double network_cb_kaula_sigma_m_{10.0};            ///< Card KP: sigma (m) of the admitted-OSB prior; 10 m ~ 33 ns, the loose end of the physical bound. K2 anti-fragility rule: 1/sigma^2 must sit >= 2 decades ABOVE the armed rank-gate cutoff (the CB-ADM card rejected a loose prior that sat AT the cutoff); the producer computes and logs that margin once and warns below 2 decades. INERT unless network_cb_kaula_prior_.

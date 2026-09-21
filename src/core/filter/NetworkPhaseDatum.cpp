@@ -162,11 +162,16 @@ void networkBuildPhaseDatumCandidates(
     // per-station column sets stay consistent with the gated union (the
     // kMinStationsPerSat prune pattern above); the emitter sees a clean
     // per-key absence (staleness / first-sighting semantics on return).
+    //
+    // Card EV7 §6: `gated_amb` is HOISTED out of the `pdp_min_sta > 1` branch so it
+    // can be handed to the caller below in every posture (empty when the gate is
+    // off).  Nothing inside the branch changed — the DROP EDGE needs the set, and a
+    // second census would double-count the two gate counters this function owns.
+    std::set<std::string> gated_amb;   // "sat_signal" excluded this epoch
     if (pdp_min_sta > 1) {
         std::map<std::string, int> n_trk;
         for (size_t i = 0; i < stations.size(); ++i)
             for (const auto& kv : usable_keys[i]) ++n_trk[kv.first];
-        std::set<std::string> gated_amb;   // "sat_signal" excluded this epoch
         for (auto it = union_keys.begin(); it != union_keys.end();) {
             if (n_trk[it->first] < pdp_min_sta) {
                 gated_amb.insert(it->first);
@@ -206,6 +211,9 @@ void networkBuildPhaseDatumCandidates(
     cnd.cover       = std::move(cover);
     cnd.cand_set    = std::move(cand_set);
     cnd.union_keys  = std::move(union_keys);
+    // Card EV7 §6 (F1): the gate's exclusions, for the DROP-EDGE predicate.  Moved
+    // like every other member so the census stays structurally fresh per call.
+    cnd.gated_keys  = std::move(gated_amb);
 }
 
 void networkElectEnsembleDatum(
@@ -250,7 +258,8 @@ void networkElectPhaseAnchors(
         double max_var_ratio,
         const NetworkInjectState* inject,
         const AnchorCandidacyUsable* cand_usable,
-        PhaseHeldBasis* held) {
+        PhaseHeldBasis* held,
+        PhaseGateDrop* gate_drop) {
     const auto& usable_keys = cnd.usable_keys;
     // RF-2 — the HELD S-BASIS.  Null (the default) on every unarmed run, so every
     // branch below that tests it is unreachable and the election is byte-identical.
@@ -1010,6 +1019,52 @@ void networkElectPhaseAnchors(
         this_epoch_anchor[amb] = stations[anchor].name;
         new_incumbent[amb]     = stations[anchor].name;
         shared_phase_keys.insert(pbkey);
+    }
+    // ---- Card EV7 §6: THE COVERAGE-GATE DROP EDGE ------------------------------
+    // HERE and nowhere else: this is the last statement at which `anchor_incumbent`
+    // still describes the PREVIOUS epoch, which is the whole second clause of the
+    // edge rule.  The loop above never visited these keys — the gate erased them
+    // from union_keys inside networkBuildPhaseDatumCandidates — so nothing below
+    // can collide with a handover or a first-sighting mark made above.
+    //
+    // The defect (EV7 §5.3): the gate's comment promises that "each station's float
+    // ambiguity absorbs the bias", which on the level vehicle was a refloat and on
+    // the FLOAT vehicle is a CARRIED state at a centimetre prior.  It absorbs the
+    // removed bias whole, in one epoch, silently (VOIM00MDG G30 L1W +15.829 m at a
+    // variance of 2.8e-4 m^2), and what the prior will not yield lands in the
+    // satellite clock and the station.  The RETURN edge already erases the family's
+    // carries through `reref_out`; this gives the DROP edge the same response, which
+    // is standing invariant #7's decoupling half.
+    if (gate_drop) {
+        for (const std::string& amb
+                 : networkPhaseGateDropEdges(cnd.gated_keys, anchor_incumbent)) {
+            const auto p = StateKeys::parseAmbiguityKey(amb);
+            if (!p) continue;   // an unparsable key cannot address a carry either
+            PhaseGateDropEvent ev;
+            ev.sat    = p->satellite;
+            ev.signal = p->signal;
+            const auto inc = anchor_incumbent.find(amb);
+            if (inc != anchor_incumbent.end()) ev.prev_anchor = inc->second;
+            // Who is LEFT holding it.  usable_keys is the PRE-gate census (the gate
+            // erases from union_keys only), so it still names every present station
+            // that allocated the column — by definition fewer than min_stations.
+            for (std::size_t i = 0; i < usable_keys.size(); ++i) {
+                if (!usable_keys[i].count(amb)) continue;
+                ++ev.n_trackers;
+                if (i < stations.size()) {
+                    if (!ev.survivors.empty()) ev.survivors += "|";
+                    ev.survivors += stations[i].name;
+                }
+            }
+            // ARMED: the family joins the epoch's re-reference set, so the existing
+            // erase path drops every station's carried ambiguity of it before PASS B
+            // injects the carry.  OFF: detected and reported, solve untouched (F2).
+            if (gate_drop->on && reref_out) {
+                reref_out->insert({p->satellite, p->signal});
+                ev.handled = true;
+            }
+            gate_drop->events.push_back(std::move(ev));
+        }
     }
     anchor_incumbent.swap(new_incumbent);
     anchor_pin_target.swap(new_target);

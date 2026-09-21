@@ -2361,6 +2361,15 @@ struct PhaseDatumCandidates {
     std::map<char, std::set<std::size_t>>           cand_set;
     /// "sat_signal" -> "sat|signal|PB", coverage-gated union over present stations.
     std::map<std::string, std::string>              union_keys;
+    /// Card EV7 §6: the "sat_signal" keys the coverage gate EXCLUDED this epoch —
+    /// exactly what was erased from @ref union_keys above, kept because the DROP
+    /// EDGE (filter/NetworkPhaseGateDrop.hpp) is the difference between this set
+    /// and the previous epoch's anchor incumbents.  Empty when the gate is off
+    /// (network.phase_datum_min_stations = 1) and whenever it excluded nothing.
+    /// Observational: no election reads it, and the hygiene pass's own erasures
+    /// from @ref union_keys are deliberately NOT in it (a different mechanism with
+    /// its own bridge lifecycle).
+    std::set<std::string>                           gated_keys;
 };
 
 } // namespace GnssProcessor

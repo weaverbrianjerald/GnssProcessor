@@ -484,6 +484,7 @@ add_executable(gnss_tests
     tests/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
+    tests/test_phase_gate_drop_edge.cpp
     tests/test_handover_stransform.cpp
     tests/test_mw_evidence_refloat.cpp
     tests/test_common_band_scope.cpp

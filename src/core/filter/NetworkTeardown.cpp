@@ -5630,6 +5630,28 @@ int networkTeardown(
                   "phase-bias column(s) on {} epoch(s) ({} column-epoch(s) total; their phase "
                   "rows served the satellite clock through the local blocks).",
                   config_.networkPhaseDatumMinStations(), n_gated_epochs, n_gated_key_epochs);
+    // Card EV7 §6 — the DROP EDGE of that same gate.  Reported in BOTH knob states
+    // (standing invariant #4): with the knob OFF this line IS the size of the class,
+    // which is the number the fix is judged against.
+    if (ctx.counters.n_pd_gate_drop_edges > 0) {
+        if (config_.networkPhaseDatumGateDropErase())
+            log->info("Network (EV7 gate-drop erase): {} coverage-gate DROP EDGE(s) — a "
+                      "(sat,signal) column removed while it still held an anchor incumbent — "
+                      "of which {} handled (family added to the epoch's re-reference set), "
+                      "erasing {} carried ambiguity(ies) before assembly.  Unhandled edges "
+                      "left their surviving station's CARRIED float to absorb the removed "
+                      "bias whole (EV7 §5.3).",
+                      ctx.counters.n_pd_gate_drop_edges,
+                      ctx.counters.n_pd_gate_drop_handled,
+                      ctx.counters.n_pd_gate_drop_arcs);
+        else
+            log->info("Network (EV7 gate-drop erase): {} coverage-gate DROP EDGE(s) went "
+                      "UNHANDLED — network.phase_datum_gate_drop_erase is off, so at each of "
+                      "them the surviving station's CARRIED ambiguity absorbed the removed "
+                      "phase bias in one epoch against its own prior (EV7 §5.3).  This count "
+                      "is the size of the class on this run.",
+                      ctx.counters.n_pd_gate_drop_edges);
+    }
     if (perconst_on && (n_perconst_partial_epochs > 0 || n_perconst_diffuse_published > 0))
         log->info("Network (RTA-10): σ̂0 carve-out — {} epoch(s) published PARTIALLY (>=1 "
                   "constellation pruned), {} DIFFUSE epoch(s) published in full (every judged "

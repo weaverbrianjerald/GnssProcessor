@@ -40,6 +40,7 @@
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkRunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "filter/NetworkAnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
+#include "filter/NetworkPhaseGateDrop.hpp"  // Card EV7 §6: PhaseGateDropEvent / the edge rule
 
 #include <cstddef>
 #include <map>
@@ -249,6 +250,26 @@ struct PhaseHeldBasis {
     long long n_depose_unusable = 0;  ///< …deposed because the incumbent's OWN carried level stopped passing the ledger verdict (its arc drifted out of the datum tolerance).
 };
 
+/// Card EV7 §6 — the COVERAGE-GATE DROP EDGE bundle
+/// (@c network.phase_datum_gate_drop_erase; the rule itself is
+/// @ref networkPhaseGateDropEdges in filter/NetworkPhaseGateDrop.hpp).
+///
+/// Passed by the driver on EVERY run, armed or not, because requirement F2 asks
+/// the OFF run to report the SIZE OF THE CLASS (standing invariant #4: a counter
+/// that only exists on the armed path cannot say whether arming would matter).
+/// The OFF path is therefore telemetry only — @ref events is filled, @c reref_out
+/// is not touched, and the solve is byte-identical.
+struct PhaseGateDrop {
+    /// network.phase_datum_gate_drop_erase.  false ⇒ the edges are DETECTED and
+    /// counted but the family is NOT added to the re-reference set.
+    bool on = false;
+    /// [out] one entry per drop edge found this epoch, in ambiguity-key order.
+    /// The driver turns these into @c PHASE_ANCHOR / @c gate_drop trace rows and
+    /// folds the counts into the run-end readout; the election itself neither
+    /// reads them back nor lets them reach the solve.
+    std::vector<PhaseGateDropEvent> events;
+};
+
 struct AnchorCandidacyUsable {
     /// network.phase_datum_candidacy_usable, already ANDed with the handover
     /// mechanism being armed — false ⇒ the pass is not entered at all.
@@ -404,6 +425,30 @@ struct AnchorCandidacyUsable {
  *                      continuous/cold decision, every target computation — is
  *                      untouched; the ONLY change is WHICH station reaches the
  *                      continuous branch.
+ * @param gate_drop     Card EV7 §6 (@c network.phase_datum_gate_drop_erase), or
+ *                      @c nullptr — which is the pre-card election EXACTLY.  When
+ *                      supplied, the COVERAGE-GATE DROP EDGES of this epoch are
+ *                      detected immediately before the incumbent swap (the last
+ *                      point at which @p anchor_incumbent still describes the
+ *                      PREVIOUS epoch) and appended to @c gate_drop->events.  With
+ *                      @c gate_drop->on AND @p reref_out non-null, each edge's
+ *                      (sat, signal) is ALSO inserted into @p reref_out, so the
+ *                      family takes the path the RETURN edge already takes: the
+ *                      D2/C1 shared-carry consume marginalizes its PB key for one
+ *                      epoch and @ref networkApplyPhaseAnchorCarryReref erases every
+ *                      station's carried ambiguity of it BEFORE assembly, in this
+ *                      same epoch, instead of leaving the survivor's carried float
+ *                      to absorb the removed bias whole (EV7 §5.3).
+ *
+ *                      ⚠ The erase therefore rides @p reref_out and is INERT
+ *                      without @c network.phase_anchor_carry_reref, which is what
+ *                      supplies that pointer.  Both working bases
+ *                      (config/refound/{field,sim}_gps_dual_rf0hv.json) arm it.
+ *
+ *                      A gated key is erased from @c cnd.union_keys before the
+ *                      election's loop, so it can never be a handover or a first
+ *                      sighting in the SAME epoch: the drop-edge marks and the
+ *                      existing §5.07.5 R1 marks are disjoint populations.
  */
 void networkElectPhaseAnchors(
         bool sticky,
@@ -423,7 +468,8 @@ void networkElectPhaseAnchors(
         double max_var_ratio = 0.0,
         const NetworkInjectState* inject = nullptr,
         const AnchorCandidacyUsable* cand_usable = nullptr,
-        PhaseHeldBasis* held = nullptr);
+        PhaseHeldBasis* held = nullptr,
+        PhaseGateDrop* gate_drop = nullptr);
 
 /**
  * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover):

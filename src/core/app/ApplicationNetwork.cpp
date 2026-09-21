@@ -1849,6 +1849,13 @@ int Application::runNetwork() {
                             pd_elev_of[mi][mo.satellite] = mo.elevation;
                     held_basis.elev = &pd_elev_of;
                 }
+                // Card EV7 §6 — the coverage gate's DROP EDGE.  Passed on EVERY
+                // run, armed or not: requirement F2 asks the OFF run to report the
+                // size of the class, and detection is pure observation over the
+                // census and the pre-swap incumbent map (the erase below is the
+                // only thing the knob gates).
+                PhaseGateDrop gate_drop;
+                gate_drop.on = config_.networkPhaseDatumGateDropErase();
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent,
@@ -1875,7 +1882,39 @@ int Application::runNetwork() {
                                          // RF-2: the HELD S-BASIS.  Null unless armed,
                                          // so every branch it gates is unreachable and
                                          // the election is byte-identical.
-                                         held_basis.on ? &held_basis : nullptr);
+                                         held_basis.on ? &held_basis : nullptr,
+                                         // Card EV7 §6: always non-null (see above).
+                                         &gate_drop);
+                // Card EV7 §6 (F2): BOTH EDGES of the gate are events now.  One row
+                // per drop edge with the identities on either side — what left, who
+                // was anchoring it, who is left carrying it — and `handled` saying
+                // whether the response actually ran, so an OFF row and an armed row
+                // are separable offline.  Trace-class; the solve never reads these.
+                for (const auto& gd : gate_drop.events) {
+                    ++ctx.counters.n_pd_gate_drop_edges;
+                    if (gd.handled) ++ctx.counters.n_pd_gate_drop_handled;
+                    emitEvent("PHASE_ANCHOR", "gate_drop",
+                              gd.sat + "_" + gd.signal,
+                              gd.survivors.empty() ? std::string("-") : gd.survivors,
+                              static_cast<double>(gd.n_trackers),
+                              static_cast<double>(config_.networkPhaseDatumMinStations()),
+                              gd.handled ? "erase" : "none",
+                              fmt::format("survivors={};trackers_now={};prev_anchor={};"
+                                          "handled={}",
+                                          gd.survivors.empty() ? std::string("-")
+                                                               : gd.survivors,
+                                          gd.n_trackers,
+                                          gd.prev_anchor.empty() ? std::string("-")
+                                                                 : gd.prev_anchor,
+                                          gd.handled ? 1 : 0));
+                }
+                // The families this card owns, for the erase-cause split below.  A
+                // gated key is erased from union_keys before the election's loop, so
+                // it can never also be a handover / first-sighting mark this epoch —
+                // the two populations are disjoint by construction.
+                std::set<std::pair<std::string, std::string>> gate_drop_fams;
+                for (const auto& gd : gate_drop.events)
+                    if (gd.handled) gate_drop_fams.insert({gd.sat, gd.signal});
                 // RF-2: fold the election's write-back into the run counters.
                 if (held_basis.on) {
                     auto& HC = ctx.counters;
@@ -2122,16 +2161,31 @@ int Application::runNetwork() {
                     // stamp, which the map operation itself has no business knowing.
                     std::vector<std::pair<std::tuple<int, std::string, std::string>,
                                           LocalCarry>> pa_reref_erased;
+                    // Card EV7 §6: the capture is ALSO taken when a drop edge was
+                    // handled, so the card's arc counter does not silently read 0 on
+                    // a run that leaves network.trace_amb_state off (the row writer
+                    // itself stays knob-gated and no-ops there).
                     const int n_erased = networkApplyPhaseAnchorCarryReref(
                             pa_reref, ctx.carry.local_carry,
-                            ctx.knobs.trace_amb_state ? &pa_reref_erased : nullptr);
+                            (ctx.knobs.trace_amb_state || !gate_drop_fams.empty())
+                                ? &pa_reref_erased : nullptr);
                     for (const auto& [k, lc] : pa_reref_erased) {
                         const int sidx = std::get<0>(k);
+                        // Card EV7 §6 (F2): the two populations that share this one
+                        // erase path are tagged apart in network_amb_state.csv — a
+                        // handover / first-sighting re-reference (`anchor_reref`,
+                        // unchanged) and a coverage-gate drop edge (`gate_drop`).
+                        // Disjoint by construction, so the test is a lookup, not a
+                        // precedence rule.
+                        const bool is_gd =
+                            gate_drop_fams.count({std::get<1>(k), std::get<2>(k)}) > 0;
+                        if (is_gd) ++ctx.counters.n_pd_gate_drop_arcs;
                         ambStateNoteErase(
                             ctx, se.time.week, se.time.tow,
                             (sidx >= 0 && sidx < static_cast<int>(stations.size()))
                                 ? stations[sidx].name : std::string{},
-                            std::get<1>(k), std::get<2>(k), lc, "anchor_reref");
+                            std::get<1>(k), std::get<2>(k), lc,
+                            is_gd ? "gate_drop" : "anchor_reref");
                     }
                     ctx.carry.pa_reref_erase_total += n_erased;
                     ctx.counters.n_cr_phase_datum_reref += n_erased;   // retirement census: FRAME step

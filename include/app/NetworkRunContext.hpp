@@ -3458,6 +3458,23 @@ namespace GnssProcessor {
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on
         // which >=1 thin column was excluded, and the cumulative column-epoch count.
         size_t n_gated_epochs = 0, n_gated_key_epochs = 0;
+        // Card EV7 §6 — the coverage gate's DROP EDGE
+        // (network.phase_datum_gate_drop_erase; the rule is
+        // filter/NetworkPhaseGateDrop.hpp).  Counted in BOTH knob states, so an
+        // OFF run reports the SIZE OF THE CLASS and an armed run reports how much
+        // of it the response reached (standing invariant #4: a counter that exists
+        // only on the armed path cannot say whether arming would matter).
+        /// (sat,signal) families the gate excluded while they still held an anchor
+        /// incumbent from the previous epoch.  Field baseline: 13 in 6 h.
+        size_t n_pd_gate_drop_edges = 0;
+        /// …of which the knob actually added to the re-reference set (= edges when
+        /// armed with phase_anchor_carry_reref, 0 when OFF or inert).
+        size_t n_pd_gate_drop_handled = 0;
+        /// Per-station carried ambiguities erased BECAUSE of a drop edge — the
+        /// subset of the re-reference erase this card owns, separated from the
+        /// handover-driven `n_cr_phase_datum_reref` population it shares the path
+        /// with (and tagged `erase:gate_drop` in network_amb_state.csv).
+        size_t n_pd_gate_drop_arcs = 0;
         size_t n_perconst_partial_epochs = 0;     // RTA-10: epochs published PARTIALLY (σ̂0 carve-out pruned >=1 constellation)
         size_t n_perconst_diffuse_published = 0;  // RTA-10: epochs published in FULL although the global σ̂0 tripped (every constellation individually clean — the diffuse cross-constellation edge of the per-const approximation)
         FlagRate fr_if_slip;    // T1 per (station,sat,pair) IF-phase sample   k=if_phase_td_k_mad

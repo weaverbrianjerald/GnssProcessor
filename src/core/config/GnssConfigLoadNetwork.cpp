@@ -8738,6 +8738,16 @@ namespace GnssProcessor {
                        network_phase_datum_min_stations_);
             return false;
         }
+        // Card EV7 §6 — the gate's DROP EDGE
+        // (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The gate
+        // above assumes the tracking stations' float ambiguities absorb the removed
+        // bias; on the FLOAT vehicle that float is a CARRIED state at a centimetre
+        // prior, so it absorbs the whole bias in one epoch and the satellite clocks
+        // pay for it.  Armed, the dropped family joins the re-reference set and its
+        // carries are erased at the edge, exactly as at the family's return.
+        network_phase_datum_gate_drop_erase_ =
+            jval<bool>(json, "network.phase_datum_gate_drop_erase",
+                       "network_phase_datum_gate_drop_erase", false);
         // Card KP (docs/SPEC_beidou_w6_datum.md §4) — the CONDITIONAL second lever,
         // behind the DG rank-gate calibration and the PA drop-and-heal.  Default
         // OFF; INERT without estimate_sat_code_bias (no OSB columns exist).
@@ -10139,6 +10149,36 @@ namespace GnssProcessor {
                       "(SPEC_pivot_visibility_gauge_defect §5.07: 41-sigma clock innovations, "
                       "q_pb:q_clock = 1e10:1).  Families and erased carries are counted at "
                       "run end.");
+        // Card EV7 §6 — the gate's DROP EDGE.  Two dependencies, both hard: the
+        // gate has to be ON for an edge to exist at all, and the erase RIDES the
+        // re-reference set, which only phase_anchor_carry_reref populates.  Report
+        // each INERT case rather than silently flipping the knob off: a run whose
+        // arm named the knob and got nothing is exactly the class of wasted arm
+        // this project keeps paying for.  The edges are DETECTED and counted in
+        // every posture, so an OFF (or inert) run still reports the class size.
+        if (network_phase_datum_gate_drop_erase_
+            && network_phase_datum_min_stations_ <= 1)
+            log->warn("Network (EV7 gate-drop erase): network.phase_datum_gate_drop_erase is on "
+                      "but network.phase_datum_min_stations = 1, so the coverage gate excludes "
+                      "nothing and no drop edge can exist.  INERT.");
+        if (network_phase_datum_gate_drop_erase_ && !network_phase_anchor_carry_reref_)
+            log->warn("Network (EV7 gate-drop erase): network.phase_datum_gate_drop_erase is on "
+                      "but network.phase_anchor_carry_reref is OFF — the erase rides that "
+                      "knob's re-reference set, which is never populated here.  INERT: the "
+                      "drop edges are still counted and traced, but no carry is erased.");
+        if (network_phase_datum_gate_drop_erase_ && network_phase_anchor_carry_reref_
+            && network_phase_datum_min_stations_ > 1)
+            log->info("Network producer (EV7 gate-drop erase, card EV7 §6): when the coverage "
+                      "gate (< {} trackers) removes a (sat,signal) phase-bias column that was "
+                      "ANCHORED last epoch, the family joins this epoch's re-reference set and "
+                      "every station's CARRIED ambiguity of it is erased before assembly — the "
+                      "response the drop edge has never had (standing invariant #7; the return "
+                      "edge already re-births at a zero pin).  Without it the surviving "
+                      "station's carried float absorbs the whole removed bias in one epoch "
+                      "against a centimetre prior (+15.829 m measured) and the satellite clocks "
+                      "absorb what the prior will not yield.  Edges, edges handled and arcs "
+                      "erased are counted at run end.",
+                      network_phase_datum_min_stations_);
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.
