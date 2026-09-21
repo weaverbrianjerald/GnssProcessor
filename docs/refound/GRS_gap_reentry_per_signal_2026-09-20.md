@@ -182,3 +182,45 @@ signal per band or nothing); otherwise the rule owed is an admission rule: a
 and 2. `hE_dual_edge` says whether the dual working base owes the same rule (better
 than `gD_dual` by 0.02 m or more in three of hours 2 to 6, or 250 or more epochs below
 a decimetre).
+
+## 6. 2026-09-20: GRS-3 result: an admission question; a rule a filter can run is the best network of the program
+
+All arms on the rider posture (`gD_dual`, `gF_tri`), exe `gnss_processor_grs.exe`, exit 0,
+720 consumer epochs. "Partial" means a (station, satellite) epoch without the
+station's primary phase on band 1 or band 2.
+
+| arm | what is removed | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- | --- |
+| dual working base | nothing, no rider | 0.53 0.11 0.09 0.10 0.14 0.12 | 203 | 228 | 0.0107 / 0.0173 |
+| `gD_dual` | nothing | 0.53 0.11 0.10 0.11 0.12 0.11 | 162 | 92 | 0.0090 / 0.0128 |
+| `hE_dual_edge` | partial epochs at the arc edges | 0.48 0.05 0.09 0.09 0.12 0.10 | 454 | 113 | 0.0086 / 0.0128 |
+| **`hH_dual_causal3`** | partial epochs before the first good epoch or more than 3 after the last | **0.19 0.08 0.06 0.07 0.09 0.07** | **627** | 147 | **0.0074** / 0.0137 |
+| `hI_dual_causal0` | every partial epoch | 0.19 0.07 0.06 0.07 0.09 0.07 | 624 | 152 | 0.0075 / 0.0136 |
+| `gF_tri` | nothing | 0.69 0.31 0.15 0.14 0.12 0.17 | 6 | 219 | 0.0095 / 0.0175 |
+| `hA_tri_edge` | edges | 0.83 0.08 0.05 0.09 0.11 0.07 | 393 | 267 | 0.0117 / 0.0217 |
+| `hD_tri_noalt` | the non-primary observation TYPES of bands 1 and 2 (epochs kept) | 1.47 0.21 0.09 0.11 0.09 0.03 | 312 | 241 | 0.0073 / 0.0181 |
+| **`hG_tri_causal3`** | the causal rule, 3 epochs | 0.83 0.09 0.05 0.10 0.10 0.06 | **461** | 206 | 0.0076 / 0.0185 |
+| `hJ_tri_causal0` | every partial epoch | 0.81 0.10 0.10 0.13 0.10 0.06 | 288 | 260 | |
+
+**Readings, by the frozen rules.** `hD_tri_noalt` is not within 0.03 m of `hA_tri_edge` in
+hours 2 and 3 (0.21 and 0.09 against 0.08 and 0.05 m), so the rule owed is an
+ADMISSION rule, not a no-fallback rule; removing the fallback types alone does help
+the settled hours (312 epochs below a decimetre, 0.03 m in hour 6). `hE_dual_edge`
+has 454 epochs below a decimetre against a bar of 250: the dual working base owes the
+same rule.
+
+**A rule that a filter can run does better than the edge emulation.** The causal
+variant needs no look-ahead: a (station, satellite) is not admitted before its
+primary pair has been seen, and after the pair is lost it is admitted for at most N
+more epochs. On the dual posture it gives the best network of the program: 0.19 m in
+the FIRST hour (0.53 before), 0.06 to 0.09 m in hours 2 to 6, 627 of 720 epochs below a
+decimetre (203 before), and a clock wire of 0.0074 m on the consumer's satellites
+(0.0274 m at the start of the day). N = 3 and N = 0 are equal there. On the triple
+posture N = 3 is the best arm (461 epochs) and N = 0 is worse (288): with three bands
+a satellite without its band-2 phase is still a two-band satellite, and deleting it
+costs information; the first hour of the triple stays at 0.8 m under every variant,
+which is a separate ignition matter of the third band. What is removed is 62 451
+records of the day for N = 3 (3.4 % of the GPS records), most of it long stretches in
+which a receiver tracks a satellite without ever holding the semi-codeless pair.
+
+The rule is the build card [CPA](CPA_canonical_pair_admission_2026-09-20.md).

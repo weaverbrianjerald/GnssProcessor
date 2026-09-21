@@ -38,7 +38,10 @@ Ops:
                                       (a good epoch within `window` epochs), so that a
                                       phase-only dropout becomes a full tracking gap;
                                       where=mid keeps only epochs with a good epoch on BOTH
-                                      sides, where=edge only those with one on a single side
+                                      sides, where=edge only those with one on a single side;
+                                      where=causal;keep=N deletes a partial epoch that comes
+                                      before the satellite's first good epoch or more than N
+                                      epochs after its last good one (a rule a filter can run)
 An op on a phase type is given in metres and applied in cycles.  Every draw is keyed
 on (seed, station, satellite), so the same spec gives the same file in every arm.
 """
@@ -162,6 +165,14 @@ def apply_holes(lines, i0, codes, system, op):
         j += 1
     kill, where = set(), op.get("where", "all")
     for v in pres.values():
+        if where == "causal":
+            last, keep_n = None, int(op.get("keep", "3"))
+            for e, ok, j in v:
+                if ok:
+                    last = e
+                elif last is None or e - last > keep_n:
+                    kill.add(j)
+            continue
         good = [e for e, ok, _ in v if ok]
         for e, ok, j in v:
             if ok or not good:
@@ -526,6 +537,11 @@ def cmd_selftest(_):
     n_edge = rewrite_rinex(d + "/j.rnx", d + "/k3.rnx",
                            [dict(parse_op("holes;bands=12;window=3;where=edge"), _prio=["L1C", "L2W"])], "AAAA")
     chk(n_mid == 1 and n_edge == 0, f"holes where: mid {n_mid} edge {n_edge}")
+    n_c0 = rewrite_rinex(d + "/j.rnx", d + "/k4.rnx",
+                         [dict(parse_op("holes;bands=12;where=causal;keep=0"), _prio=["L1C", "L2W"])], "AAAA")
+    n_c3 = rewrite_rinex(d + "/j.rnx", d + "/k5.rnx",
+                         [dict(parse_op("holes;bands=12;where=causal;keep=3"), _prio=["L1C", "L2W"])], "AAAA")
+    chk(n_c0 == 1 and n_c3 == 0, f"holes causal: keep=0 {n_c0} keep=3 {n_c3}")
     # 9: primaryonly keeps one tracking attribute per band
     hp = list(hdr)
     hp[1] = "G    8 C1C C1W C2W C2L L1C L1W L2W L2L                      SYS / # / OBS TYPES"

@@ -78,6 +78,11 @@ record the program is re-founding **on**.
   primary-pair loss of lock while band 5 or a fallback signal tracks through, which
   is how L5 damages the L1/L2 wire (AB2 sections 10 to 12) and a defect of the dual
   posture too; default OFF rider of `gap_reentry_relevel`, gates and bars frozen.
+- [CPA](refound/CPA_canonical_pair_admission_2026-09-20.md): open, 2026-09-20: build card,
+  canonical-pair admission; a (station, satellite) epoch without the station's primary
+  pair on bands 1 and 2 harms the solve on both postures; removed by a causal rule the
+  dual field network goes from 203 to 627 epochs below a decimetre of 720 (first hour
+  0.53 to 0.19 m) and the triple with L5 at all stations from 6 to 461; gates and bars frozen.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
