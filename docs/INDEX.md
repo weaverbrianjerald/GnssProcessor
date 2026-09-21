@@ -120,11 +120,14 @@ record the program is re-founding **on**.
   the corrected field run is the new baseline `runs/_rap_r6_dual` and is worse at WTZZ00DEU
   (533 against 603): CAS100ATA and LCK400IND together amplify the all-satellite clock-anchor
   decouple of 05:22 UT (post-fit refloats 21 to 72), the dominant open loss of the field bed.
-- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (pre-registered 2026-09-21), event
-  card, the all-satellite clock-anchor decouple of 05:22 UT (TOW 278520); the trigger epoch is
-  the same in every run (G30 loses its only L1W station, a G19 anchor arc is refloated), the
-  clock innovations are one fixed pattern whose amplitude changes tenfold with the roster;
-  trigger arms, a response ladder and a code read are frozen; nothing built.
+- [EV7](refound/EV7_all_sat_clock_decouple_2026-09-21.md): open (RESULT 2026-09-21, fix
+  pre-registered), event card, the all-satellite clock-anchor decouple of 05:22 UT (TOW 278520):
+  DEFECT of the coverage gate on the float vehicle. When `phase_datum_min_stations` removes a
+  phase-bias column with one tracker left, that station's carried ambiguity absorbs the whole
+  bias in one epoch (+15.8 m against a 1.7 cm prior); 13 such edges in 6 h carry every
+  all-satellite decouple of the run; removing the edge removes the episode (WTZZ00DEU cost
+  -0.011 against +0.019 m, 12 of 16 census sites better, several by metres); fix
+  `network.phase_datum_gate_drop_erase` frozen in section 6, not built.
 - [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (pre-registered 2026-09-21, approved by
   the author), build card, the second code channel (`network.second_code_channel`, default
   OFF): a station contributes every allow-listed band-1 code it tracks as code-only rows, with

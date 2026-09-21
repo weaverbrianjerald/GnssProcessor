@@ -21,6 +21,16 @@ RINEX ops (GPS by default, `sys=` to change).  Common selectors:
   types    = comma list of 3-char patterns, `?` is a wildcard (C5? L5? ?5?)
 Ops:
   strip;types=?5?                     remove the types (header too when sats=all)
+  strip;types=???;sats=G30;tow_from=277200[;tow_to=278700]
+                                      a strip restricted to a TIME WINDOW (GPS seconds of week,
+                                      inclusive, either bound may be omitted).  The epoch's TOW is
+                                      read from the `> yyyy mm dd hh mm ss` header (the files are in
+                                      GPS time; the day of week comes from the date, no leap-second
+                                      arithmetic).  A windowed strip NEVER edits the header type
+                                      list, not even with sats=all, because the types exist outside
+                                      the window; it blanks the selected fields of the records whose
+                                      epoch falls inside it.  A subtraction in a time window is the
+                                      field bed's equivalent of an injected event (card EV7).
   relabel;from=?5Q;to=?5X             rename observation types in the header
   bias;types=C5?;per=station|sat;sigma=3.0;seed=1      constant, metres (N(0, sigma))
   slip;types=L5?;rate=1.0;max=5;seed=1                 integer-cycle steps, rate per arc-hour
@@ -49,6 +59,7 @@ import argparse
 import concurrent.futures as cf
 import copy
 import csv
+import datetime
 import fnmatch
 import hashlib
 import json
@@ -79,7 +90,32 @@ def parse_op(text):
         k, v = kv.split("=", 1)
         op[k.strip()] = v.strip()
     assert op["op"] in ("strip", "relabel", "bias", "slip", "drift", "holes", "dropslip", "primaryonly"), op
+    assert op["op"] == "strip" or not (set(op) & {"tow_from", "tow_to"}), \
+        "tow_from / tow_to are selectors of the strip op only: " + text
     return op
+
+
+def op_window(op):
+    """(tow_from, tow_to) of a windowed op, or None when it has no window.
+
+    Bounds are GPS seconds of week and INCLUSIVE; either may be omitted.  `None`
+    (no window at all) is kept distinct from an open-ended window so that the
+    un-windowed code path stays byte-for-byte what it was.
+    """
+    if "tow_from" not in op and "tow_to" not in op:
+        return None
+    return (float(op.get("tow_from", "-inf")), float(op.get("tow_to", "inf")))
+
+
+def epoch_tow(fields):
+    """GPS seconds of week of a RINEX 3 epoch header, from its `yyyy mm dd hh mm ss` fields.
+
+    The observation files are in GPS time, so the seconds of week are just the day of
+    week (Sunday = 0) times 86400 plus the seconds of day: no leap-second arithmetic.
+    """
+    d = datetime.date(int(fields[0]), int(fields[1]), int(fields[2]))
+    sod = int(fields[3]) * 3600 + int(fields[4]) * 60 + float(fields[5])
+    return ((d.weekday() + 1) % 7) * 86400.0 + sod
 
 
 def match_types(codes, patterns):
@@ -224,7 +260,8 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
             n_holes += n
     new_codes, drop = list(codes), set()
     for op in ops:
-        if op["op"] == "strip" and op["sats"] == "all":
+        # A WINDOWED strip never touches the header: the types exist outside the window.
+        if op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None:
             drop |= set(match_types(codes, op["types"]))
         if op["op"] == "primaryonly":
             prio = op.get("_prio") or []
@@ -240,15 +277,17 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
     out = lines[:blk[0]] + type_block(system, [new_codes[k] for k in keep]) + lines[blk[1]:i]
     width = 3 + 16 * len(codes)
     rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly")
-               and not (op["op"] == "strip" and op["sats"] == "all")]
+               and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None)]
     for op in rec_ops:
         op["_idx"] = match_types(codes, op["types"])
-    state, sod = {}, 0.0
+        op["_win"] = op_window(op)
+    state, sod, tow = {}, 0.0, None
     while i < len(lines):
         ln = lines[i]
         if ln.startswith(">"):
             f = ln[1:].split()
             sod = int(f[3]) * 3600 + int(f[4]) * 60 + float(f[5])
+            tow = epoch_tow(f)
             if hours is not None and sod > hours * 3600.0 + 1.0:
                 break
             out.append(ln)
@@ -266,6 +305,9 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
             fld = [p[3 + 16 * k: 19 + 16 * k] for k in range(len(codes))]
             for n_op, op in enumerate(rec_ops):
                 if not sat_selected(sat, op["sats"]):
+                    continue
+                w = op["_win"]
+                if w is not None and not (w[0] <= tow <= w[1]):
                     continue
                 if op["op"] == "dropslip":
                     dropslip(op, n_op, station, sat, codes, fld, sod, state, system)
@@ -606,6 +648,32 @@ def cmd_selftest(_):
     ub = [x[3:] for x in open(d + "/u_bln.rnx").read().split("\n")]
     steps = [float(ub[5 + 3 * k][80:94]) - 0.7e8 for k in range(4)]
     chk(up == ub and any(abs(s) >= 1 for s in steps), f"blank-padded draw matches the padded twin {steps}")
+    # 11: card EV7 — a windowed strip acts at BOTH edges of the window and nowhere else,
+    #     keeps the header even with sats=all, and is a no-op on the un-windowed path.
+    #     The bed epochs are 2024-05-08 00:00 .. 00:03, a Wednesday, so TOW 259200 + 60*e.
+    chk(abs(epoch_tow(["2024", "05", "08", "05", "22", "00.0000000"]) - 278520.0) < 1e-6,
+        "epoch_tow of 2024-129 05:22:00 is TOW 278520")
+    rewrite_rinex(src, d + "/w.rnx", [parse_op("strip;types=?5?;tow_from=259260;tow_to=259320")], "AAAA")
+    w = open(d + "/w.rnx").read().split("\n")
+    chk(w[1] == hdr[1], "windowed strip keeps the header even with sats=all")
+    g5 = [k for k, x in enumerate(w) if x.startswith("G03")]
+    blanked = [w[k].ljust(99)[3 + 32:3 + 46].strip() == "" for k in g5]
+    chk(blanked == [False, True, True, False], f"window honoured at both edges {blanked}")
+    chk(w[g5[0]] == body[1].rstrip() and w[g5[3]] == body[13].rstrip(), "outside the window untouched")
+    chk(all(w[k].ljust(99)[3 + 80:3 + 94].strip() == "" for k in g5[1:3])
+        and all(x.ljust(99)[3:3 + 14].strip() for x in w if x.startswith("G03")), "windowed strip hits every ?5? type")
+    chk([w[k] for k, x in enumerate(w) if x.startswith("E01")] == [body[3 + 4 * j].rstrip() for j in range(4)],
+        "other system untouched by a windowed strip")
+    # an open-ended window, a satellite subset, and the no-window twin byte-for-byte as before
+    rewrite_rinex(src, d + "/w2.rnx", [parse_op("strip;types=?5?;sats=G03;tow_from=259320")], "AAAA")
+    w2 = open(d + "/w2.rnx").read().split("\n")
+    g5b = [k for k, x in enumerate(w2) if x.startswith("G03")]
+    chk([w2[k].ljust(99)[3 + 32:3 + 46].strip() == "" for k in g5b] == [False, False, True, True],
+        "tow_from alone is open-ended to the right")
+    chk([w2[k] for k, x in enumerate(w2) if x.startswith("G05")] == [body[2 + 4 * j].rstrip() for j in range(4)],
+        "another satellite untouched inside the window")
+    rewrite_rinex(src, d + "/w3.rnx", [parse_op("strip;types=?5?")], "AAAA")
+    chk(open(d + "/w3.rnx").read() == open(d + "/b.rnx").read(), "no window: byte-for-byte the old path")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 
