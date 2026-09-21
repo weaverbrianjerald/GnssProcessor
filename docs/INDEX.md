@@ -128,11 +128,14 @@ record the program is re-founding **on**.
   all-satellite decouple of the run; removing the edge removes the episode (WTZZ00DEU cost
   -0.011 against +0.019 m, 12 of 16 census sites better, several by metres); fix
   `network.phase_datum_gate_drop_erase` frozen in section 6, not built.
-- [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (pre-registered 2026-09-21, approved by
-  the author), build card, the second code channel (`network.second_code_channel`, default
-  OFF): a station contributes every allow-listed band-1 code it tracks as code-only rows, with
-  one receiver inter-signal-bias state per station; no new datum row; gates and bars frozen
-  (wire coverage, a sim truth test with a cloned code, WTZZ00DEU and the 16-site census).
+- [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (built 2026-09-21, NOT armed), build
+  card, the second code channel (`network.second_code_channel`, default OFF): a station
+  contributes every allow-listed band-1 code it tracks as code-only rows, with one receiver
+  inter-signal-bias state; the wire's C1W coverage becomes complete (24 to 31 satellites per
+  epoch, census code-bias dropouts 50 to 4) and C1C is not reduced; fails the WTZZ00DEU bars at
+  every scale and amplifies the EV7 episode at scale 1; the sim truth gate fails as frozen and
+  the diagnosis names a standing per-satellite misfit of the PINNED code datum (0.285 m on the
+  sim) instead; re-grade on the EV7-fixed base owed.
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float

@@ -5,7 +5,7 @@
 - **id:** SCC
 - **topic:** code-bias
 - **status:** open
-- **summary:** Pre-registered 2026-09-21 (approved by the author the same day). Build card, default OFF: a network station contributes, as code-only rows, every allow-listed band-1 code it reports besides its latched canonical code, so that the C1C and C1W satellite code-bias families stop competing for the same 59 stations. One new unknown per station (the receiver's band-1 inter-signal bias); no second phase, ambiguity or phase-bias family; no new datum row. Requirements, gates and bars are frozen below; nothing is built.
+- **summary:** BUILT 2026-09-21 (main `61d67c2`), default OFF, NOT armed. The mechanism works: with the knob ON the wire carries a C1W code bias for a median of 31 satellites per epoch (24 before), 2 satellite-epochs lack it (5210 before), C1C is not reduced, the detector rows are identical, and the code-bias dropouts at the 16 census sites fall from 50 to 4. It fails the WTZZ00DEU bars at every scale (a C1W consumer whose standing Up offset grows by 1 to 3 cm), and at scale 1 it amplifies the episode of card EV7. The sim truth gate fails as frozen (0.275 m rms), and the diagnosis puts the error on the PINNED C1C column: the sim network carries a per-satellite code misfit of decimetres on its pinned signals that never relaxes, while the free C1W column sits where the data put it. Re-grade on the EV7-fixed base is owed. Original summary: Pre-registered 2026-09-21 (approved by the author the same day). Build card, default OFF: a network station contributes, as code-only rows, every allow-listed band-1 code it reports besides its latched canonical code, so that the C1C and C1W satellite code-bias families stop competing for the same 59 stations. One new unknown per station (the receiver's band-1 inter-signal bias); no second phase, ambiguity or phase-bias family; no new datum row. Requirements, gates and bars are frozen below; nothing is built.
 - **source:** [CSL](CSL_canonical_signal_latch_2026-09-20.md) section 9 (the code half of the latch rule is not the lever: one code per station and band makes the two families share the stations); [MSC](MSC_multi_site_consumer_2026-09-21.md) sections 4 and 5 (the thinned C1W biases and the consumer that leaves by tens of metres on a dropout)
 - **knobs / posture:** `network.second_code_channel` (bool, default false), `network.second_code_signals` (list, default `["C1C", "C1W"]`), `network.second_code_sigma_scale` (number, at least 1, default 1.0); closed-loop consumer pinned off
 - **dates in the text:** 2026-09-21
@@ -143,3 +143,113 @@ so a fresh state determines itself before it informs anything else. 4: counters 
 zero-row warning. 5: the wire is graded by coverage counts and by the de-meaned truth
 comparison, not by raw steps. 6: G0. 7: cell and column edges are events (R7); the column
 edge already has a TOPOLOGY row.
+
+## 6. Result (2026-09-21; Opus build worker, the numbers below re-graded by the manager from `runs/`)
+
+### 6.1 The build
+
+Main `61d67c2`. New: `include/filter/NetworkSecondCodeScope.hpp`,
+`src/core/filter/NetworkSecondCodeScope.cpp`, `tests/test_network_second_code_scope.cpp`
+(suite `NetworkSecondCodeScope`, 29 cases). Sixteen files modified (939 lines added).
+`gnss_tests`: 2408 ran, 2407 passed, 1 known skip. Exe `gnss_processor_scc.exe`, sha256
+`5DF14002...`. `config_posture_check.py --verify-loader`: 0 coverage gaps; golden verify
+PASS; `rapid_arm.py selftest` 47 of 47 (the `clone` op and the `draws` helper of R9).
+
+Two corrections to the design read of section 1. The band map is keyed by band name, so the
+latch accessor keys on the RINEX band digit. Under an active latch there is no
+per-satellite fallback code (the cached branch returns before the fallback walk), so the
+fallback clause of R2 only covers a constellation with no latch; measured fallback rows: 0.
+
+### 6.2 G0 and G1: PASS
+
+G0: the three files of `s0_field`, `s0_sim` and `s0_sim_on` (knob ON on the unmodified sim)
+are identical to the two baselines, and the armed sim run prints the zero-row warning.
+
+| G1, field ON (identical for the three scales) | baseline | ON | bar |
+| --- | --- | --- | --- |
+| satellites per epoch with a C1W bias, median | 24 | 31 | at least 30 |
+| satellite-epochs with a C1C bias and no C1W bias | 5210 | 2 | at most 100 |
+| satellite-epochs with a C1C bias | 22473 | 22586 | not below |
+| receiver inter-signal states at peak | | 41 | the 41 stations that report both codes |
+| companion rows folded; cell openings; closings; reseeds | | 241076; 884; 554; 0 | nonzero where the data demand it |
+| column-epochs that reach two stations only through companions | | 5434 | |
+| rank and positive-definiteness complaints; station rejections | 47; 0 | 47, 47, 43; 0 | no new kind, no increase |
+| `T0_mw_detect` rows, symmetric difference against the baseline | 200 rows | 0 | identical |
+
+### 6.3 G2: FAIL as frozen, and what the failure is
+
+Arms `s2_clone_off` and `s2_clone_on`: the sim with C1W cloned from C1C (noise 0.3 m) and
+injected station and satellite constants (sigma 0.5 m each).
+
+- Knob OFF on the cloned files is NOT identical to the sim baseline (clock p50 7.9e-5 m,
+  maximum 1.5e-3 m, from the first epoch). A rewrite control without the clone is
+  identical, and a different noise seed gives a third wire: some path upstream of this
+  card reads a second band-1 code that is present in the file. The latch stays on C1C and
+  no C1W record is emitted. The consumer of that observable is not named yet (open).
+- Knob ON: the wire's C1W minus C1C bias against the injected satellite constant, both
+  de-meaned, sign +1: correlation 0.913 (bar 0.98), residual rms 0.275 m (bar 0.10), over
+  32 satellites. The error is static: 0.220 m in hour 1, then 0.279, 0.278, 0.276, 0.275
+  and 0.274 m, with a formal sigma of 0.005 m on the column. Worst: G16 -0.64, G09 -0.55,
+  G03 +0.54, G18 -0.52, G06 -0.45 m.
+- The manager's read of `network_pf_rows.csv` (hours 3 to 6, 176 069 code rows per
+  signal): the per-satellite MEAN post-fit residual of the pinned C1C rows has a spread of
+  0.285 m across satellites and correlates +0.977 with the truth error; the C2W rows carry
+  the opposite sign (0.183 m, correlation -0.955); the free C1W rows have a spread of
+  0.038 m (correlation -0.03). With the C1C mean residual removed, the truth error is
+  0.061 m rms.
+
+So the free column sits where the data put it, and the pinned pair does not. The sim
+network carries a per-satellite code misfit of decimetres on its pinned signals (about
+5500 code rows per satellite, so the misfit is significant at tens of sigma) and never
+relaxes it: the levels are born early and the carried states are stiffer than their true
+accuracy. That is a finding about the datum and the born levels (cards RF-0c and RF-IGN),
+not a defect of this build, and it is measurable on any run as the per-satellite mean
+post-fit code residual. A C1C consumer sees that misfit in its code rows; a C1W consumer
+under this card does not. The frozen bar stays failed; 0.061 m is a post-hoc statistic.
+The consumer sub-bar reads 0.036 m at hour 3 against 0.03, in the better direction.
+
+### 6.4 B1 and B2
+
+| arm | 3D p50 by hour (m) | mean 3D, hours 3 to 6 (m) | below 0.1 m | clock wire, all / tracked (m) | refloats | B1 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `r6_dual` | 0.48 0.05 0.05 0.08 0.09 0.10 | 0.0818 | 533 | 0.0184 / 0.0107 | 183 | |
+| `s1_on` | 0.40 0.06 0.05 0.09 0.10 0.14 | 0.0986 | 420 | 0.0232 / 0.0095 | 255 | FAIL (hour 6 by 0.032; mean by 0.017; wire all) |
+| `s3_on` | 0.51 0.07 0.07 0.12 0.12 0.14 | 0.1154 | 224 | 0.0185 / 0.0110 | 200 | FAIL (hours 4 to 6; mean by 0.034) |
+| `s10_on` | 0.52 0.07 0.07 0.12 0.12 0.14 | 0.1164 | 217 | 0.0182 / 0.0110 | 196 | FAIL (hours 4 to 6; mean by 0.035) |
+
+WTZZ00DEU is a C1W and L1W consumer (`closed_loop_sat_trace.csv`). Its error is its
+standing Up offset, which goes from -0.078, -0.084, -0.098 m (hours 4 to 6) to -0.088,
+-0.097, -0.132 m at scale 1 and -0.112, -0.119, -0.135 m at scale 10: the C1W biases it
+reads have changed by decimetres and its float levels follow.
+
+| census key | median p50 by hour (m) | mean hourly p50, hours 2 to 6: better / worse, median change | hour 1 median change (m) | code-bias dropouts (sites) | QUIN00USA epochs above 5 m |
+| --- | --- | --- | --- | --- | --- |
+| `r6` | 0.827 0.282 0.101 0.104 0.113 0.169 | | | 50 (7) | 401 |
+| `scc1` | 0.804 0.203 0.096 0.123 0.109 0.307 | 5 / 9, +0.016 m | -0.077 | 4 (2) | 383 |
+| `scc3` | 0.681 0.214 0.097 0.125 0.108 0.190 | 8 / 3, -0.011 m | -0.223 | 4 (2) | 382 |
+| `scc10` | 0.687 0.230 0.086 0.091 0.112 0.178 | 9 / 2, -0.013 m | -0.138 | 4 (2) | 339 |
+
+B2: scale 1 fails the paired bar; scales 3 and 10 pass it and the hour 1 bar. Every scale
+fails the two absolute sub-bars. The dropouts fall from 50 to 4 (DAV100ATA 2, ARHT00ATA 2),
+which is the mechanism this card was built for. The QUIN00USA sub-bar rested on a wrong
+premise: card EV7 section 5.5 shows that its excursion follows a clock-anchor declaration,
+not a missing code bias. Hour 6 is the hour of the EV7 episode; at scale 1 its census
+median goes from 0.169 to 0.307 m and the run has 255 refloats against 183, so companion
+rows at full weight amplify that episode.
+
+### 6.5 Reading
+
+Not armed. G0 and G1 pass. G2 fails as frozen, and the diagnosis clears the build and
+names a standing misfit of the pinned code datum instead. B1 fails at every scale. B2
+passes its paired bars at scales 3 and 10 only. Because hour 6 of every arm contains the
+EV7 defect and scale 1 amplifies it, the card is graded again on the EV7-fixed base (arms
+`fx_s1` and `fx_s10` of card EV7's build) before any recommendation.
+
+### 6.6 What stays open
+
+- The OFF-path sensitivity to a second band-1 code in the file.
+- The pinned pair's per-satellite code misfit (0.285 m on C1C, 0.183 m on C2W on the sim),
+  its size on the field, and its relation to the consumers' standing offsets.
+- The armed fingerprint append is not exercised by any run (no snapshot is written on this
+  posture).
+- Band 2 companions (section 4).
