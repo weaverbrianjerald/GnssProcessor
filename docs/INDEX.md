@@ -129,6 +129,13 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
+- [UPO](refound/UPO_consumer_up_offset_2026-09-22.md): open (READ 2026-09-22, build
+  pre-registered), the consumers' standing Up offset: DEFECT, the network roster is held at
+  MONUMENT coordinates while the observations refer to the antenna (48 of 59 stations carry an
+  eccentricity, mean 0.128 m, GRAZ00AUT 1.964 m; each station's wet delay absorbs a quarter of
+  it, the wire carries the rest regionally). Roster reduced to the antenna reference points:
+  WTZZ00DEU 0.48 0.05 0.06 0.09 0.09 0.09 to 0.52 0.04 0.01 0.01 0.02 0.01 m, mean Up -0.085 m
+  to zero, clock wire 0.0072 to 0.0034 m; `network.station_marker_to_arp` frozen, not built.
 - [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (built 2026-09-21, NOT armed), build
   card, the second code channel (`network.second_code_channel`, default OFF): a station
   contributes every allow-listed band-1 code it tracks as code-only rows, with one receiver
