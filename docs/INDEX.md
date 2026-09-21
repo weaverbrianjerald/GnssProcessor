@@ -125,6 +125,11 @@ record the program is re-founding **on**.
   the same in every run (G30 loses its only L1W station, a G19 anchor arc is refloated), the
   clock innovations are one fixed pattern whose amplitude changes tenfold with the roster;
   trigger arms, a response ladder and a code read are frozen; nothing built.
+- [SCC](refound/SCC_second_code_channel_2026-09-21.md): open (pre-registered 2026-09-21, approved by
+  the author), build card, the second code channel (`network.second_code_channel`, default
+  OFF): a station contributes every allow-listed band-1 code it tracks as code-only rows, with
+  one receiver inter-signal-bias state per station; no new datum row; gates and bars frozen
+  (wire coverage, a sim truth test with a cloned code, WTZZ00DEU and the 16-site census).
 - [AB3](refound/AB3_lanes_2026-09-20.md): open, 2026-09-20: add-back 3, lanes; the
   lane layer as built is loader-refused on the posture (it needs the retired
   invariant carry and the L5 extra-wide lane), so lanes are a new build on the float
