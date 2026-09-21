@@ -246,3 +246,16 @@ epochs below a decimetre are fewer (275 against 321), as on the 6 h arm; the hou
 medians are equal within 0.02 m, so the count moves because the consumer sits close
 to the 0.10 m line, and it is reported, not explained. The 12 h arm owed by section 4 is
 delivered; the recommendation and the arming remain the author's decision.
+
+## 8. 2026-09-20: CORRECTION of the readings of sections 5, 6 and of the emulation rows of section 7
+
+The `holes` emulation arms of sections 5 to 7 (`hA`, `hB`, `hC`, `hE`, `hG`, `hH`, `hI`,
+`hJ`, `d12_cpa`, and `fN_holes_gapre`, `dD_holes_gapre` of AB2 section 12) changed two
+things at once: they removed the partial-signal epochs, and by doing so they moved
+the producer's first-epoch canonical-signal latch at 13 of 59 stations. The built
+admission rule withholds the same records with the latch unchanged and does not
+reproduce them ([CPA](CPA_canonical_pair_admission_2026-09-20.md) section 5). Their
+consumer numbers stand as measured; their ATTRIBUTION to the partial-signal epochs
+and to an admission rule is withdrawn. What they measured is mostly the canonical
+signal of six stations. The rider's own results (sections 4 and 7, arms `gD_dual`,
+`gF_tri`, `gS_*`, `d12_grs`) do not use the emulation and are unaffected.

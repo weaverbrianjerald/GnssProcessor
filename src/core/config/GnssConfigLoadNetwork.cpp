@@ -4608,6 +4608,23 @@ namespace GnssProcessor {
         // third-frequency C5Q seed at 43 σ while the IF-pair seeds held).
         network_readmit_seed_code_bias_ =
             jval<bool>(json, "network.readmit_seed_code_bias", "readmit_seed_code_bias", true);
+        // Card CPA, canonical-pair admission
+        // (docs/refound/CPA_canonical_pair_admission_2026-09-20.md).  Default OFF =
+        // byte-identical; not fingerprinted.  The tolerance is CLAMPED rather than
+        // refused: 0 is a meaningful arm (admit only the epochs that hold the pair)
+        // and a negative value has no reading other than that one.
+        network_canonical_pair_admission_ =
+            jval<bool>(json, "network.canonical_pair_admission", "canonical_pair_admission",
+                       false);
+        network_canonical_pair_keep_epochs_ =
+            jval<int>(json, "network.canonical_pair_keep_epochs", "canonical_pair_keep_epochs",
+                      3);
+        if (network_canonical_pair_keep_epochs_ < 0) {
+            log->warn("Network (card CPA): network.canonical_pair_keep_epochs = {} is "
+                      "negative, clamped to 0 (admit only the epochs that hold the "
+                      "canonical pair).", network_canonical_pair_keep_epochs_);
+            network_canonical_pair_keep_epochs_ = 0;
+        }
         if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
             if (network_config_.state_snapshot_path.empty())
                 log->warn("Network (resume frame restore): resume_frame_restore / "
@@ -9859,6 +9876,31 @@ namespace GnssProcessor {
                       network_clock_model_
                           ? "  ⚠ clock_model is ON: the clock rides the oscillator, not the D2 "
                             "carry, so only code-bias columns can be seeded."
+                          : "");
+        // Card CPA, the ARMED line.  There is no INERT ladder to run here: the rule
+        // has no prerequisite knob, and the one way it can be inert (no station
+        // latched a canonical code+phase pair on band digits 1 and 2) is a property
+        // of the DATA, which only the run-end counters can report.
+        if (network_canonical_pair_admission_)
+            log->info("Network producer (card CPA, CANONICAL-PAIR ADMISSION): ON with a "
+                      "tolerance of {} processed epoch(s): a (station, satellite) record "
+                      "enters the network path only while the station holds its canonical "
+                      "PHASE and CODE on band digits 1 and 2 (that station's own "
+                      "decideConstellationCanonicals latch), or the last good epoch is "
+                      "within the tolerance; it is WITHHELD before the first good epoch and "
+                      "beyond it, and a withheld record is absent for everything downstream "
+                      "exactly as if the RINEX record were missing (so the row-level gap "
+                      "re-entry tier reads its return as a RE-ENTRY).  A constellation with "
+                      "no canonical pair decided on those digits is left untouched, and the "
+                      "held-out closed-loop consumer is never screened.  Both edges are "
+                      "ADMISSION/canonical_pair events; read the run-end withheld counters "
+                      "before crediting the rule.{}",
+                      network_canonical_pair_keep_epochs_,
+                      network_canonical_pair_keep_epochs_ == 0
+                          ? "  Tolerance 0: only the epochs that hold the pair are admitted "
+                            "It is measured WORSE than 3 on the field TRIPLE bed (288 vs 461 "
+                            "epochs below a decimetre), where a satellite without its band-2 "
+                            "phase is still a two-band satellite."
                           : "");
         if (network_readmit_coupling_marg_ep_ > 0)
             log->info("Network producer (READMIT re-coupling edge): for {} epoch(s) after a "

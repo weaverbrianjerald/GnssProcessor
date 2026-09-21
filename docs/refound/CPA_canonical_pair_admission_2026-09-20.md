@@ -4,8 +4,8 @@
 
 - **id:** CPA
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Build card, pre-registered 2026-09-20. A (station, satellite) epoch without the station's canonical phase and code on bands 1 and 2 is harmful to the network solve on both postures: a rising satellite tracked on its civil signals, a long stretch without the semi-codeless pair, the tail of a setting arc. Removed from the RINEX files by a rule a filter can run, the dual field network goes from 203 to 627 epochs below a decimetre of 720, its first hour from 0.53 to 0.19 m, and the triple network with L5 at all 59 stations from 6 to 461. The build moves the rule into the producer.
+- **status:** closed
+- **summary:** CLOSED 2026-09-20, KEEP_OFF: built exactly (16 244 records withheld against the emulation's 16 014, 15 986 shared) and it does not reproduce the emulation, because the RINEX emulation also moved the producer's first-epoch canonical-signal latch at 13 stations; the gain belongs to that latch (section 5). Original summary: Build card, pre-registered 2026-09-20. A (station, satellite) epoch without the station's canonical phase and code on bands 1 and 2 is harmful to the network solve on both postures: a rising satellite tracked on its civil signals, a long stretch without the semi-codeless pair, the tail of a setting arc. Removed from the RINEX files by a rule a filter can run, the dual field network goes from 203 to 627 epochs below a decimetre of 720, its first hour from 0.53 to 0.19 m, and the triple network with L5 at all 59 stations from 6 to 461. The build moves the rule into the producer.
 - **source:** [GRS](GRS_gap_reentry_per_signal_2026-09-20.md) sections 5 and 6; [AB2](AB2_l5_third_frequency_2026-09-20.md) sections 11 and 12; standing invariants 4, 6, 7
 - **knobs / posture:** new `network.canonical_pair_admission` (default false) and `network.canonical_pair_keep_epochs` (default 3); RF-0hv working bases with `gap_reentry_relevel` armed, dual and triple
 - **dates in the text:** 2026-09-20
@@ -79,3 +79,66 @@ than the rider alone (0.0327 against 0.0303 and 0.0251), which is the one number
 does not improve and is owed a read once the build exists. Hours 10 to 12 are softer than hours 2 to 9 on every arm.
 The long-window condition that the row-level response had to meet is met by the
 emulation; the build's own 12 h arm is still owed.
+
+## 5. 2026-09-20: CPA-1 result: built, the rule is exact, and it is NOT what the emulation measured. KEEP_OFF
+
+Build: seam `filter/NetworkCanonicalPairAdmission` (pure state machine
+`canonicalPairStep`; the call sits right after `networkInjectEpoch`, before the raw
+observables), state and counters in `NetworkRunContext`, knobs next to `readmit_*`,
+suite of 12 cases, `gnss_tests` 2317 passed with the one known skip, exe
+`gnss_processor_cpa.exe`. Every number below was re-read from the run directories by
+the manager.
+
+**G0 PASS** on three controls (the dual field base, the dual sim base, the rider arm).
+**G1 PASS**: field dual arm `cD_dual`, 6 h: 471 076 records screened, 16 244 withheld
+(4873 before the first good epoch, 11 371 beyond the tolerance) over 851 pairs, 1258
+withhold and 882 readmit edges; the emulation withheld 16 014 in the same window and
+15 986 are shared. The built rule IS the emulated rule.
+
+| arm | consumer 3D p50 by hour (m) | sub-dm | T4_attrib | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- |
+| `gD_dual` (no rule) | 0.53 0.11 0.10 0.11 0.12 0.11 | 162 | 92 | 0.0090 / 0.0128 |
+| `hH_dual_causal3` (the emulation) | 0.19 0.08 0.06 0.07 0.09 0.07 | 627 | 147 | 0.0074 / 0.0137 |
+| **`cD_dual`** (the built rule, tolerance 3) | 0.61 0.19 0.12 0.12 0.13 0.12 | **16** | 98 | 0.0090 / 0.0125 |
+| `cD_dual_k0` (tolerance 0) | 0.61 0.20 0.11 0.13 0.13 0.10 | 106 | 106 | 0.0092 / 0.0121 |
+| `gF_tri` / **`cF_tri`** | 0.69 0.31 0.15 0.14 0.12 0.17 / 0.62 0.29 0.12 0.12 0.11 0.15 | 6 / 60 | 219 / 212 | 0.0095 / 0.0094 tracked |
+| sim, undisturbed and fault beds, tolerance 3 and 0 | equal to their bases to the printed digit | | | |
+
+**B1 and B2 FAIL; B3 PASS.** The built rule withholds the emulation's records and does
+not reproduce its result: on the dual field bed it is worse than no rule.
+
+**The emulation moved a second variable.** Deleting records from the RINEX files
+changes the tally of the first processed epoch, on which the producer decides each
+station's canonical signal per band (`decideConstellationCanonicals`, the signal with
+the most satellites). Read independently from `network_pf_rows.csv`: the base latches
+C1C at 31 stations and L1C at 47; the emulation latches C1W at 41 and L1W at 18; 13
+stations differ, six of them in the band-1 PHASE (BOGT00COL, KOKV00USA, STHL00GBR,
+ULAB00MNG, URUM00CHN, WIND00NAM: L1C in the base, L1W in the emulation), seven in the
+code only. The built rule leaves the latch where the base has it. One-change arms on
+the rider posture, same exe:
+
+| arm | the one change | consumer 3D p50 by hour (m) | sub-dm | clock wire, tracked / all (m) |
+| --- | --- | --- | --- | --- |
+| `cD_dual_primoff` | non-primary types of bands 1 and 2 removed at every station, NO rule | 0.44 0.07 0.06 0.08 0.08 0.07 | **601** | 0.0069 / 0.0129 |
+| `cD_dual_prim` | the same with the rule | 0.34 0.10 0.08 0.09 0.09 0.07 | 489 | 0.0066 / 0.0128 |
+| `kA_six` | the same strip at the six phase-flip stations only | 0.69 0.34 0.10 0.06 0.07 0.06 | 411 | |
+| `kB_seven` | the same strip at the seven code-only stations | 0.53 0.11 0.10 0.10 0.12 0.11 | 165 | |
+| `kC_consL1C` | the CONSUMER moved to L1C / C1C | 0.68 0.27 0.13 0.10 0.13 0.11 | 80 | |
+
+The gain of sections 4 and of GRS sections 5 and 6 belongs to the canonical-signal
+latch, not to admission: forcing every station onto its priority-first signal gives
+601 epochs below a decimetre without any rule, six stations carry most of it, the
+band-1 code choice carries none, and the rule on top of it costs epochs (601 to 489).
+Moving the consumer to the majority family does not help, so the mechanism is not
+simply the number of stations that support the consumer's signal; it is not read
+yet.
+
+**Verdict.** `network.canonical_pair_admission` is KEEP_OFF on the dual posture
+(falsified as the cause; worse than no rule) and buys 6 to 60 epochs on the triple
+one. The build stays in the tree, default OFF, as the instrument that separated the
+two variables. The card is closed; the lever it uncovered is the canonical-signal
+decision (the most satellites at the first processed epoch prefers a civil signal
+whenever one satellite lacks the semi-codeless pair at that epoch), which is a new
+card. Lesson for the emulation tool: an edit of the observation files can move the
+producer's first-epoch decisions; an emulation arm is checked for an unchanged latch
+(`network_pf_rows.csv`, signals by station) before its result is attributed.

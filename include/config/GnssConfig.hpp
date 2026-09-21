@@ -3122,6 +3122,41 @@ namespace GnssProcessor {
          */
         bool networkReadmitSeedCodeBias() const { return network_readmit_seed_code_bias_; }
         /**
+         * @brief Card CPA, CANONICAL-PAIR ADMISSION
+         *        (@c network.canonical_pair_admission, network producer only).
+         *
+         * A (station, satellite) epoch enters the network path only while the station
+         * holds its CANONICAL phase and code signal on band digits 1 and 2, as that
+         * station's own canonical latch (@c PppModel::decideConstellationCanonicals)
+         * decided them; a record without all four is WITHHELD before the first good
+         * epoch and beyond @ref networkCanonicalPairKeepEpochs epochs after the last
+         * one, and the withheld record is absent for everything downstream exactly as
+         * if the RINEX record were missing.  A constellation with no canonical pair
+         * decided on those two band digits is left untouched.
+         *
+         * Measured as an emulation over the input files
+         * (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §6): the dual field
+         * network goes from 203 to 627 epochs below a decimetre of 720 and its first
+         * hour from 0.53 to 0.19 m; the triple network with L5 at all 59 stations from
+         * 6 to 461.  Default false = byte-identical (the seam returns the caller's own
+         * epoch, no copy).  NOT fingerprinted.
+         */
+        bool networkCanonicalPairAdmission() const { return network_canonical_pair_admission_; }
+        /**
+         * @brief Card CPA, the admission TOLERANCE, in processed epochs
+         *        (@c network.canonical_pair_keep_epochs; inert without
+         *        @ref networkCanonicalPairAdmission).
+         *
+         * A record whose canonical pair is absent is still admitted while the last
+         * good processed epoch is at most this many epochs back.  0 admits only the
+         * epochs that hold the pair.  Clamped at 0 by the loader.  Default 3, which is
+         * the emulation's best arm on both postures: on the field triple bed N = 3 kept
+         * 461 epochs below a decimetre against N = 0's 288, because with three bands a
+         * satellite without its band-2 phase is still a two-band satellite and deleting
+         * it costs information; on the dual field bed the two were equal.
+         */
+        int networkCanonicalPairKeepEpochs() const { return network_canonical_pair_keep_epochs_; }
+        /**
          * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
          *        epochs, SPEC_synthetic_minimum_network §18.10).
          *
@@ -7897,6 +7932,8 @@ namespace GnssProcessor {
         double network_readmit_seed_horizon_s_{0.0};       ///< READMIT continuity (E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< READMIT re-coupling edge: epochs after a satellite's re-admission during which every Card-1 coupling term on its shared columns takes the departed route (block/row edge).  0 = OFF.
         bool   network_readmit_seed_code_bias_{true};      ///< READMIT seed sub-knob: also park + seed the departing satellite's per-signal CODE-BIAS columns (true) or the clock alone (false).  Inert without readmit_seed_horizon_s.
+        bool   network_canonical_pair_admission_{false};   ///< Card CPA (docs/refound/CPA_canonical_pair_admission_2026-09-20.md): a (station, satellite) record enters the network path only while the station holds its canonical phase AND code on band digits 1 and 2 (its own PppModel latch decides them), or the last good processed epoch is within canonical_pair_keep_epochs; a withheld record is absent downstream exactly as if the RINEX record were missing, so the row-level gap re-entry tier sees the return as a re-entry.  A constellation with no canonical pair decided on those digits is left untouched.  OFF = byte-identical (no copy of the epoch is taken).  NOT fingerprinted.
+        int    network_canonical_pair_keep_epochs_{3};     ///< Card CPA tolerance, in PROCESSED epochs: a record without its canonical pair is still admitted while the last good epoch is at most this many epochs back.  Clamped at 0 (0 admits only the epochs that hold the pair).  Inert without canonical_pair_admission.
         int    network_resume_d5_warmup_ep_{0};            ///< RS-2b (SPEC_event_harness §21.6): epochs after a warm resume during which the Card-4 D5 innovation gate is DIAGNOSTIC-ONLY — a tripping chord is counted (d5_warmup_suppressed, the network_d5_flags.csv warmup_suppressed column, the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch right / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in PROCESSED epochs at the install seam.  0 = OFF (byte-identical).  NOT fingerprinted.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires en masse at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = OFF.  NOT fingerprinted.
         bool   network_carry_iono_{false};                ///< QUEUE 8b: carry per-LOS slant iono across epochs as a diagonal random-walk prior (via addStationPrior, alongside the ZWD carry); OFF = per-epoch white-noise slant iono (byte-identical).

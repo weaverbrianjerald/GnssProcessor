@@ -229,6 +229,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
     src/core/filter/NetworkInject.cpp
+    src/core/filter/NetworkCanonicalPairAdmission.cpp
     src/core/filter/NetworkOraclePin.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
@@ -475,6 +476,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
+    tests/test_canonical_pair_admission.cpp
     tests/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp

@@ -119,6 +119,7 @@
 #include "filter/NetworkTeardown.hpp"
 #include "filter/NetworkProducerAr.hpp" // INC-9b: log-only producer-AR + NEQ export
 #include "filter/NetworkInject.hpp"
+#include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: canonical-pair admission seam
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
 #include "filter/NetworkDdPriorBuild.hpp" // INC-9b: buildEnsembleGauges/buildCarryDdPriors free fns
 #include "filter/NetworkSolveGlue.hpp" // INC-9b: datum/solve/within-epoch RAIM
@@ -1232,6 +1233,10 @@ int Application::runNetwork() {
     // resume fingerprint, so its ARMED banner must not be mistaken for restored
     // state.  Unarmed (network.inject absent) leaves every seam below untouched.
     networkInjectArm(ctx, config_, log_manager_, log);
+    // Card CPA (docs/refound/CPA_canonical_pair_admission_2026-09-20.md): size the
+    // per-station canonical-latch cache from the PRODUCER roster.  Disarmed leaves
+    // every member of ctx.carry.cpa untouched and the seam unreachable.
+    networkCanonicalPairArm(ctx, config_, static_cast<int>(stations.size()));
 
     // Resolve the a-priori satellite-clock anchor σ once — it is loop-invariant and
     // config-only — so the anchor fold and its information-fraction diagnostic
@@ -1373,8 +1378,21 @@ int Application::runNetwork() {
         // consume an event.  UNARMED: returns se_raw itself — no copy, no branch,
         // byte-identical.  `se` shadows nothing; the whole body below reads it.
         SyncedEpoch se_inject_scratch;
-        const SyncedEpoch& se = networkInjectEpoch(ctx, log, traces, se_raw,
-                                                   se_inject_scratch);
+        const SyncedEpoch& se_admit = networkInjectEpoch(ctx, log, traces, se_raw,
+                                                         se_inject_scratch);
+        // CANONICAL-PAIR ADMISSION seam (filter/NetworkCanonicalPairAdmission.cpp,
+        // card CPA).  Placed HERE, immediately after the injector and on the same
+        // contract, because the site is the only one upstream of EVERYTHING the
+        // withhold must be absent from: computeModels, the T0 detectors,
+        // networkComputeRawObservables, assembly, the RAIM pools and the traces all
+        // derive from this RinexObservation, so dropping the record here is exactly
+        // "as if the RINEX record were missing", which is what lets the row-level
+        // gap re-entry tier read the satellite's return as a RE-ENTRY.  Screens the
+        // PRODUCER roster only, so the held-out closed-loop consumer is untouched.
+        // DISARMED: returns se_admit itself (no copy, no walk, byte-identical).
+        SyncedEpoch se_cpa_scratch;
+        const SyncedEpoch& se = networkCanonicalPairAdmission(ctx, log, traces, stations,
+                                                              se_admit, se_cpa_scratch);
 
         // Reduced-RHS class attribution: arm the estimator's shared-info capture
         // recorder BEFORE any prior-inject site runs this epoch (the post-solve

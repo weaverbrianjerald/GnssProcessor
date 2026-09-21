@@ -46,6 +46,7 @@
 #include "filter/NetworkSbasis.hpp"     // NetworkSbasis::Plan (lifecycle-fn params)
 #include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
 #include "filter/NetworkInject.hpp"        // NetworkInjectState — the EVENT HARNESS schedule + ledger
+#include "filter/NetworkCanonicalPairAdmission.hpp" // Card CPA: canonical-pair admission state + counters
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
 #include "common/PppUtils.hpp"          // eq34_ppp_utils
 
@@ -2369,6 +2370,17 @@ namespace GnssProcessor {
         /// per identity per era rather than once per run (which would make its
         /// stability across the day, spec §6.4, unreadable).
         std::set<std::string> dg_pred_only_era;
+
+        // --- Card CPA: canonical-pair admission --------------------------------
+        // The per-(station, satellite) admission memory of
+        // docs/refound/CPA_canonical_pair_admission_2026-09-20.md, parked here
+        // rather than in the seam because the rule's whole content is a value that
+        // must survive to the next epoch (the INC-12 rule: a seam owns no state).
+        // NOT snapshotted and NOT in the warm-resume fingerprint: the same
+        // forward-only posture as the other observer states on this path: a
+        // resumed leg re-earns each pair's first good epoch.
+        // Empty and untouched unless network.canonical_pair_admission.
+        NetworkCanonicalPairState cpa;
     };
 
     /// @internal Service counters, health-window anchors, and B8 flag-rate
@@ -3703,6 +3715,13 @@ namespace GnssProcessor {
         std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio
         std::vector<double> netar_p_succ;    ///< per-epoch accepted-fix bootstrap success rate
         std::vector<double> netar_med_sigma; ///< per-epoch median DD formal σ (cycles) — the convergence gauge
+
+        /// --- Card CPA: canonical-pair admission run-end telemetry.
+        /// ALWAYS the ON-path readout of the rule (standing invariant 4): a
+        /// `withheld_total` of zero on an ARMED run is dead wiring, and the
+        /// teardown line says so in those words rather than reading as a quiet run.
+        /// Untouched unless network.canonical_pair_admission.
+        NetworkCanonicalPairCounters cpa;
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,

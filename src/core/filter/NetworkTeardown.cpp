@@ -7,6 +7,7 @@
  */
 
 #include "filter/NetworkInject.hpp"
+#include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: run-end counter readout
 #include "filter/NetworkTeardown.hpp"
 
 #include "app/NetworkRunContext.hpp"
@@ -5855,6 +5856,13 @@ int networkTeardown(
     // never-fired HARD error.  Read BEFORE the zero-emit guard so an armed-but-
     // silent schedule is reported even on a run that also produced nothing.
     const int inject_rc = networkInjectRunEnd(ctx, log);
+    // Card CPA run-end (filter/NetworkCanonicalPairAdmission.cpp): the withheld
+    // census and both edges, in one line.  Silent when the rule is disarmed; the
+    // ARMED AND INERT clause is what standing invariant 4 asks of an armed run
+    // whose counters never moved.  Read BEFORE the zero-emit guard for the same
+    // reason the injector's clause is: a rule that withheld the whole network
+    // must be visible on a run that also produced nothing.
+    networkCanonicalPairRunEnd(ctx, log);
 
     if (n_emitted == 0) {
         log->error("Network: produced ZERO solution epochs. Common causes: stations "
