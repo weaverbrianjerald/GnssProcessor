@@ -604,6 +604,32 @@ std::vector<std::string> activeFrequencyBands(
             for (const auto& [key, pick] : picks)
                 best[key] = Candidate{ pick.signal, pick.count };
 
+            // Card SID phase 5 (E3 / C1): the producer's DECLARED roster.  The
+            // comparison always runs when a declaration reached this model; the
+            // latch MOVES only under network.closed_loop.roster_latch, so a phase-5a
+            // consumer counts and is byte-identical.  Placed BEFORE the summary
+            // below so every trace line states the latch this station will actually
+            // use, never the one its own rule would have chosen.  Unreachable
+            // without a declaration, which is every pre-card wire.
+            std::string declared_note;
+            if (declared_roster_.present && !audit_only) {
+                std::map<std::pair<std::string, char>, std::string> chosen;
+                for (const auto& [key, cand] : best) chosen[key] = cand.signal;
+                applyDeclaredLatch_(cons, sit->second, candidates, chosen);
+                for (auto& [key, cand] : best) {
+                    const auto dit = chosen.find(key);
+                    if (dit == chosen.end() || dit->second == cand.signal) continue;
+                    if (!declared_note.empty()) declared_note += ", ";
+                    declared_note += key.first + std::string(1, key.second) + ": "
+                                   + cand.signal + " -> " + dit->second;
+                    cand.signal = dit->second;
+                    cand.count  = 0;
+                    for (const auto& c : candidates)
+                        if (c.signal == cand.signal && c.obs_type == key.second)
+                            cand.count = c.count;
+                }
+            }
+
             // Build a stable trace string for the decision log.
             std::string summary;
             for (const auto& [key, cand] : best) {
@@ -668,6 +694,16 @@ std::vector<std::string> activeFrequencyBands(
                 "Canonical signals decided for {} station '{}' ({} sats this epoch): {}",
                 cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
                 sat_obs_list.size(), summary);
+            // Card SID phase 5b: a latch the DECLARATION moved says so on the same
+            // logger that carries the decision, so an arm of the knob is readable
+            // from the trace rather than from the counters alone.  Silent when the
+            // declaration changed nothing, so an inert arm adds no bytes.
+            if (!declared_note.empty())
+                log_manager_.getLogger("main_log")->info(
+                    "Canonical latch FOLLOWS the producer's declared roster for {} station "
+                    "'{}' (card SID phase 5b, network.closed_loop.roster_latch): {}",
+                    cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
+                    declared_note);
 
             // Card CSL: one line per station and constellation naming the latch
             // AND its runner-up with both counts, under EITHER rule, so a run
@@ -707,6 +743,98 @@ std::vector<std::string> activeFrequencyBands(
                     : std::string(", code_follows_phase=false"),
                 config_.canonicalSignalMinCoverage(), sat_obs_list.size(),
                 latch_detail.empty() ? std::string("(none)") : latch_detail);
+        }
+    }
+
+    void PppModel::setDeclaredSignalRoster(const NetworkSignalDeclaration& decl, bool act) {
+        declared_roster_     = decl;
+        declared_roster_act_ = act && decl.present;
+        if (decl.present) declared_latch_.seen = true;
+        declared_latch_.armed = declared_roster_act_;
+    }
+
+    void PppModel::applyDeclaredLatch_(
+            const std::string& cons,
+            const std::vector<std::pair<std::string, std::string>>& band_table,
+            const std::vector<CanonicalCandidate>& candidates,
+            std::map<std::pair<std::string, char>, std::string>& chosen) {
+        const auto cit = declared_roster_.bands.find(cons);
+        if (cit == declared_roster_.bands.end()) return;   // nothing declared here
+
+        // The band NAME of a signal, through the same prefix table the candidate
+        // walk above used.  Resolving it from the SIGNAL rather than from the
+        // declaration's band digit keeps one rule in the file: the digit and the
+        // name are 1:1 within a constellation, but only this table states it.
+        const auto bandNameOf = [&](const std::string& sig) -> std::string {
+            for (const auto& [pattern, name] : band_table)
+                if (sig.find(pattern) == 0) return name;
+            return {};
+        };
+        const auto tracked = [&](const std::string& sig, char type) {
+            for (const auto& c : candidates)
+                if (c.signal == sig && c.obs_type == type && c.count > 0) return true;
+            return false;
+        };
+
+        std::set<std::pair<std::string, char>> handled;
+        for (const auto& [band_digit, row] : cit->second) {
+            (void)band_digit;
+            for (const char type : { 'L', 'C' }) {
+                const std::vector<std::string>& decl_list =
+                    (type == 'L') ? row.phase : row.code;
+                if (decl_list.empty()) continue;
+                // The declaration's own ORDER is the priority list here: the first
+                // declared signal this station tracks wins, which is card CSL's rule
+                // keyed to the producer's statement instead of to the config list.
+                std::string pick;
+                for (const std::string& sig : decl_list)
+                    if (tracked(sig, type)) { pick = sig; break; }
+
+                const std::string band_name =
+                    bandNameOf(pick.empty() ? decl_list.front() : pick);
+                if (band_name.empty()) continue;
+                const auto key = std::make_pair(band_name, type);
+                const auto own = chosen.find(key);
+                if (own == chosen.end()) continue;   // this station latched nothing here
+                handled.insert(key);
+                ++declared_latch_.compared;
+                // The class card MSC saw as dropouts, and it is independent of
+                // what the latch then does: this station latched a signal the
+                // network declares no family for, so the correction it needs is
+                // structurally absent rather than late.  Counted before the
+                // branch below, because a station that tracks NONE of the
+                // declared signals is exactly the worst case of it.
+                if (std::find(decl_list.begin(), decl_list.end(), own->second)
+                    == decl_list.end())
+                    ++declared_latch_.own_not_declared;
+
+                if (pick.empty()) {
+                    // The network carries families on this band, and this station
+                    // tracks none of them: its own rule stands, and that is the
+                    // reading, not a failure.
+                    ++declared_latch_.none_tracked;
+                    ++declared_latch_.own_rule;
+                    continue;
+                }
+                if (own->second == pick) {
+                    ++declared_latch_.agree;
+                    ++declared_latch_.own_rule;
+                    continue;
+                }
+                ++declared_latch_.differ;
+                if (declared_roster_act_) {
+                    chosen[key] = pick;
+                    ++declared_latch_.from_roster;
+                } else {
+                    ++declared_latch_.own_rule;
+                }
+            }
+        }
+        // Cells the declaration said nothing about keep the station's own rule, and
+        // are counted so the two populations add up to the station's latch.
+        for (const auto& [key, sig] : chosen) {
+            (void)sig;
+            if (!handled.count(key)) ++declared_latch_.own_rule;
         }
     }
 

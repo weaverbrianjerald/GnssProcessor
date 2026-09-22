@@ -77,6 +77,25 @@ struct LineAssembler {
     /// fully WITHHELD epoch therefore never mis-attaches to a later epoch.
     NetworkProducerStatus pending_h;
     bool                  pending_h_valid{false};
+    /// Card SID phase 5 (E2): the DECLARED SIGNAL ROSTER block under assembly.
+    /// A declaration replaces the previous one wholesale, so the producer writes
+    /// every row together and the first @c N record after any non-@c N line
+    /// starts a fresh one (@ref decl_block_open).  When the block closes, the
+    /// declaration becomes the reader's CURRENT one and is stamped on the next E
+    /// record (@ref decl_fresh), following the RTA-5 S-line precedent.
+    NetworkSignalDeclaration decl_block;
+    bool                     decl_block_open{false};
+    NetworkSignalDeclaration declaration;     ///< reader-current declaration (present=false until one is seen).
+    bool                     decl_fresh{false};///< a block closed and has not been stamped yet.
+
+    /// Close an open @c N block: the accumulated rows become the current
+    /// declaration.  Called at the top of every non-@c N tag.
+    void closeDeclBlock() {
+        if (!decl_block_open) return;
+        decl_block_open = false;
+        declaration     = decl_block;
+        decl_fresh      = true;
+    }
     /// RTA-10: latest H heartbeat consumed (attached or standalone) — the tail's
     /// lastStatus() surface.
     std::optional<NetworkProducerStatus> latest_status;
@@ -113,6 +132,9 @@ struct LineAssembler {
         if (f.empty() || f[0].empty()) return completed;
         const std::string& tag = f[0];
 
+        // Card SID phase 5: an N block is CONTIGUOUS, so any other tag ends it.
+        if (tag != "N") closeDeclBlock();
+
         try {
             if (tag == "E") {
                 if (f.size() < 6) { ok = false; return completed; }
@@ -141,7 +163,21 @@ struct LineAssembler {
                         cur.epoch_status = pending_h;
                     pending_h_valid = false;
                 }
+                // Card SID phase 5 (E2): the declaration block that preceded this
+                // epoch.  Stamped on the record whose epoch it describes, exactly
+                // as contract_refresh is, so a consumer applies it at the right
+                // position in the stream rather than at end of file.
+                if (decl_fresh) {
+                    cur.declaration_refresh = declaration;
+                    decl_fresh              = false;
+                }
                 have_cur = true;
+            } else if (tag == "N") {   // Card SID phase 5: declared signal roster
+                if (!decl_block_open) {
+                    decl_block      = NetworkSignalDeclaration{};
+                    decl_block_open = true;
+                }
+                if (!signalDeclarationParseRecord(f, decl_block)) ok = false;
             } else if (tag == "C") {
                 // FC-1: a fast record must carry K lines and nothing else.  A C/B/P/U
                 // inside one means the writer mixed a full epoch into a fast marker,
@@ -398,6 +434,7 @@ struct LineAssembler {
     /// this: its trailing epoch may still be growing on disk.
     std::optional<NetworkProductRecord> finish() {
         std::optional<NetworkProductRecord> completed;
+        closeDeclBlock();   // a trailing N block still becomes the reader's current one
         if (have_cur) {
             completed = std::move(cur);
             cur = NetworkProductRecord{};
@@ -654,7 +691,19 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
             "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>][,discdecom=1]"
             "[,discscope=channel][,pbhold=1]"
-            "   (B6 S-basis contract)\n";
+            "   (B6 S-basis contract)\n"
+            "# N,constellation,band_digit[,ph=<sig>[+<sig>...]][,co=<sig>[+<sig>...]]"
+            "[,comp=<sig>[+<sig>...]][,dph=<sig>][,dco=<sig>]"
+            "   (card SID phase 5 declared signal roster; a contiguous N block"
+            " REPLACES the previous declaration wholesale)\n";
+}
+
+std::size_t NetworkProductWriter::writeSignalDeclaration(
+        const NetworkSignalDeclaration& decl) {
+    if (!out_ || !decl.present) return 0;
+    const std::vector<std::string> lines = signalDeclarationToWire(decl);
+    for (const std::string& l : lines) out_ << l << '\n';
+    return lines.size();
 }
 
 void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_changed,
@@ -861,6 +910,12 @@ void NetworkProductReader::replay(const NetworkProductRecord& rec,
     // A2: re-apply the datum change SCOPED to the serialized affected-constellation
     // set (E-line field 8).  An empty set (pre-A2 files / scoping-off runs) forces a
     // global bump, exactly reproducing the pre-A2 behavior.
+    // Card SID phase 5 (E2): the producer's declared signal roster reaches the
+    // consumer store here, BEFORE the epoch's records, so a consumer reading this
+    // epoch already holds the declaration that describes it.  A wire without an N
+    // block never calls this, so the store's declaration stays absent and every
+    // consumer gating on presence is unchanged.
+    if (rec.declaration_refresh) store.setDeclaredRoster(*rec.declaration_refresh);
     if (rec.datum_changed) emitter.markDatumChange(rec.datum_consts);
     // B1: re-apply the per-satellite retro-bump (R record) so the consumer-visible
     // discontinuity counters reproduce byte-for-byte on replay.

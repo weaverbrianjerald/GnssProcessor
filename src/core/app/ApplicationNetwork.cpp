@@ -121,6 +121,7 @@
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: canonical-pair admission seam
 #include "app/SignalRoster.hpp"  // card SID phase 1: the roster / arc-ledger observatory
+#include "filter/NetworkLedgerEmit.hpp"  // card SID phase 5a: the emitter read + the declared roster
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
 #include "filter/NetworkDdPriorBuild.hpp" // INC-9b: buildEnsembleGauges/buildCarryDdPriors free fns
 #include "filter/NetworkSolveGlue.hpp" // INC-9b: datum/solve/within-epoch RAIM
@@ -1272,6 +1273,11 @@ int Application::runNetwork() {
     // (network.signal_roster absent) leaves every member of ctx.roster and
     // ctx.arc_ledger untouched and both seams unreachable.
     networkSignalRosterArm(ctx, config_, log, stations);
+    // Card SID phase 5a (docs/refound/SID_signal_identity_2026-09-22.md section 4):
+    // arm the emitter-against-ledger read and the wire declaration.  Disarmed
+    // (network.ledger_emit absent) leaves every member of ctx.ledger_emit
+    // untouched and all three seams unreachable.
+    networkLedgerEmitArm(ctx, config_, log);
 
     // Resolve the a-priori satellite-clock anchor σ once — it is loop-invariant and
     // config-only — so the anchor fold and its information-fraction diagnostic
@@ -2815,6 +2821,12 @@ int Application::runNetwork() {
                                  slip_qc.epoch.computed ? &slip_qc.epoch : nullptr,
                                  carry_slipped_ambs, sol,
                                  ctx.counters.n_emitted != fc_n_emitted_before);
+        // Card SID phase 5a (E1): the FOLD half, here and not at the emit site
+        // because the ledger's ADMITTED machine is advanced by the audit pass
+        // immediately above: an admitted arc birth at this epoch does not exist
+        // before it runs.  Reads only; every class is a counter plus an ARC event.
+        // DISARMED, or with no capture from this epoch: returns on its first line.
+        networkLedgerEmitFold(ctx, traces, se);
         subEnd(SB_ROSTER);
         // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  BEFORE the
         // stash/status block, because the epoch-status row written there reads the

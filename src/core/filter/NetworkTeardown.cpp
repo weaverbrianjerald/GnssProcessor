@@ -6259,6 +6259,11 @@ int networkTeardown(
                           p.cells, p.keys, p.first_sight, p.held, p.refloats, p.disc_ignored,
                           p.closureHolds() ? "HOLDS" : "BROKEN");
         }
+        // Card SID phase 5: the consumer's half of the declaration: the latch
+        // against the declared roster and the attributed freshness flips.  The
+        // harness never calls RealTimeEngine::flush(), so the census is printed
+        // here; silent on a wire that carries no declaration.
+        consumer->logRosterConsumerSummary("closed loop");
         // Card CC (B): consumer snapshots written beside the network history
         // copies (0 written on an armed seed = no warm start on offer).
         if (cl.state_snapshot)
@@ -6285,6 +6290,12 @@ int networkTeardown(
     // guard, for the reason the two clauses above give: an observatory that ran on
     // a run which produced nothing is exactly the run whose table matters.
     networkSignalRosterRunEnd(ctx, log);
+    // Card SID phase 5a run-end (filter/NetworkLedgerEmit.cpp): the emitter's
+    // bookkeeping against the ledger, both generation classes with their
+    // denominators, the first-sighting split, and the declared roster's own wire
+    // census.  Silent when the knob is disarmed; read here for the reason the
+    // clauses above give.
+    networkLedgerEmitRunEnd(ctx, log);
 
     if (n_emitted == 0) {
         log->error("Network: produced ZERO solution epochs. Common causes: stations "

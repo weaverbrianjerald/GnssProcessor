@@ -185,6 +185,24 @@ namespace GnssProcessor {
          */
         bool          pb_disc_carry{ false };
         /**
+         * @brief Card SID phase 5b: the consumer's band latch and its freshness
+         *        response follow the producer's DECLARED roster
+         *        (@c network.closed_loop.roster_latch, default false ⇒ inert).
+         *
+         * Derived into the consumer engine's config as
+         * @c GnssConfig::consumerRosterLatch by
+         * @c deriveClosedLoopConsumerConfig.  Armed, the consumer's canonical
+         * signal per band is taken from the declaration where the consumer tracks
+         * a declared signal (the declaration's own order, which is the producer's
+         * station-support order), and a fresh-to-stale flip on a signal the
+         * declaration does NOT name is not treated as a staleness event.
+         *
+         * INERT, with one log line, when the wire carries no declaration: which
+         * is every producer that did not arm @c network.ledger_emit.  It never
+         * reaches the producer's solve or its resume fingerprint.
+         */
+        bool          roster_latch{ false };
+        /**
          * @brief Card PBT (A): the consumer translates EVERY phase-bias product step
          *        into its own ambiguities, declared or not
          *        (@c network.closed_loop.pb_step_translate, default false ⇒ byte-identical).

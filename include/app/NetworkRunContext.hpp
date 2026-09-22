@@ -50,6 +50,7 @@
 #include "app/SignalRoster.hpp"            // Card SID phase 1: SignalRoster + its counters
 #include "filter/ArcLedger.hpp"            // Card SID phase 1: the arc lifecycle machine
 #include "filter/NetworkAnchorReentry.hpp" // Card SID phase 4: the anchor drop memo / the read
+#include "filter/NetworkLedgerEmit.hpp"    // Card SID phase 5a: the emitter read + the declared roster
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
 #include "common/PppUtils.hpp"          // eq34_ppp_utils
 
@@ -3935,6 +3936,11 @@ namespace GnssProcessor {
         /// (standing invariant 4), and the run-end table prints all of them.
         /// Untouched unless network.signal_roster.
         NetworkSignalRosterCounters sid;
+
+        /// --- Card SID phase 5a (network.ledger_emit): the emitter's per-family
+        /// bookkeeping read against the arc ledger, and the declared roster's own
+        /// wire census.  Untouched unless the knob is armed.
+        NetworkLedgerEmitCounters le;
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,
@@ -3981,6 +3987,13 @@ namespace GnssProcessor {
         /// it, so it is neither snapshotted nor fingerprinted.  armed == false
         /// (the default) makes every writer return on its first line.
         ArcReasonEpoch         reasons;
+        /// Card SID phase 5a (network.ledger_emit): the emit-site capture, the
+        /// generation memories the fold differences against, and the declared
+        /// roster the wire carries.  Same exemption and same reason as
+        /// @ref arc_ledger: nothing in the solve reads it, so it is neither
+        /// snapshotted nor fingerprinted.  armed == false (the default) leaves
+        /// every member untouched and both seams unreachable.
+        LedgerEmitState        ledger_emit;
     };
 
     // ------------------------------------------------------------------

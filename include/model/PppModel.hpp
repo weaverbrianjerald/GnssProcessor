@@ -12,6 +12,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "products/ProductParser.hpp"
+#include "products/SignalDeclaration.hpp"   // Card SID phase 5: the declared roster
 #include "logging/LogManager.hpp"
 #include "rinex/RinexParser.hpp"
 #include "filter/StateManager.hpp"
@@ -651,6 +652,52 @@ namespace GnssProcessor {
         std::size_t restoreCanonicalSignals(const std::vector<CanonicalSignal>& entries);
 
         /**
+         * @struct DeclaredLatchCounters
+         * @brief Card SID phase 5: the consumer's latch against the producer's
+         *        DECLARED roster, one named class each (standing invariant 4).
+         *
+         * Every class carries a denominator, so a zero can be read: @c compared 0
+         * means no declaration reached the latch at all, which is dead wiring and
+         * not agreement.
+         */
+        struct DeclaredLatchCounters {
+            long long compared{ 0 };      ///< (band, obs type) cells the declaration named (denominator).
+            long long agree{ 0 };         ///< the own-rule latch IS the first declared signal this station tracks.
+            long long differ{ 0 };        ///< it is not, but the station does track a declared signal.
+            long long own_not_declared{ 0 };///< of those, the own-rule signal is not declared AT ALL: the network carries no family for it.
+            long long none_tracked{ 0 };  ///< no declared signal of that cell is tracked here (the own rule stands).
+            long long from_roster{ 0 };   ///< cells the ARMED latch took from the declaration.
+            long long own_rule{ 0 };      ///< cells the armed latch left on the station's own rule.
+            bool      armed{ false };     ///< the latch ACTED (network.closed_loop.roster_latch).
+            bool      seen{ false };      ///< a declaration was handed to the model at all.
+        };
+
+        /**
+         * @brief Card SID phase 5: hand the producer's DECLARED signal roster to
+         *        the latch (@c network.closed_loop.roster_latch).
+         *
+         * Copied, not referenced: the store that owns it is mutex-guarded and
+         * shared, and the latch is decided once per constellation.  Setting it has
+         * no effect on a constellation that is already decided, which is the
+         * point: the declaration must arrive before the first processed epoch or
+         * it is too late, and the counters say so.
+         *
+         * With @p act false the declaration is COMPARED and counted and the latch
+         * is left exactly where the station's own rule put it (phase 5a, E3, which
+         * needs no consumer knob); with @p act true the latch FOLLOWS it where the
+         * station tracks a declared signal (phase 5b, C1).
+         *
+         * @param decl The declaration; @c present false clears it.
+         * @param act  Whether the latch may be changed by it.
+         */
+        void setDeclaredSignalRoster(const NetworkSignalDeclaration& decl, bool act);
+
+        /// @brief Card SID phase 5: the latch-against-declaration census.
+        const DeclaredLatchCounters& declaredLatchCounters() const {
+            return declared_latch_;
+        }
+
+        /**
          * @brief The CODE signal this station LATCHED on one RINEX band digit.
          *
          * A const read of @c constellation_canonical_, which
@@ -789,6 +836,12 @@ namespace GnssProcessor {
         // contract — the first-epoch guard must NOT re-decide a restored latch — can be
         // pinned without a full geometry / product chain.  Defined only in gnss_tests.
         friend struct PppModelCanonicalTestAccess;
+        // Test seam: PppModelDeclaredLatchTestAccess (tests/test_ledger_emit.cpp)
+        // drives the card SID phase 5 declared-latch comparison through the same
+        // private first-epoch decision, so C1's two branches (the latch follows a
+        // declared signal the station tracks; it falls back when the station
+        // tracks none) can be pinned without a geometry / product chain.
+        friend struct PppModelDeclaredLatchTestAccess;
 
         const GnssConfig& config_;             /**< Reference to configuration (read-only). */
         ProductParser& product_parser_;        /**< Product parser providing SP3/CLK/ERP/etc. */
@@ -850,6 +903,35 @@ namespace GnssProcessor {
          * unarmed run neither allocates nor branches differently.
          */
         std::map<std::string, std::vector<CanonicalCandidate>> canonical_candidates_;
+
+        /**
+         * @brief Card SID phase 5: the producer's declared signal roster, as the
+         *        consumer received it (@ref setDeclaredSignalRoster).
+         *
+         * @c present false (the default and every pre-card wire) makes the whole
+         * comparison unreachable, so a consumer of a legacy stream is unchanged.
+         */
+        NetworkSignalDeclaration declared_roster_;
+        /// Card SID phase 5b: whether the latch may FOLLOW the declaration.
+        bool declared_roster_act_{ false };
+        /// Card SID phase 5: the census of the comparison (@ref declaredLatchCounters).
+        DeclaredLatchCounters declared_latch_;
+
+        /**
+         * @brief Card SID phase 5 (E3 / C1): compare this constellation's picks
+         *        with the declaration, count every class, and: only under
+         *        @ref declared_roster_act_: move the latch onto it.
+         *
+         * @param cons       Constellation display name.
+         * @param band_table The system's RINEX-prefix to band-name table.
+         * @param candidates The channels the latch decided on, in priority order.
+         * @param best       The picks, MUTATED only when the latch acts.
+         */
+        void applyDeclaredLatch_(
+            const std::string& cons,
+            const std::vector<std::pair<std::string, std::string>>& band_table,
+            const std::vector<CanonicalCandidate>& candidates,
+            std::map<std::pair<std::string, char>, std::string>& chosen);
 
         /**
          * @brief Constellations whose latch was RESTORED and not yet audited (RS-8).

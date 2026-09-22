@@ -370,6 +370,10 @@ void RealTimeEngine::flush() {
     logPbHoldSummary_("end of run");
     // Card ALC: ditto for the ambiguity level-check counters.
     logAmbLevelCheckSummary_("end of run");
+    // Card SID phase 5: the declared-roster census (silent unless a declaration
+    // was seen or the 5b knob is armed).  The closed-loop harness and the replay
+    // driver never call flush(), so both call this directly at their own tails.
+    logRosterConsumerSummary("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -459,6 +463,13 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
         log->debug("{}No observations after system filtering", ctx.epoch_prefix);
         return false;
     }
+
+    // Card SID phase 5: the producer's DECLARED SIGNAL ROSTER reaches the latch
+    // here and nowhere else: computeModels decides a constellation's canonical
+    // signals on its FIRST epoch, so a declaration handed over after this call is
+    // too late for the band it would have moved.  No-op on a wire that carries
+    // none (every pre-card producer, every RTCM stream).
+    refreshDeclaredRoster_();
 
     if (!ppp_model_->computeModels(filtered_obs, ppp_state_, ctx.modeled_obs,
                                    &ctx.drop_reasons)) {

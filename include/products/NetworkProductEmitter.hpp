@@ -449,6 +449,32 @@ public:
     int clockDiscontinuityCounter(const std::string& sat) const;
 
     /**
+     * @brief Card SID phase 5 (E1): is this PHASE-BIAS key a FIRST SIGHTING?
+     *
+     * The emitter's own test: @c last_phase_bias_.find(key) == end(): exposed
+     * so it can be compared with the arc ledger, which knows whether the family
+     * is returning.  A first sighting emits no discontinuity and re-seeds the
+     * baseline, so a RETURN read as a first sighting is a re-coupling edge the
+     * consumer never hears about (standing invariant 7).
+     *
+     * ⚠ READ BEFORE @ref emitToStore.  That call overwrites the baselines with
+     * this epoch's values, after which every key answers false.
+     *
+     * @param sat    Satellite id.
+     * @param signal RINEX signal.
+     * @return true when the emitter has no baseline for this key.
+     */
+    bool isPhaseFirstSighting(const std::string& sat, const std::string& signal) const;
+
+    /// Card SID phase 5 (E1): the CODE-BIAS twin of @ref isPhaseFirstSighting.
+    bool isCodeFirstSighting(const std::string& sat, const std::string& signal) const;
+
+    /// Card SID phase 5 (E1): the CLOCK twin of @ref isPhaseFirstSighting.  Always
+    /// true unless the emitter was constructed with @c emit_clock_disc (A2), which
+    /// is what fills @c seen_clock_sats_.
+    bool isClockFirstSighting(const std::string& sat) const;
+
+    /**
      * @brief RTA-4: adopt serialized discontinuity-counter VALUES into this
      *        emitter's stream state (late-joining / tail-reader support).
      *

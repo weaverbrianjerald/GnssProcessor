@@ -17,10 +17,147 @@
 #include "common/PppUtils.hpp"
 #include "measurement/StateInitializer.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include <fmt/format.h>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace GnssProcessor {
+
+namespace {
+/// Card SID phase 5 (E3): cap on the ARC rows one consumer writes for freshness
+/// flips, so a pathological wire cannot flood the log.  The counters carry the
+/// full population either way.
+constexpr long long kRosterFlipEventCap = 400;
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Card SID phase 5: the DECLARED SIGNAL ROSTER at the consumer
+// ---------------------------------------------------------------------------
+
+void RealTimeEngine::refreshDeclaredRoster_() {
+    ++roster_consumer_.epochs;
+    NetworkSignalDeclaration decl = ssrStore().declaredRoster();
+    const bool changed = (decl != ssr_declared_roster_);
+    if (decl.present) ++roster_consumer_.epochs_declared;
+    if (changed) {
+        if (ssr_declared_roster_.present) ++roster_consumer_.decl_changes;
+        ssr_declared_roster_ = std::move(decl);
+    }
+    // The latch is decided INSIDE computeModels at a constellation's first epoch,
+    // so the declaration has to reach the model before that call or it is too
+    // late.  Handed over on every change (and on the first epoch), which also
+    // means a mid-run change reaches a constellation that is not yet decided.
+    if (changed || roster_consumer_.epochs == 1)
+        ppp_model_->setDeclaredSignalRoster(ssr_declared_roster_,
+                                            config_.consumerRosterLatch());
+
+    if (declared_roster_logged_) return;
+    // One line, once, in BOTH directions: an armed knob on a wire that carries no
+    // declaration is INERT and has to say so (standing invariant 4), and a
+    // declaration arriving at an unarmed consumer is the phase-5a observatory.
+    auto log = log_manager_.getLogger("rt_engine");
+    if (ssr_declared_roster_.present) {
+        declared_roster_logged_ = true;
+        log->info("[RT] Card SID phase 5: the producer DECLARES its signal roster on this "
+                  "wire: {}.  The consumer's band latch {} it (network.closed_loop."
+                  "roster_latch {}), and every freshness flip is attributed against it.",
+                  signalDeclarationSummary(ssr_declared_roster_),
+                  config_.consumerRosterLatch() ? "FOLLOWS" : "is only COMPARED with",
+                  config_.consumerRosterLatch() ? "armed" : "off");
+    } else if (config_.consumerRosterLatch() && roster_consumer_.epochs > 1) {
+        declared_roster_logged_ = true;
+        log->warn("[RT] Card SID phase 5b: network.closed_loop.roster_latch is armed but this "
+                  "wire carries NO declared signal roster (the producer did not arm "
+                  "network.ledger_emit), so the knob is INERT: the latch keeps the "
+                  "consumer's own rule and every freshness flip keeps today's response.");
+    }
+}
+
+bool RealTimeEngine::noteFreshnessFlip_(const std::string& key, const std::string& sat,
+                                        const std::string& signal, const std::string& cons,
+                                        const char* domain, bool was_fresh, bool now_fresh,
+                                        bool on_wire, const GnssTime& t) {
+    (void)key;
+    ++roster_consumer_.flips;
+    if (domain[0] == 'p') ++roster_consumer_.flips_phase; else ++roster_consumer_.flips_code;
+    if (now_fresh) ++roster_consumer_.flip_to_fresh; else ++roster_consumer_.flip_to_stale;
+
+    // The three-way split of E3, read in this order because each test is only
+    // meaningful when the one before it failed:
+    //   1. the declaration names no family for this signal at all: the network
+    //      structurally does not carry it, so its absence is not a staleness;
+    //   2. it does, but the store holds no record for THIS satellite: the family
+    //      exists and is absent here (card MSC's dropouts);
+    //   3. a record exists and the age gate refused it: a genuine staleness.
+    const bool have_decl = ssr_declared_roster_.present;
+    const FlipAttribution att = signalDeclarationAttributeFlip(
+        ssr_declared_roster_, cons, signal, domain[0] == 'p', on_wire);
+    const char* cls = flipAttributionName(att);
+    switch (att) {
+    case FlipAttribution::NoDeclaration: ++roster_consumer_.flip_no_decl;    break;
+    case FlipAttribution::Undeclared:    ++roster_consumer_.flip_undeclared; break;
+    case FlipAttribution::OffWire:       ++roster_consumer_.flip_off_wire;   break;
+    case FlipAttribution::Stale:         ++roster_consumer_.flip_stale;      break;
+    }
+    const bool undeclared = (att == FlipAttribution::Undeclared);
+
+    if (roster_consumer_.flip_events < kRosterFlipEventCap) {
+        ++roster_consumer_.flip_events;
+        // The identity the audit found missing at BOTH edges of this gate
+        // (satellite, signal, from, to, epoch), on the ARC tier the card's other
+        // lifecycle edges use.
+        if (consumer_sat_trace_)
+            noteConsumerSatEvent_(sat + "|" + signal,
+                                  now_fresh ? "flip_to_fresh" : "flip_to_stale");
+        auto log = log_manager_.getLogger("rt_engine");
+        log->info("[RT] ARC ssr_freshness_flip {} {} {} ({} -> {}) class={} on_wire={} "
+                  "declared={} tow={:.1f}",
+                  domain, sat, signal, was_fresh ? "fresh" : "stale",
+                  now_fresh ? "fresh" : "stale", cls, on_wire ? 1 : 0,
+                  have_decl ? 1 : 0, t.tow);
+    } else {
+        ++roster_consumer_.flip_events_suppressed;
+    }
+    // C2: only the UNDECLARED class is suppressed, and only with the knob armed.
+    return undeclared && config_.consumerRosterLatch();
+}
+
+const PppModel::DeclaredLatchCounters& RealTimeEngine::declaredLatchCounters() const {
+    return ppp_model_->declaredLatchCounters();
+}
+
+void RealTimeEngine::logRosterConsumerSummary(const char* tag) const {
+    const auto& r = roster_consumer_;
+    const auto& d = ppp_model_->declaredLatchCounters();
+    // Silent when no declaration was ever seen AND the knob is off: a consumer of
+    // a pre-card wire prints nothing, so its log is byte-identical.
+    if (r.epochs_declared == 0 && !config_.consumerRosterLatch()) return;
+    auto log = log_manager_.getLogger("rt_engine");
+    log->info("[RT] Card SID phase 5, declared roster ({}): {} of {} epoch(s) held a "
+              "declaration ({} change(s)) -> latch compared {} cells: agree {} / differ {} "
+              "(of which the consumer's own signal is NOT declared at all: {}) / none of "
+              "the declared signals tracked {}; latch taken FROM the declaration {} / left "
+              "on the consumer's own rule {} (roster_latch {})",
+              tag, r.epochs_declared, r.epochs, r.decl_changes, d.compared, d.agree,
+              d.differ, d.own_not_declared, d.none_tracked, d.from_roster, d.own_rule,
+              config_.consumerRosterLatch() ? "ARMED" : "off");
+    log->info("[RT] Card SID phase 5, freshness flips ({}): {} total (phase {} / code {}; "
+              "to stale {} / to fresh {}) -> UNDECLARED {} (the network carries no family "
+              "for the signal) / OFF-WIRE {} (it does, and this satellite has no record) / "
+              "STALE {} (a record exists and the age gate refused it) / unattributable {} "
+              "(no declaration held); responses SUPPRESSED by the declaration {}; ARC rows "
+              "{} ({} suppressed by the cap of {})",
+              tag, r.flips, r.flips_phase, r.flips_code, r.flip_to_stale, r.flip_to_fresh,
+              r.flip_undeclared, r.flip_off_wire, r.flip_stale, r.flip_no_decl,
+              r.flip_suppressed, r.flip_events, r.flip_events_suppressed,
+              kRosterFlipEventCap);
+    if (config_.ssrPhaseBiasStepTranslate() || config_.ssrPhaseBiasDiscCarry())
+        log->warn("[RT] Card SID phase 5: this consumer runs the card-PBT translation or the "
+                  "card-CC carry as its phase-bias reaction, and the flip census above is "
+                  "wired on the RESET path only: the PHASE half of the count is therefore "
+                  "dead wiring on this posture.  The CODE half is unaffected.");
+}
 
 /**
  * @brief RTA-3: solution-generation id change -> GLOBAL datum break.
@@ -164,12 +301,35 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                     static_cast<bool>(ssr.getPhaseBias(obs.satellite, code, obs.time, bias_max_age));
                 const auto it = ssr_phase_bias_applied_.find(key);
                 if (it != ssr_phase_bias_applied_.end() && it->second != applied_now) {
-                    state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
-                    noteConsumerSatEvent_(key, "reset_flip");   // card CST (no-op unarmed)
-                    noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
-                    log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
-                              epoch_prefix, it->second ? "fresh" : "stale",
-                              applied_now ? "fresh" : "stale", obs.satellite, code);
+                    // Card SID phase 5 (E3 / C2): the flip gets its identity here ,
+                    // an ARC row naming the satellite, the signal, both sides of the
+                    // edge and the epoch, and an attribution against the producer's
+                    // DECLARED roster and the family's presence on the wire.  The
+                    // answer also decides the response: a signal the network declares
+                    // no family for is structurally absent, not stale, so resetting
+                    // the ambiguity for it re-floats on a non-event.  Suppression
+                    // needs network.closed_loop.roster_latch AND a declaration, so
+                    // every pre-card wire keeps today's reaction exactly.
+                    const bool suppress = noteFreshnessFlip_(
+                        key, obs.satellite, code, PppUtils::getSystemString(obs.system),
+                        "phase", it->second, applied_now,
+                        static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
+                        obs.time);
+                    if (suppress) {
+                        ++roster_consumer_.flip_suppressed;
+                        log->info("{}SSR phase-bias freshness flip ({} -> {}) on {} {}: NOT a "
+                                  "staleness: the producer declares no phase-bias family for "
+                                  "this signal, so the ambiguity is left alone (card SID 5b)",
+                                  epoch_prefix, it->second ? "fresh" : "stale",
+                                  applied_now ? "fresh" : "stale", obs.satellite, code);
+                    } else {
+                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        noteConsumerSatEvent_(key, "reset_flip");   // card CST (no-op unarmed)
+                        noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
+                        log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
+                                  epoch_prefix, it->second ? "fresh" : "stale",
+                                  applied_now ? "fresh" : "stale", obs.satellite, code);
+                    }
                 }
                 ssr_phase_bias_applied_[key] = applied_now;
             }
@@ -558,14 +718,35 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                     const std::string fkey = "CB|" + obs.satellite + "|" + code;
                     const auto it = ssr_code_bias_applied_.find(fkey);
                     if (it != ssr_code_bias_applied_.end() && it->second != applied_now) {
-                        reref_systems.insert(PppUtils::getSystemString(obs.system));
-                        noteConsumerSatEvent_(obs.satellite + "|" + code,
-                                              "reinflate_flip");   // card CST (no-op unarmed)
-                        log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
-                                  "(re-inflating rx code-bias states)",
-                                  epoch_prefix, it->second ? "applied" : "absent",
-                                  applied_now ? "applied" : "absent",
-                                  obs.satellite, code);
+                        // Card SID phase 5 (E3 / C2): the identity and the attribution
+                        // of this flip: card MSC's 50 code-bias dropouts are exactly
+                        // this edge, and the re-inflation it drives is the unbounded
+                        // decoupling edge that cost QUIN00USA 70 m.  A signal the
+                        // producer declares no family for is structurally absent, not
+                        // stale, so its "disappearance" is not a datum re-reference.
+                        const bool suppress = noteFreshnessFlip_(
+                            fkey, obs.satellite, code,
+                            PppUtils::getSystemString(obs.system), "code",
+                            it->second, applied_now,
+                            ssr.hasCodeBias(obs.satellite, code), obs.time);
+                        if (suppress) {
+                            ++roster_consumer_.flip_suppressed;
+                            log->info("{}SSR code-bias freshness flip ({} -> {}) on {} {}: NOT a "
+                                      "datum re-reference: the producer declares no code-bias "
+                                      "family for this signal, so the receiver code-bias states "
+                                      "are left alone (card SID 5b)",
+                                      epoch_prefix, it->second ? "applied" : "absent",
+                                      applied_now ? "applied" : "absent", obs.satellite, code);
+                        } else {
+                            reref_systems.insert(PppUtils::getSystemString(obs.system));
+                            noteConsumerSatEvent_(obs.satellite + "|" + code,
+                                                  "reinflate_flip");   // card CST (no-op unarmed)
+                            log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
+                                      "(re-inflating rx code-bias states)",
+                                      epoch_prefix, it->second ? "applied" : "absent",
+                                      applied_now ? "applied" : "absent",
+                                      obs.satellite, code);
+                        }
                     }
                     ssr_code_bias_applied_[fkey] = applied_now;
                 }

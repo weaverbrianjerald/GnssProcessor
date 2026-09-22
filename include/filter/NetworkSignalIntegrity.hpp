@@ -101,7 +101,9 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class NetworkRunContext;
+struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a STRUCT; the tag
+                            // must match or MSVC mangles the same free function two ways
+                            // depending on which header a translation unit saw first
 class NetworkRunTraces;
 struct GnssTime;
 

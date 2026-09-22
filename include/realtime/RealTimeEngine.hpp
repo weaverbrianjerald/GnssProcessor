@@ -426,6 +426,48 @@ public:
     /// held, not that the hold worked.
     const PbHoldLedger::Counters& pbHoldCounters() const { return pb_hold_.counters(); }
 
+    // --- Card SID phase 5: the DECLARED ROSTER at the consumer ----------------
+    /**
+     * @struct RosterConsumerCounters
+     * @brief The consumer's half of card SID phase 5, one named class each.
+     *
+     * Every class carries a denominator so a zero can be read: @c epochs_declared
+     * at 0 means no declaration ever reached the store, which is the INERT
+     * reading of the knob and not agreement with anything.
+     */
+    struct RosterConsumerCounters {
+        long long epochs{ 0 };            ///< epochs the refresh ran (denominator).
+        long long epochs_declared{ 0 };   ///< of those, with a declaration in the store.
+        long long decl_changes{ 0 };      ///< times the declaration in the store changed.
+
+        // --- E3: the freshness flips, with identity -------------------------
+        long long flips{ 0 };             ///< freshness flips seen (denominator).
+        long long flips_phase{ 0 };
+        long long flips_code{ 0 };
+        long long flip_to_stale{ 0 };     ///< of those, fresh -> stale.
+        long long flip_to_fresh{ 0 };     ///< of those, stale -> fresh.
+        /// The three-way attribution of a flip, in the order the split is read:
+        long long flip_undeclared{ 0 };   ///< the declaration names no family for this signal (structurally absent).
+        long long flip_off_wire{ 0 };     ///< it does, but the store holds no record for THIS satellite (the family is absent here).
+        long long flip_stale{ 0 };        ///< a record exists and the gate refused it on age: a genuine staleness.
+        long long flip_no_decl{ 0 };      ///< no declaration was held, so the flip cannot be attributed at all.
+        long long flip_events{ 0 };       ///< ARC rows written for the flips.
+        long long flip_events_suppressed{ 0 };
+        // --- C2: the response the declaration changed ------------------------
+        long long flip_suppressed{ 0 };   ///< flips whose reset / re-inflation card SID phase 5b withheld.
+    };
+    /// Card SID phase 5: the consumer's declaration census (all zero on a wire
+    /// that carries none, which is every pre-card producer).
+    const RosterConsumerCounters& rosterConsumerCounters() const {
+        return roster_consumer_;
+    }
+    /// Card SID phase 5: the consumer's latch against the declaration, as the
+    /// model counted it.  @c compared 0 means no declaration reached the latch.
+    const PppModel::DeclaredLatchCounters& declaredLatchCounters() const;
+    /// Card SID phase 5: one INFO block with both censuses; silent when no
+    /// declaration was ever seen, so an unchanged consumer prints nothing.
+    void logRosterConsumerSummary(const char* tag) const;
+
     // --- Card ALC: consumer ambiguity LEVEL check readout ---------------------
     /// True iff @c processing.amb_level_check is armed on this engine's config
     /// (the closed-loop harness derives it from
@@ -733,6 +775,34 @@ private:
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
 
+    /// Card SID phase 5: read the producer's DECLARED SIGNAL ROSTER out of the SSR
+    /// store and hand it to the latch, ONCE per epoch and before @c computeModels
+    ///: the latch is decided inside that call at the constellation's first epoch,
+    /// so a declaration that arrives later is too late and the counters say so.
+    /// No-op on every wire that carries no declaration (every pre-card producer,
+    /// every RTCM stream), which keeps a legacy consumer byte-identical.
+    void refreshDeclaredRoster_();
+    /// Card SID phase 5 (E3): classify one fresh-to-stale (or stale-to-fresh)
+    /// freshness flip against the declaration and the family's presence on the
+    /// wire, count it, and write an @c ARC event carrying its identity.
+    ///
+    /// @param key       "sat|signal" (phase) or "CB|sat|signal" (code).
+    /// @param sat       Satellite id.
+    /// @param signal    RINEX signal.
+    /// @param cons      Constellation display name.
+    /// @param domain    "phase" or "code".
+    /// @param was_fresh The flag's previous value.
+    /// @param now_fresh Its value now.
+    /// @param on_wire   Whether an UNGATED read finds a record for this key.
+    /// @param t         Epoch time.
+    /// @return true when the flip is ABSENT BY DECLARATION, i.e. the network
+    ///         declares no family for this signal: the one class card SID
+    ///         phase 5b suppresses the response for.
+    bool noteFreshnessFlip_(const std::string& key, const std::string& sat,
+                            const std::string& signal, const std::string& cons,
+                            const char* domain, bool was_fresh, bool now_fresh,
+                            bool on_wire, const GnssTime& t);
+
     // --- Estimation tail (RealTimeEngineEstimate.cpp) ---------------------
     void runMeasurementUpdate(RtEpochContext& ctx);     ///< KF update with the outlier / pivot-handover rebuild loop.
     void applyZwdConstraint(RtEpochContext& ctx);       ///< Soft a-priori ZWD pseudo-observation.
@@ -906,6 +976,13 @@ private:
     // steps the applied code correction by the full bias, so the affected constellation's
     // receiver code-bias states are re-inflated on the flip.
     std::map<std::string, bool> ssr_code_bias_applied_;
+    /// Card SID phase 5: the producer's DECLARED SIGNAL ROSTER as this consumer
+    /// last read it out of the SSR store (@ref refreshDeclaredRoster_).
+    /// @c present false on every wire that carries none, which makes every use
+    /// site below unreachable and the engine byte-identical.
+    NetworkSignalDeclaration ssr_declared_roster_;
+    bool declared_roster_logged_{ false };   ///< one-shot arming / inert line.
+    RosterConsumerCounters roster_consumer_; ///< Card SID phase 5: the consumer census.
     /// RTA-3: last observed network solution-generation id from the SSR store
     /// (0 = never seen).  A CHANGE of a present id means the producer RESTARTED
     /// and re-realized its whole datum (every phase-bias lump / code-bias level

@@ -520,6 +520,13 @@ int Application::runConsumerReplay() {
                                   : fmt::format("week {} tow {:.1f}", first_fix_week, first_fix_tow),
               recent_err3d.size(), recent_rms);
 
+    // Card SID phase 5: the consumer's declared-roster census: the latch against
+    // the declaration and the attributed freshness flips.  Printed here because
+    // this driver never calls RealTimeEngine::flush(); silent on a wire that
+    // carries no declaration and with the 5b knob off, so a legacy replay's log
+    // is unchanged.
+    consumer.logRosterConsumerSummary("end of replay");
+
     // Hourly LEVEL bands — the only defensible summary of this series (handoff
     // §4.1: a single Theil-Sen slope over it is invalid).
     log->info("Consumer replay hourly bands (hour from first processed epoch):");

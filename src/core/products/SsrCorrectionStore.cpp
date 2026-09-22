@@ -565,6 +565,16 @@ std::optional<NetworkProducerStatus> SsrCorrectionStore::getProducerStatus() con
     return producer_status_;   // nullopt until a heartbeat is pushed (legacy content never reacts)
 }
 
+void SsrCorrectionStore::setDeclaredRoster(const NetworkSignalDeclaration& decl) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    declared_roster_ = decl;   // a declaration REPLACES the previous one wholesale
+}
+
+NetworkSignalDeclaration SsrCorrectionStore::declaredRoster() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return declared_roster_;   // present == false until a producer declares one
+}
+
 bool SsrCorrectionStore::isEmpty() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return by_sat_.empty();

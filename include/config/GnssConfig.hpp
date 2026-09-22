@@ -6154,6 +6154,49 @@ namespace GnssProcessor {
         bool networkLedgerAnchor() const { return network_ledger_anchor_; }
 
         /**
+         * @brief Card SID phase 5a: the emitter read against the ledger, and the
+         *        producer's declaration of its roster on the wire
+         *        (@c network.ledger_emit).
+         *
+         * Armed, two comparisons run at every emitted epoch: card PBH's hold
+         * GENERATION against the ledger's admitted arc births (a new generation
+         * with no birth behind it, and a birth the generation never reports, are
+         * separate counted classes with @c ARC events), and the emitter's own
+         * first-sighting test against the ledger's memory of the family (a RETURN
+         * read as a first sighting is named). At the same time the producer writes
+         * a block of @c N records declaring, per constellation and RINEX band
+         * digit, the modelled phase and code signals it carries, the card SCC
+         * companion codes and the S-basis datum designation.
+         *
+         * OBSERVATORY: nothing on the producer reads either back, so the solve and
+         * every C / B / P / E record are byte-identical against an unarmed run;
+         * the only difference in @c products.txt is the @c N records. REFUSED
+         * (error plus disarm) without @ref networkSignalRoster, whose roster and
+         * ledger are both inputs. Not fingerprinted. Network mode only.
+         */
+        bool networkLedgerEmit() const { return network_ledger_emit_; }
+
+        /**
+         * @brief Card SID phase 5b: the consumer's band latch and its freshness
+         *        response follow the DECLARED roster
+         *        (@c network.closed_loop.roster_latch).
+         *
+         * Consumer-side. Armed, the consumer's canonical signal per band is taken
+         * from the producer's declaration when the consumer tracks a declared
+         * signal (the priority rule of card CSL keyed to the declaration, the
+         * declaration's own order), falling back to the consumer's own rule
+         * otherwise; and a fresh-to-stale freshness flip on a signal the
+         * declaration does NOT name is not treated as a staleness event, because
+         * the network structurally carries no family for it. A family the network
+         * does carry keeps today's response.
+         *
+         * INERT (logged once) when the wire carries no declaration, which is every
+         * producer that did not arm @ref networkLedgerEmit. Derived onto the
+         * closed-loop consumer config; the producer run is untouched.
+         */
+        bool consumerRosterLatch() const { return consumer_roster_latch_; }
+
+        /**
          * @brief Whether RAIM refloats are driven by prominence attribution
          *        (@c network.raim_attribution) instead of the per-satellite consensus.
          *
@@ -8408,6 +8451,8 @@ namespace GnssProcessor {
         bool   network_roster_tracker_{false};                     ///< Card SID phase 2 (network.roster_tracker): the arc-level slip tracker (networkComputeRawObservables) names each band by the ROSTER's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none. The first READER of the phase-1 observatory; supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role IS that knob's latch), and both may be armed. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
         bool   network_ledger_reentry_{false};                     ///< Card SID phase 3 (network.ledger_reentry): the gap RE-ENTRY RESPONSE takes its population from the arc ledger's ADMITTED lifecycle (every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, whose gap is inside phase_leveling_max_gap_s) and looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has NO verdict and is handled by network.ledger_reentry_no_verdict. SOLVE-AFFECTING when armed (it changes which carried levels survive a break). REFUSED (error + disarm) without network.signal_roster and network.roster_tracker. FINGERPRINTED (armed-only append). Network mode only.
         bool   network_ledger_screens_{false};                     ///< Card SID phase 4a (network.ledger_screens): the REASON-MASK WRITERS at every screen that removes a modelled row, a satellite or a station, folded into the ledger so an admitted gap carries the reason(s) that opened it, plus the anchor election READ against the ledger (first-sighting-on-return cases, the coverage-gate drop edges' arc states and generation test, the anchor_arc_age comparison). OBSERVATORY: byte-identical armed. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
+        bool   network_ledger_emit_{false};                        ///< Card SID phase 5a (network.ledger_emit): the EMITTER's per-family bookkeeping READ against the arc ledger (card PBH's hold generation against the ledger's admitted arc births, both directions; the emitter's first-sighting test against the ledger's memory of the family) and the producer's DECLARATION of its signal roster on the wire as a block of N records. OBSERVATORY: the solve and every C / B / P / E record are byte-identical armed; the only wire difference is the N records. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
+        bool   consumer_roster_latch_{false};                      ///< Card SID phase 5b (network.closed_loop.roster_latch): CONSUMER-side. The consumer's per-band canonical latch follows the producer's DECLARED roster where it tracks a declared signal, and a freshness flip on a signal the declaration does not name is not a staleness event. INERT (logged once) on a wire with no declaration. Derived onto the closed-loop consumer config only.
         bool   network_ledger_anchor_{false};                      ///< Card SID phase 4b (network.ledger_anchor): a family the coverage gate's drop edge erased and that returns with arcs of the SAME generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting; a NEW-generation return proceeds as today. anchor_arc_age becomes a reader of the ledger's admitted age. SOLVE-AFFECTING when armed. REFUSED (error + disarm) without network.ledger_screens. FINGERPRINTED (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Card SID phase 3 (network.ledger_reentry_no_verdict): `bridge` (default) leaves a no-verdict re-entry to the PASS-B inject and merely counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as UNMEASURABLE, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.

@@ -153,6 +153,7 @@ add_library(gnss_core STATIC
     src/core/products/PathResolver.cpp
     src/core/products/StationInfoFile.cpp
     src/core/products/SsrCorrectionStore.cpp
+    src/core/products/SignalDeclaration.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkEmitRebase.cpp
     src/core/products/NetworkPbEmitFilter.cpp
@@ -215,6 +216,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
     src/core/filter/NetworkPbHold.cpp
+    src/core/filter/NetworkLedgerEmit.cpp
     src/core/filter/NetworkIonoDiag.cpp
     src/core/filter/NetworkDdFrac.cpp
     src/core/filter/NetworkSdEwlAr.cpp
@@ -372,6 +374,7 @@ add_executable(gnss_tests
     tests/test_arc_ledger.cpp
     tests/test_ledger_anchor.cpp
     tests/test_ledger_reentry.cpp
+    tests/test_ledger_emit.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
     tests/test_if_td_pair_width.cpp

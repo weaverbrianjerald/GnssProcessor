@@ -102,6 +102,7 @@
 
 #include "products/NetworkProductEmitter.hpp"   // NetworkSolutionEpoch, NetworkProductEmitter
 #include "products/SsrCorrectionStore.hpp"      // SsrCorrectionStore, NetworkProducerStatus (RTA-10)
+#include "products/SignalDeclaration.hpp"       // NetworkSignalDeclaration (card SID phase 5)
 #include "filter/NetworkSbasis.hpp"             // SbasisDeclaration (B6 contract)
 
 #include <cstdint>
@@ -368,6 +369,14 @@ struct NetworkProductRecord {
     /// epoch) attaches to NO record — it surfaces through
     /// @c NetworkProductTail::lastStatus instead.  H lines never feed @c replay.
     std::optional<NetworkProducerStatus> epoch_status;
+    /// Card SID phase 5 (E2): the producer's DECLARED SIGNAL ROSTER as of this
+    /// epoch: set when an @c N declaration block immediately preceded this
+    /// epoch's E line.  A declaration replaces the previous one wholesale, so
+    /// the record carries the WHOLE roster and not a delta; @c replay pushes it
+    /// into the consumer store, where it is the only thing that lets a freshness
+    /// flip distinguish "the network carries no family for this signal" from
+    /// "the record is stale".  Absent on every pre-card wire.
+    std::optional<NetworkSignalDeclaration> declaration_refresh;
 };
 
 /**
@@ -461,6 +470,19 @@ public:
     /// caller owns the per-epoch flush (@c network.product_flush_per_epoch), as
     /// for epoch blocks.  No-op if the stream is not @c good().
     void writeEpochStatus(const NetworkProducerStatus& status);
+
+    /// Card SID phase 5 (E2): append the producer's DECLARED SIGNAL ROSTER as a
+    /// contiguous block of @c N records (see @c products/SignalDeclaration.hpp
+    /// for the grammar).  The caller writes it BEFORE the epoch block it
+    /// describes, on the S-line precedent, and only when the declaration
+    /// CHANGED, so an unarmed producer writes nothing at all and the wire is
+    /// byte-identical.  A row with nothing to say is skipped by the serializer,
+    /// so a declaration whose rows are all empty writes no lines.  No-op if the
+    /// stream is not @c good().
+    ///
+    /// @param decl The declaration; @c present false writes nothing.
+    /// @return The number of records written.
+    std::size_t writeSignalDeclaration(const NetworkSignalDeclaration& decl);
 
     /// RTA-6: flush the output stream to disk.  The producer driver calls this
     /// once per epoch under @c network.product_flush_per_epoch so a LIVE tail

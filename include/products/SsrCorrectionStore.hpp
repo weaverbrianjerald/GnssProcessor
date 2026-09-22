@@ -21,6 +21,7 @@
  */
 
 #include "rtcm/RtcmTypes.hpp"
+#include "products/SignalDeclaration.hpp"   // Card SID phase 5: the declared signal roster
 #include <Eigen/Dense>
 #include <cstdint>
 #include <map>
@@ -405,6 +406,31 @@ public:
     std::optional<NetworkProducerStatus> getProducerStatus() const;
 
     /**
+     * @brief Card SID phase 5 (E2): record the producer's DECLARED SIGNAL ROSTER.
+     *
+     * Store-wide (not per-satellite), pushed by the in-process producer at each
+     * emit and by the file reader's @c replay for every @c N declaration block
+     * it parses.  A declaration REPLACES the previous one wholesale, which is
+     * the producer's own semantics: the block names the whole roster.
+     *
+     * Configuration-like rather than data-like, so it survives @ref clear for
+     * the same reason @ref setOrbitEchoMaxSkew does: it describes what the
+     * producer carries, not what it sent at one epoch.
+     */
+    void setDeclaredRoster(const NetworkSignalDeclaration& decl);
+
+    /**
+     * @brief Card SID phase 5 (E2): the declared signal roster, if one was seen.
+     *
+     * @c present false (the default) on every pre-card wire, every live RTCM
+     * stream and every producer that did not arm @c network.ledger_emit, so a
+     * consumer gating on presence never infers anything from a legacy stream.
+     * Returned BY VALUE: the store is shared and mutex-guarded, and the caller
+     * reads the roster per epoch rather than per row.
+     */
+    NetworkSignalDeclaration declaredRoster() const;
+
+    /**
      * @brief M4 (contract v2): set the combined-correction age-scaling coefficient.
      *
      * Store-wide (not per-satellite), the producer's @c network.combined_sigma_agek
@@ -744,6 +770,9 @@ private:
     std::unordered_map<std::string, SatRecord> by_sat_;
     uint32_t                                 generation_id_{0};  ///< RTA-3: producer solution-generation id; 0 = unset.
     std::optional<NetworkProducerStatus>     producer_status_;   ///< RTA-10: latest producer epoch-status heartbeat; nullopt = never seen.
+    /// Card SID phase 5: the producer's declared signal roster (see
+    /// @ref setDeclaredRoster).  Configuration-like: survives clear().
+    NetworkSignalDeclaration                 declared_roster_;
 
     /// RTA-13: CODE-domain band-wise bias fallback (see setCodeBiasBandFallback).
     /// Default false — every lookup byte-identical.

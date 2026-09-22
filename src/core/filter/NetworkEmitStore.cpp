@@ -18,6 +18,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
+#include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkPbHold.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -446,7 +447,39 @@ void networkEmitStore(
     // in-process store carry the same held values.  OFF ⇒ immediate return ⇒
     // byte-identical.
     networkPbHold(ctx, config_, log, traces, emitter, se, sol);
+    // Card SID phase 5a (E1): the CAPTURE half, between the hold (which stamps the
+    // generations into `sol`) and emitToStore (which overwrites the emitter's
+    // per-family baselines, after which every key answers "not a first sighting").
+    // Reads only; the fold that compares it with the ledger runs after the
+    // roster's audit pass, where this epoch's admitted machine has been advanced.
+    // OFF ⇒ immediate return ⇒ byte-identical.
+    networkLedgerEmitCapture(ctx, emitter, sol);
+    // Card SID phase 5a (E2): the declaration the producer is about to state on
+    // the wire, built from the roster as it stands AFTER the datum-pin writer, so
+    // the dph= / dco= designations describe this epoch's realized S-basis pin.
+    // Built here rather than at the writer so the in-process store and the file
+    // carry the same statement even when the writer is absent.
+    if (ctx.ledger_emit.armed) {
+        ++ctx.counters.le.decl_builds;
+        NetworkSignalDeclaration decl = networkLedgerEmitBuildDeclaration(ctx, stations);
+        if (decl.present && decl != ctx.ledger_emit.decl) {
+            ctx.ledger_emit.decl         = std::move(decl);
+            ctx.ledger_emit.decl_pending = true;
+            ++ctx.counters.le.decl_changes;
+            long long rows = 0;
+            for (const auto& [cons, per_band] : ctx.ledger_emit.decl.bands) {
+                (void)cons;
+                rows += static_cast<long long>(per_band.size());
+            }
+            ctx.counters.le.decl_rows = rows;
+        }
+    }
     emitter.emitToStore(sol, network_store);
+    // Card SID phase 5a (E2): the declaration reaches the IN-PROCESS consumer here,
+    // immediately after this epoch's records and before the closed-loop consumer
+    // reads them below, which is the same position the file replay gives it.
+    if (ctx.ledger_emit.armed && ctx.ledger_emit.decl.present)
+        network_store.setDeclaredRoster(ctx.ledger_emit.decl);
     // --- Card JT: drain the de-commoned jump test's classified cells ----------
     // Invariant #7 at BOTH edges with identities: the DECOUPLING edge is the
     // declaration this test raises (decl_decommon_only / decl_both) and the
@@ -546,6 +579,25 @@ void networkEmitStore(
         }
     }
     if (product_writer) {
+        // Card SID phase 5a (E2): the DECLARED SIGNAL ROSTER, written as a
+        // contiguous N block immediately before this epoch's heartbeat and epoch
+        // block: the S-line positional precedent, so a positional reader holds
+        // the declaration for the epochs that follow it.  Written only when the
+        // declaration CHANGED (and therefore always at the first emitted epoch),
+        // which is what keeps the wire's growth proportional to the roster's
+        // motion rather than to the run's length.  ⚠ A consumer that joins
+        // mid-file sees none until the next change; the wire carries no periodic
+        // re-broadcast in this revision.
+        if (ctx.ledger_emit.decl_pending) {
+            ctx.ledger_emit.decl_pending = false;
+            const std::size_t n = product_writer->writeSignalDeclaration(ctx.ledger_emit.decl);
+            ctx.counters.le.decl_records += static_cast<long long>(n);
+            for (const std::string& l : signalDeclarationToWire(ctx.ledger_emit.decl))
+                ctx.counters.le.decl_bytes += static_cast<double>(l.size() + 1);
+            log->info("Network (card SID phase 5a): declared signal roster written to the wire "
+                      "({} N record(s), TOW {:.1f}): {}",
+                      n, se.time.tow, signalDeclarationSummary(ctx.ledger_emit.decl));
+        }
         // RTA-10: the emitted epoch's heartbeat, written immediately BEFORE its epoch
         // block (the S-line positional precedent — an H describes what follows).
         // status=partial iff any constellation was withheld from this emission (the

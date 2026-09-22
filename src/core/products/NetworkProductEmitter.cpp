@@ -211,6 +211,26 @@ int NetworkProductEmitter::clockDiscontinuityCounter(const std::string& sat) con
     return it != clock_disc_counter_.end() ? it->second : 0;
 }
 
+// Card SID phase 5 (E1).  The three tests below are the emitter's OWN
+// first-sighting predicates, verbatim: the phase and code sides test the
+// last-value baseline map (an absent key means no previous emission to difference
+// against, so the jump test is skipped and the baseline is seeded), and the clock
+// side tests the seen-set the A2 channel fills.  They are read strictly BEFORE
+// emitToStore, which is what makes them answer about the PREVIOUS emission.
+bool NetworkProductEmitter::isPhaseFirstSighting(const std::string& sat,
+                                                 const std::string& signal) const {
+    return last_phase_bias_.find(sat + "|" + signal) == last_phase_bias_.end();
+}
+
+bool NetworkProductEmitter::isCodeFirstSighting(const std::string& sat,
+                                                const std::string& signal) const {
+    return last_code_bias_.find(sat + "|" + signal) == last_code_bias_.end();
+}
+
+bool NetworkProductEmitter::isClockFirstSighting(const std::string& sat) const {
+    return seen_clock_sats_.find(sat) == seen_clock_sats_.end();
+}
+
 void NetworkProductEmitter::adoptDiscontinuityCounters(
     const std::map<std::string, int>& phase,
     const std::map<std::string, int>& code,

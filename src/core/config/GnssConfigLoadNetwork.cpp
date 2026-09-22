@@ -6279,6 +6279,14 @@ namespace GnssProcessor {
         // fingerprinted.  Interlock against a missing 4a below.
         network_ledger_anchor_ =
             jval<bool>(json, "network.ledger_anchor", "network_ledger_anchor", false);
+        // Card SID phase 5a: the EMITTER's per-family bookkeeping read against the
+        // ledger, and the producer's DECLARATION of its signal roster on the wire.
+        // Default OFF; ON is an OBSERVATORY: the solve and every C / B / P / E
+        // record are byte-identical, and the only difference in products.txt is
+        // the N declaration block.  The interlock against a missing observatory is
+        // raised in the posture block at the end of this section.
+        network_ledger_emit_ =
+            jval<bool>(json, "network.ledger_emit", "network_ledger_emit", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
@@ -10587,6 +10595,41 @@ namespace GnssProcessor {
             log->warn("Network producer (card SID phase 4b): network.ledger_anchor is armed with "
                       "network.phase_datum_min_stations at 1, so the coverage gate never drops a "
                       "family and the restore has no population.  The knob is INERT here.");
+        // Card SID phase 5a: the emitter read and the declared roster.  REFUSED
+        // without the phase-1 observatory, which owns both inputs: the arc ledger
+        // the emitter's bookkeeping is compared with, and the roster the
+        // declaration is built from.  A silent no-op would write an EMPTY
+        // declaration to the wire, which says "the network carries nothing": a
+        // false statement a consumer would act on.
+        if (network_ledger_emit_ && !network_signal_roster_) {
+            log->error("Network producer (card SID phase 5a): network.ledger_emit is armed "
+                       "WITHOUT network.signal_roster, so there is no arc ledger to read the "
+                       "emitter's bookkeeping against and no roster to build the declaration "
+                       "from: the wire would carry an EMPTY declaration, which tells a "
+                       "consumer the network carries no family for any signal.  DISARMED.  Arm "
+                       "network.signal_roster (the phase-1 observatory, byte-identical on the "
+                       "solve) alongside it.");
+            network_ledger_emit_ = false;
+        }
+        if (network_ledger_emit_)
+            log->info("Network producer (card SID phase 5a): network.ledger_emit is ON: the "
+                      "emitter's per-family bookkeeping is READ against the arc ledger (card "
+                      "PBH's hold generation against the ledger's admitted arc births, both "
+                      "directions counted and evented; the emitter's first-sighting test "
+                      "against the ledger's memory of the family, so a RETURN read as a first "
+                      "sighting is named), and the producer DECLARES its signal roster on the "
+                      "wire as a block of N records naming, per constellation and band digit, "
+                      "the modelled phase and code signals, the card SCC companions and the "
+                      "S-basis datum designation.  OBSERVATORY: nothing on the producer reads "
+                      "either back, so the solve and every C / B / P / E record are "
+                      "byte-identical against an unarmed run and the only difference in "
+                      "products.txt is the N records themselves.");
+        if (network_ledger_emit_ && !network_config_.emit_pb_hold)
+            log->warn("Network producer (card SID phase 5a): network.ledger_emit is armed "
+                      "without network.emit_pb_hold, so no emitted phase bias carries a hold "
+                      "generation and the E1a class (the generation against the ledger's arc "
+                      "births) has a ZERO DENOMINATOR: dead wiring, not agreement.  The "
+                      "first-sighting class and the declaration are unaffected.");
         if (!network_ledger_reentry_
             && network_ledger_reentry_no_verdict_ == LedgerReentryNoVerdict::Refloat)
             log->warn("Network producer (card SID phase 3): "
@@ -12148,6 +12191,13 @@ namespace GnssProcessor {
             // false ⇒ byte-identical; neither reaches the producer's solve or its
             // resume fingerprint.
             clc.pb_disc_carry            = cl.value("pb_disc_carry", false);
+            // Card SID phase 5b: the consumer's band latch and its freshness
+            // response follow the producer's DECLARED roster (derived into the
+            // consumer engine as GnssConfig::consumerRosterLatch).  Same contract
+            // as pb_disc_carry: default false, and it never reaches the
+            // producer's solve or its resume fingerprint.  INERT on a wire that
+            // carries no declaration, which the consumer detects and logs.
+            clc.roster_latch             = cl.value("roster_latch", false);
             // Card PBT (A): the EVERY-step ambiguity translation (derived into the
             // consumer engine as processing.ssr_phase_bias_step_translate).  Same
             // contract as pb_disc_carry — default false ⇒ byte-identical, and it
@@ -12441,6 +12491,12 @@ namespace GnssProcessor {
         // processing.ssr_phase_bias_disc_carry on the base config is kept.
         if (cl.pb_disc_carry)
             c.ssr_phase_bias_disc_carry_ = true;
+        // Card SID phase 5b: the same derivation for the declared-roster latch and
+        // freshness response.  Never cleared here, and the consumer detects the
+        // declaration's presence from the wire rather than from this flag, so
+        // arming it against a pre-card wire is inert and says so.
+        if (cl.roster_latch)
+            c.consumer_roster_latch_ = true;
         // Card PBT (A): same derivation for the EVERY-step translation.  Never
         // cleared here — an explicit processing.ssr_phase_bias_step_translate on
         // the base config is kept.  The eps is carried alongside so the harness
