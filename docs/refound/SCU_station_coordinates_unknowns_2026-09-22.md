@@ -244,6 +244,9 @@ edge; a released station's growing weight in the clocks is bounded by its own co
 
 - The regional Up bias of -0.13 to -0.18 m over central and east Asia (section 4.1; it
   includes WUH200CHN), what MAJU00MHL's flag is, and SOLO00SLB (0.08 m East, not settled).
+  The gross code rows at SGOC00LKA and KIT300UZB are not the cause: with both stations
+  dropped (`runs/_rap_y3_drop_both`, census key `y3`) WUH200CHN reads -0.160 m and BADG00RUS
+  -0.148 m (card GRK section 2).
 - The resolver applies no post-seismic model: roster AND census truths. A stop-gap is
   available today (move MIZU00JPN by the leave-out estimate, or drop it: section 3.1);
   it puts a number derived from this network's own solution into the roster, which the

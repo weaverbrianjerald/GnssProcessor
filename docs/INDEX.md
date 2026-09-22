@@ -129,6 +129,13 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
+- [GRK](refound/GRK_gap_reentry_key_mismatch_2026-09-22.md): open (READ 2026-09-22, fix
+  pre-registered, NOT built: the author's decision), the gap re-entry response keyed on the slip
+  tracker's signal, not on the carried one: the tracker takes the lexically lowest band-1 phase
+  (L1C) while ten stations carry L1W, so 34 of 88 shifted re-entries are answered on band 2 only
+  and the stale band-1 ambiguity folds across the break; emulation with L1C stripped at those
+  stations: gross post-fit code rows above 10 m 507 to 103 (SGOC00LKA G13 393 to 1), consumer
+  and wire unchanged. Fix: the tracker prefers the station's modeled signal per band.
 - [SCU](refound/SCU_station_coordinates_unknowns_2026-09-22.md): parked (2026-09-22, the author's
   decision: MIZU00JPN DROPPED from the field roster, baseline field `runs/_rf0hv8_field6`; the
   constrained-coordinate build deferred until the network works), station coordinates held or
