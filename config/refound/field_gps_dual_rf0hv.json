@@ -67,7 +67,14 @@
     "band-1 code it tracks as code-only rows through a receiver inter-signal state: census hour 1 better by a median of 0.136 m, code-bias dropouts",
     "50 to 4, QUIN00USA's excursion gone; it costs WTZZ00DEU about 0.02 m from hour 3 and FAILS card SCC's frozen bar B1: armed as the author's",
     "decision, every frequency and every channel being the plan).  The baseline pair is now runs/_rf0hv7_{field,sim}6, exe gnss_processor_rf7.exe.",
-    "OPEN: site-specific census offsets, the pinned pair's standing code misfit, the consumer's elevation mask, the goldens' monument roster."
+    "OPEN: site-specific census offsets, the pinned pair's standing code misfit, the consumer's elevation mask, the goldens' monument roster.",
+    "2026-09-22 (card SCU, docs/refound/SCU_station_coordinates_unknowns_2026-09-22.md): MIZU00JPN DROPPED from the roster at the author's",
+    "instruction (58 stations).  Its configured coordinate is 1.6 m from where its data puts it (E +1.47, N -0.64, U -0.12 m; the ITRF2020",
+    "resolver applies no post-seismic model) and that one station carried a third of the all-satellite clock error (clock wire 0.0068 to",
+    "0.0045 m).  A coordinate number derived from this network's own solution is deliberately NOT put into the roster.  The constrained",
+    "coordinate states of card SCU are deferred by the author until the network works; the station-congruence table and the roster audit",
+    "(runs/_msc/scripts/msc_roster_audit.py) are the detection instruments until then.  Field baseline: runs/_rf0hv8_field6, exe",
+    "gnss_processor_rf7.exe; the sim base is untouched (baseline runs/_rf0hv7_sim6)."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -551,15 +558,6 @@
           -3464039.0224,
           1334173.3276,
           -5169223.7734
-        ]
-      },
-      {
-        "name": "MIZU00JPN",
-        "rinex_path": "C:/GnssProcessor/data/2024-129/obs/mizu00jpn/MIZU00JPN_R_20241290000_01D_30S_MO.rnx",
-        "position_ecef": [
-          -3857169.9416,
-          3108693.7043,
-          4004040.6697
         ]
       },
       {

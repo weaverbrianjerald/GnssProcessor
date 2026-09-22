@@ -129,8 +129,10 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
-- [SCU](refound/SCU_station_coordinates_unknowns_2026-09-22.md): open (READ 2026-09-22, build
-  proposed, NOT started: the author's decision), station coordinates held or estimated. The
+- [SCU](refound/SCU_station_coordinates_unknowns_2026-09-22.md): parked (2026-09-22, the author's
+  decision: MIZU00JPN DROPPED from the field roster, baseline field `runs/_rf0hv8_field6`; the
+  constrained-coordinate build deferred until the network works), station coordinates held or
+  estimated. The
   roster audit (each roster station replayed as a consumer on the network's own wire) finds
   MIZU00JPN held 1.6 m from its data: the coordinate resolver applies no post-seismic model.
   Moved to its data: clock wire 0.0068 to 0.0044 m on all satellites, 11 of 16 census sites

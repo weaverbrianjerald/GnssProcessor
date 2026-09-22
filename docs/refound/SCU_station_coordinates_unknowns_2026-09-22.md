@@ -4,8 +4,8 @@
 
 - **id:** SCU
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** READ 2026-09-22 (manager; replays and config-only arms, no build), opened by the author's question whether the network should estimate its station coordinates instead of holding them. Four findings. (1) A second roster defect, found by replaying each roster station as a consumer on the network's own wire: MIZU00JPN is held 1.6 m from where its data puts it (E +1.47, N -0.64, U -0.12 m, stable to 0.02 m); the coordinate resolver propagates ITRF2020 linearly and applies no post-seismic model. With MIZU00JPN moved to its data the clock wire against the reference clocks goes from 0.0068 to 0.0044 m on all satellites (dropping the station gives 0.0045 m), 11 of 16 census sites improve, KOKB00USA loses half of its Up offset, WTZZ00DEU is unchanged. (2) The measure-only station-congruence screen had flagged MIZU00JPN (and, before card UPO, GRAZ00AUT and KRGG00ATF) at 22 to 29 against a roster median of 0.9 in every run, and nothing read it; it detects and cannot measure, because the carried ambiguities absorb the constant part of a coordinate error. (3) Of the four stations the screen still flags, none shows a coordinate error of its own in a leave-out replay: two of them share a regional Up bias of the wire over central and east Asia (-0.13 to -0.18 m, WUH200CHN and BADG00RUS included), so a flag is not always a coordinate. (4) Holding is the right default and free coordinates for all stations are nearly unestimable next to free satellite clocks (0.05 of a common translation stays observable); the recommended form is a constrained coordinate state per station with a release for flagged stations, which turns the existing detector into a full detect, identify, adapt loop with no external data. Build proposed in section 6, NOT started: the author's decision.
+- **status:** parked
+- **summary:** PARKED 2026-09-22 by the author's decision (section 8): MIZU00JPN is DROPPED from the field roster (58 stations; baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6` unchanged; clock wire 0.0068 / 0.0033 to 0.0045 / 0.0028 m, census better at 10 to 12 of 16 sites, WTZZ00DEU within 0.012 m at every hour) and the constrained-coordinate build of section 6 is deferred until the network works; the station-congruence table and the roster audit stay in use as the detection instruments. Earlier summary: READ 2026-09-22 (manager; replays and config-only arms, no build), opened by the author's question whether the network should estimate its station coordinates instead of holding them. Four findings. (1) A second roster defect, found by replaying each roster station as a consumer on the network's own wire: MIZU00JPN is held 1.6 m from where its data puts it (E +1.47, N -0.64, U -0.12 m, stable to 0.02 m); the coordinate resolver propagates ITRF2020 linearly and applies no post-seismic model. With MIZU00JPN moved to its data the clock wire against the reference clocks goes from 0.0068 to 0.0044 m on all satellites (dropping the station gives 0.0045 m), 11 of 16 census sites improve, KOKB00USA loses half of its Up offset, WTZZ00DEU is unchanged. (2) The measure-only station-congruence screen had flagged MIZU00JPN (and, before card UPO, GRAZ00AUT and KRGG00ATF) at 22 to 29 against a roster median of 0.9 in every run, and nothing read it; it detects and cannot measure, because the carried ambiguities absorb the constant part of a coordinate error. (3) Of the four stations the screen still flags, none shows a coordinate error of its own in a leave-out replay: two of them share a regional Up bias of the wire over central and east Asia (-0.13 to -0.18 m, WUH200CHN and BADG00RUS included), so a flag is not always a coordinate. (4) Holding is the right default and free coordinates for all stations are nearly unestimable next to free satellite clocks (0.05 of a common translation stays observable); the recommended form is a constrained coordinate state per station with a release for flagged stations, which turns the existing detector into a full detect, identify, adapt loop with no external data. Build proposed in section 6, NOT started: the author's decision.
 - **source:** the author's question of 2026-09-22; [UPO](UPO_consumer_up_offset_2026-09-22.md) sections 5.7 and 6 (the site-specific offsets left open, the congruence table)
 - **knobs / posture:** none built. Proposed: `network.station_position_estimate`, `network.station_position_sigma_m`, `network.station_position_free`, `network.station_position_release_t` (section 6). Posture: the RF-0hv working bases as armed on 2026-09-22 (baseline pair `runs/_rf0hv7_{field,sim}6`)
 - **dates in the text:** 2026-09-22
@@ -252,3 +252,55 @@ edge; a released station's growing weight in the clocks is bounded by its own co
   VOIM00MDG): the consumer's unbounded reaction, card MSC.
 - From card UPO section 5.7: the negative
   wet delays of CAS100ATA and SCTB00ATA, the soft hours 10 to 12, the consumer's mask.
+
+## 8. 2026-09-22: the author's decision. MIZU00JPN dropped; the build deferred
+
+Decision: drop MIZU00JPN from the field roster now; constrained coordinate states and
+offset detection are for later, once the network works. Until then the sim has known
+station positions, and the field roster is held as it is. The card is parked; the two
+instruments (the station-congruence table, the roster audit) stay in use.
+
+What the audit supports about the 58 remaining coordinates, stated at its resolution: no
+station shows an error of its own. The resolution is 0.02 to 0.03 m in central Europe
+(section 2) and 0.05 to 0.2 m at the remote stations, whose 6 h replays are not settled
+and partly carry a regional bias (section 4.1). ITRF2020 ends at 2021.0 and the resolver
+applies no post-seismic model, so a later equipment change or a post-seismic term below
+that resolution is not excluded.
+
+`config/refound/field_gps_dual_rf0hv.json`: the station's roster entry removed (58
+stations) plus dated comment lines; the sim base is untouched. Confirmation arm from the
+base with only the product path changed, exe `gnss_processor_rf7.exe` (`97547306...`),
+exit 0: `runs/_rf0hv8_field6` is byte-identical to the scripted arm
+`runs/_rap_m1_drop_mizu` on `products.txt` (lines starting with `#` removed),
+`closed_loop_trace.csv` and `network_epoch_status.csv`.
+
+**The baseline pair from this date: field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`
+(unchanged).**
+
+| | 59 stations (`runs/_rf0hv7_field6`) | 58 stations (`runs/_rf0hv8_field6`) |
+| --- | --- | --- |
+| WTZZ00DEU 3D p50 by hour (m) | 0.549 0.057 0.027 0.030 0.033 0.029 | 0.560 0.059 0.027 0.029 0.036 0.041 |
+| mean Up by hour (m) | +0.726 +0.017 +0.004 -0.022 -0.026 -0.025 | +0.794 +0.015 -0.003 -0.023 -0.030 -0.039 |
+| epochs below 0.1 m (reported, not a bar) | 610 | 611 |
+| clock wire, all / consumer-tracked (m) | 0.0068 / 0.0033 | 0.0045 / 0.0028 |
+| post-fit refloats / anchor events / trips | 87 / 127 / 1 | 85 / 127 / 1 |
+| census median p50 by hour (m), keys `upos10` and `rf8` | 0.677 0.235 0.118 0.095 0.097 0.078 | 0.673 0.169 0.103 0.082 0.095 0.067 |
+| census median count below 0.1 m | 331.5 | 339.5 |
+
+Census `rf8` against `upos10`: the absolute mean Up over hours 4 to 6 is smaller at 12 of
+16 (median change -0.0050 m, median 0.042 to 0.029 m); the 3D p50 over hours 4 to 6 is
+better at 10 (median -0.0040 m). Better: QUIN00USA 0.080 to 0.019 m, KOKB00USA 0.189 to
+0.124 m, UTQI00USA 0.232 to 0.166 m, BAKE00CAN 0.056 to 0.032 m. Worse: POHN00FSM 0.112
+to 0.181 m (its East mean +0.030 to +0.136 m; the same on the wire with the station moved,
+so it is not the loss of the station's data), BADG00RUS 0.129 to 0.176 m, ANMG00MYS 0.116
+to 0.138 m. Roster replays of the identical wire: key `rosm1`.
+
+The price of dropping instead of moving is at WTZZ00DEU: hour 6 reads 0.041 m against
+0.029 m (0.030 m with the station moved, section 3.1).
+
+12 h (`runs/_rap_a8_field12` against `runs/_rap_a7_field12`): 3D p50 by hour 0.560 0.059
+0.027 0.029 0.036 0.041 0.021 0.025 0.041 0.103 0.132 0.119 m against 0.549 0.057 0.027
+0.030 0.033 0.029 0.015 0.029 0.039 0.091 0.134 0.115 m (within 0.012 m at every hour);
+epochs below a decimetre 1018 against 1059 (reported; the difference sits in the soft
+hours 10 to 12, where the p50 is at the threshold); clock wire 0.0063 / 0.0041 m against
+0.0099 / 0.0060 m; post-fit refloats 204 against 228, trips 11 against 10.
