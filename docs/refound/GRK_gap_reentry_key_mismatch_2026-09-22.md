@@ -130,7 +130,7 @@ tracked through is not a hole). Final: **OFF 21, ON 0**, equal to the fall of `g
 (133 to 112). The run-end line WARNS when the knob is OFF and the count is nonzero; the manifest
 carries the knob when armed. Not fingerprinted (verified: no slip-QC token in
 `networkSnapshotFingerprint`; the tracker's history is exempt from the snapshot). Suite
-`TrackerModeledFirstTest`, 13 cases; `gnss_tests` 2433 ran, 2432 passed, 1 known skip. Exes
+`TrackerModeledFirstTest`, 14 cases; `gnss_tests` 2434 ran, 2433 passed, 1 known skip. Exes
 `gnss_processor_grk.exe` (`E62932FA...`, the solve) to `gnss_processor_grk4.exe`
 (`CEB14EAB...`, the final counters); the three graded files of the ON arm are byte-identical
 across all four builds, so the solve numbers of the first round stand.
