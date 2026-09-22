@@ -5,11 +5,11 @@
 - **id:** GRK
 - **topic:** slip
 - **status:** open
-- **summary:** READ 2026-09-22 (manager; one emulation arm, no build). DEFECT of the row-level gap re-entry response (card GRS's predecessor, `network.cycle_slip.gap_reentry_relevel`): the raw slip tracker forms its band-1 signal as the lexically lowest phase with a matching code (L1C before L1W), while the carried ambiguity at a station whose priority latch chose L1W is keyed L1W. At the 10 field stations that track both, the response looks for a carry under L1C, finds none and returns (`no_carry`): 34 of the run's 88 shifted re-entries are answered on band 2 only and the stale L1W ambiguity folds across the break. Emulation (L1C stripped at those 10 stations, `runs/_rap_k1_strip_l1c`): gross post-fit code rows above 10 m 507 to 103 (SGOC00LKA G13: 393 to 1), refloats 128 to 144, band-1 arcs bridged clean 1 to 13; consumer, census and clock wire unchanged. Fix pre-registered in section 3 (the tracker prefers the station's MODELED signal per band, so that the tracker, the carry and the response agree by construction); NOT built: the author's decision.
+- **summary:** BUILT 2026-09-22 (main `c8232ad`, `network.cycle_slip.tracker_modeled_first`, default OFF): every gate passes except the refloat count against the emulation by one (the emulation and the knob are different interventions: card SID section 3); `gap_reentry_unreachable` 21 OFF and 0 ON; gross code rows 507 to 101 (12 h 759 to 261); consumer, census and clock wire unchanged. The exposure is corrected to all 18 L1W stations on band 1 and 28 stations on band 2 (the audit of card SID). NOT armed; recommendation: arm (it is also card SID's phase 2). Earlier summary: READ 2026-09-22 (manager; one emulation arm, no build). DEFECT of the row-level gap re-entry response (card GRS's predecessor, `network.cycle_slip.gap_reentry_relevel`): the raw slip tracker forms its band-1 signal as the lexically lowest phase with a matching code (L1C before L1W), while the carried ambiguity at a station whose priority latch chose L1W is keyed L1W. At the 10 field stations that track both, the response looks for a carry under L1C, finds none and returns (`no_carry`): 34 of the run's 88 shifted re-entries are answered on band 2 only and the stale L1W ambiguity folds across the break. Emulation (L1C stripped at those 10 stations, `runs/_rap_k1_strip_l1c`): gross post-fit code rows above 10 m 507 to 103 (SGOC00LKA G13: 393 to 1), refloats 128 to 144, band-1 arcs bridged clean 1 to 13; consumer, census and clock wire unchanged. Fix pre-registered in section 3 (the tracker prefers the station's MODELED signal per band, so that the tracker, the carry and the response agree by construction); NOT built: the author's decision.
 - **source:** [SCU](SCU_station_coordinates_unknowns_2026-09-22.md) section 7 (the gross code rows at SGOC00LKA named as a candidate for the regional bias); [GRS](GRS_gap_reentry_per_signal_2026-09-20.md) (the per-signal tier that closed the L5 hole; this is the band-1 hole of the row-level tier)
-- **knobs / posture:** none built. Proposed: `network.cycle_slip.tracker_modeled_first` (default OFF). Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
+- **knobs / posture:** `network.cycle_slip.tracker_modeled_first` (built, default OFF). Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
 - **dates in the text:** 2026-09-22
-- **hashes / run dirs:** `runs/_rf0hv8_field6`, `runs/_rap_k1_strip_l1c`, `runs/_rap_y1_drop_sgoc`, `runs/_rap_y2_drop_kit3`, `runs/_rap_y3_drop_both`, census keys `rf8`, `k1`, `y3`; exe `gnss_processor_rf7.exe` (`97547306...`)
+- **hashes / run dirs:** build arms `runs/_rap_grk_g0_field`, `_grk_g0_sim`, `_grk_g1_field_on`, `_grk_g2_sim_on`, `_grk_g3_field12_on`, `_grk2_*`, `_grk3_*`, `_grk4_*`, census key `grk`; exes `gnss_processor_grk.exe` (`E62932FA...`) to `gnss_processor_grk4.exe` (`CEB14EAB...`); read: `runs/_rf0hv8_field6`, `runs/_rap_k1_strip_l1c`, `runs/_rap_y1_drop_sgoc`, `runs/_rap_y2_drop_kit3`, `runs/_rap_y3_drop_both`, census keys `rf8`, `k1`, `y3`; exe `gnss_processor_rf7.exe` (`97547306...`)
 
 ## 1. The read
 
@@ -104,3 +104,76 @@ Gates and bars (field 6 h from `runs/_rf0hv8_field6/arm.json`, exe from the buil
 Recommendation: build it. Small, bounded (one selection rule plus counters), and it
 closes a response hole at 10 of 58 stations that produces gross rows at full weight;
 those rows sit in the wire's inputs whether or not this consumer sees them.
+
+## 4. Build result (2026-09-22; Opus build worker in four rounds, every number re-graded by the manager from `runs/`)
+
+### 4.1 The build
+
+Main `c8232ad`. Knob `network.cycle_slip.tracker_modeled_first` (default OFF). The arc-level
+tracker (`networkComputeRawObservables`) takes an optional per-station lookup of the LATCHED
+phase per band (`PppModel::latchedCanonicalPhaseOnBandDigit`, new, beside the code accessor);
+armed, a band whose latched phase is present in the raw record with its matching code is named
+by that phase, otherwise the lexical rule applies for that band (a band the model does not carry
+falls back as before). The source is the latch, not the epoch's admitted row set: the two agree
+at every cell on this bed (byte-identical output either way), and the latch is what the carry is
+keyed on. Two counters in both knob states: `gap_tracker_key_mismatch` (cells (station,
+satellite, epoch, band) where the tracker's signal differs from the latched phase) and
+`gap_reentry_unreachable` (ROW-LEVEL re-entry arcs at which the response found no carry under
+the tracker's signal while a carry inside the max-gap window existed on the same band under a
+signal that is tracked with its code at that epoch: the population the response could have acted
+on). The counter's definition took three rounds to sharpen: the first counted every same-band
+carry (46 OFF / 25 ON), the second required the carried signal to be present at the epoch (36 /
+15; the absent cases are partial records whose modelled phase has no row that epoch, for example
+BSHM00ISR G14 at TOW 270390: C1C without L1C, L1L with C1L), the third excluded the per-signal
+tier, whose returning signal IS its key (a non-modelled L2L returning while the modelled L2W
+tracked through is not a hole). Final: **OFF 21, ON 0**, equal to the fall of `gap_reentry_no_carry`
+(133 to 112). The run-end line WARNS when the knob is OFF and the count is nonzero; the manifest
+carries the knob when armed. Not fingerprinted (verified: no slip-QC token in
+`networkSnapshotFingerprint`; the tracker's history is exempt from the snapshot). Suite
+`TrackerModeledFirstTest`, 13 cases; `gnss_tests` 2433 ran, 2432 passed, 1 known skip. Exes
+`gnss_processor_grk.exe` (`E62932FA...`, the solve) to `gnss_processor_grk4.exe`
+(`CEB14EAB...`, the final counters); the three graded files of the ON arm are byte-identical
+across all four builds, so the solve numbers of the first round stand.
+
+### 4.2 Gates
+
+| gate | bar | measured | verdict |
+| --- | --- | --- | --- |
+| G0 | knob absent, three files identical on both beds | identical (`runs/_rap_grk_g0_field`, `_grk_g0_sim`, again at `_grk2_`, `_grk3_`, `_grk4_`) | PASS |
+| G1 | gross code rows above 10 m within 5 of the emulation's 103 | 101 | PASS |
+| G1 | refloats within 2 of the emulation's 144 | 147 | FAIL by 1 |
+| G1 | band-1 arcs bridged clean within 2 of 13 | 13 | PASS |
+| G1 | consumer hourly p50 within 0.002 m of the emulation | largest difference 0.000 m | PASS |
+| G1 | `gap_reentry_unreachable` 0 ON | 0 | PASS |
+| G1 | `gap_reentry_unreachable` OFF reads the population (34 in the card) | 21 (final definition; the card's 34 counted shifted re-entries at the ten stations from the events, which is a different unit) | read |
+| G2 | sim ON byte-identical to `runs/_rf0hv7_sim6` | identical | PASS |
+| B1 | WTZZ00DEU hourly p50 within 0.005 m of the baseline | 0.560 0.059 0.028 0.030 0.036 0.045 against 0.560 0.059 0.027 0.029 0.036 0.041 m; largest 0.004 m | PASS |
+| B2 | census paired against `rf8`: not worse | hours 2 to 6 no site moved by more than 0.01 m; 3D p50 over hours 4 to 6 better at 10 of 16 (median -0.0002 m); absolute mean Up smaller at 10 of 16 | PASS |
+| B3 | 12 h against `runs/_rap_a8_field12` | 0.560 0.059 0.028 0.030 0.036 0.045 0.024 0.026 0.041 0.102 0.132 0.118 against 0.560 0.059 0.027 0.029 0.036 0.041 0.021 0.025 0.041 0.103 0.132 0.119 m; below 0.1 m 1022 against 1018; gross code rows 261 against 759; refloats 320 against 274; clock wire 0.0065 / 0.0045 against 0.0063 / 0.0041 m; trips 11 against 11 | read |
+
+The refloat miss by one is the emulation's own doing: stripping L1C removed rows, while the knob
+keeps them for the per-signal tier, which frees three more arcs. Card SID's audit (section 3 of
+that card) showed the emulation and the knob are different interventions in any case: the
+emulation removed 10 of the 46 mismatched station-band cells, the knob removes all 46 (band 1 at
+all 18 L1W stations, band 2 at 28 stations where L2L or L2S sorts before L2W; the per-signal tier
+answered 10 of the 14 band-2 re-entries, so the band-1 hole is the one that is total). The
+statement of section 1 that the exposure is ten stations is corrected: all 58 stations report
+C1C, so the tracker named band 1 L1C at every L1W station; the ten were the ones with a shifted
+re-entry in the window.
+
+### 4.3 Reading and recommendation
+
+Consumer-inert at 6 h and 12 h (WTZZ00DEU within 0.004 m per hour, census flat, clock wire within
+0.0004 m), which the card expected: what it removes is gross rows folded at full weight (507 to
+101 at 6 h, 759 to 261 at 12 h) and a response hole at every L1W station. Recommendation: arm it in
+the working bases now; it is also phase 2 of card SID (the tracker reads the roster), which
+replaces the knob by construction when the roster lands. The decision is the author's.
+
+### 4.4 What stays open
+
+- The remaining gross rows (BSHM00ISR G22 ramp, STHL00GBR, CPVG00CPV, KIT300UZB): card RF-3's
+  code-row QC.
+- The band-2 mismatch's cost is not isolated (card SID).
+- The tracker's comparator sorts on the band digit alone under `std::sort` (formally unstable
+  order inside a band); the knob makes the order irrelevant where the latch exists, phase 2 of
+  card SID removes the sort.
