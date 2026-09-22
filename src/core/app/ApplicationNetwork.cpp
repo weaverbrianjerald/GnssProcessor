@@ -120,6 +120,7 @@
 #include "filter/NetworkProducerAr.hpp" // INC-9b: log-only producer-AR + NEQ export
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: canonical-pair admission seam
+#include "app/SignalRoster.hpp"  // card SID phase 1: the roster / arc-ledger observatory
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
 #include "filter/NetworkDdPriorBuild.hpp" // INC-9b: buildEnsembleGauges/buildCarryDdPriors free fns
 #include "filter/NetworkSolveGlue.hpp" // INC-9b: datum/solve/within-epoch RAIM
@@ -1182,6 +1183,11 @@ int Application::runNetwork() {
         SB_CLOCKUPD,     // block 8: two-state clock update + fault QC + retro-flag feed
         SB_FRAMEDIAG,    // P1-3/P1-4: shared-normal spectrum + post-fit sigma0 (both default-OFF)
         SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
+        SB_ROSTER,       // card SID phase 1: the signal-roster build + the arc-ledger
+                         //       advance at the top of the epoch, and the disagreement
+                         //       pass after the clock update.  Both brackets accumulate
+                         //       into ONE entry: they are the same observatory, and the
+                         //       cost a reader needs is what the card adds to an epoch.
         SB_FASTCLOCK,    // FC-1: fast-clock anchor harvest + the shadow-mode grading tick
                          //       (the DECIMATED-out tick is outside the loop, untimed here —
                          //       it has its own ctx.counters.fc_wall_ms accumulator, since a
@@ -1192,7 +1198,7 @@ int Application::runNetwork() {
         "slip-scans", "pre-asm", "gauge-build", "dd-build", "solve-glue", "install-post",
         "netar", "sol-prep", "emit-store", "iono-diag", "dd-frac", "shdev-vtec",
         "t1a-health", "leveling", "raim", "clock-upd", "frame-diag", "stash-status",
-        "fast-clock"
+        "roster", "fast-clock"
     };
     std::vector<SubBlockTimer> sec_sub(SB_COUNT);        // run totals
     std::vector<SubBlockTimer> sec_sub_ep0(SB_COUNT);    // per-epoch loop-top snapshot of sec_sub
@@ -1252,6 +1258,12 @@ int Application::runNetwork() {
     // per-station canonical-latch cache from the PRODUCER roster.  Disarmed leaves
     // every member of ctx.carry.cpa untouched and the seam unreachable.
     networkCanonicalPairArm(ctx, config_, static_cast<int>(stations.size()));
+    // Card SID phase 1 (docs/refound/SID_signal_identity_2026-09-22.md section 5):
+    // size the roster's per-station caches, resolve the arc ledger's horizon from
+    // the readers' own gap windows, and record the station names.  Disarmed
+    // (network.signal_roster absent) leaves every member of ctx.roster and
+    // ctx.arc_ledger untouched and both seams unreachable.
+    networkSignalRosterArm(ctx, config_, log, stations);
 
     // Resolve the a-priori satellite-clock anchor σ once — it is loop-invariant and
     // config-only — so the anchor fold and its information-fraction diagnostic
@@ -1408,6 +1420,20 @@ int Application::runNetwork() {
         SyncedEpoch se_cpa_scratch;
         const SyncedEpoch& se = networkCanonicalPairAdmission(ctx, log, traces, stations,
                                                               se_admit, se_cpa_scratch);
+
+        // CARD SID PHASE 1 seam (app/SignalRoster.cpp).  Placed HERE, immediately
+        // after the canonical-pair admission returns the epoch, for the reason the
+        // comment above gives: this site is upstream of computeModels, the T0
+        // detectors, networkComputeRawObservables, assembly, the RAIM pools and the
+        // traces, so the roster answers "which signal stands for this band at this
+        // station" from the SAME RinexObservation every one of them derives from.
+        // It fills ctx.roster and advances ctx.arc_ledger; NOTHING reads either
+        // object but the disagreement counters and the trace, so the solve, the wire
+        // and every graded trace are byte-identical with the knob armed.  DISARMED:
+        // returns on its first line (no walk, no allocation, no counter moved).
+        subBegin(SB_ROSTER);
+        networkBuildSignalRoster(ctx, config_, log, traces, se, stations);
+        subEnd(SB_ROSTER);
 
         // Reduced-RHS class attribution: arm the estimator's shared-info capture
         // recorder BEFORE any prior-inject site runs this epoch (the post-solve
@@ -1908,6 +1934,10 @@ int Application::runNetwork() {
                 for (const auto& gd : gate_drop.events) {
                     ++ctx.counters.n_pd_gate_drop_edges;
                     if (gd.handled) ++ctx.counters.n_pd_gate_drop_handled;
+                    // Card SID phase 1 class (h): ask the arc ledger what state the
+                    // dropped family's arcs are in, counted exactly where the edge is
+                    // already evented.  Read-only and a no-op when the knob is off.
+                    networkSignalRosterGateDrop(ctx, gd.sat, gd.signal);
                     emitEvent("PHASE_ANCHOR", "gate_drop",
                               gd.sat + "_" + gd.signal,
                               gd.survivors.empty() ? std::string("-") : gd.survivors,
@@ -2716,6 +2746,19 @@ int Application::runNetwork() {
                        clk_model_warm, emit_rate_warm, pl_now_s, dt,
                        clock_refloat_sats, retro_flag_sats, retro_feed);
         subEnd(SB_CLOCKUPD);       // D0b: close block 8 (clock update + retro feed)
+        // CARD SID PHASE 1, the DISAGREEMENT PASS (app/SignalRoster.cpp).  Placed
+        // HERE because this is the first point at which every input of P4 exists in
+        // one scope: the arc-level tracker's rows were built in PASS A, local_carry
+        // is post-harvest (networkLeveling), the ambiguity states are post-assembly,
+        // the anchor incumbents are post-election, the freed-ambiguity set carries
+        // this epoch's slip responses, and `sol` is the solution the wire received.
+        // Reads only; every class is a counter.  DISARMED: returns on its first line.
+        subBegin(SB_ROSTER);
+        networkSignalRosterAudit(ctx, log, se, stations,
+                                 slip_qc.epoch.computed ? &slip_qc.epoch : nullptr,
+                                 carry_slipped_ambs, sol,
+                                 ctx.counters.n_emitted != fc_n_emitted_before);
+        subEnd(SB_ROSTER);
         // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  BEFORE the
         // stash/status block, because the epoch-status row written there reads the
         // post-fit sigma0 this fills in.  All default-OFF; an unarmed run makes

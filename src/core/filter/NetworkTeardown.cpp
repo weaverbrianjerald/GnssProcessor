@@ -6088,6 +6088,13 @@ int networkTeardown(
     // reason the injector's clause is: a rule that withheld the whole network
     // must be visible on a run that also produced nothing.
     networkCanonicalPairRunEnd(ctx, log);
+    // Card SID phase 1 run-end (app/SignalRoster.cpp): the OBSERVATORY's table —
+    // the roster's own build census with its bar-0 self-check, every disagreement
+    // class with its denominator, and the arc ledger's transitions, horizon and
+    // cost.  Silent when the knob is disarmed.  Read here, before the zero-emit
+    // guard, for the reason the two clauses above give: an observatory that ran on
+    // a run which produced nothing is exactly the run whose table matters.
+    networkSignalRosterRunEnd(ctx, log);
 
     if (n_emitted == 0) {
         log->error("Network: produced ZERO solution epochs. Common causes: stations "

@@ -6167,6 +6167,13 @@ namespace GnssProcessor {
         network_station_marker_to_arp_ =
             jval<bool>(json, "network.station_marker_to_arp",
                        "network_station_marker_to_arp", false);
+        // Card SID phase 1 (docs/refound/SID_signal_identity_2026-09-22.md section 5):
+        // the per-station SIGNAL ROSTER and the ARC LEDGER, built once per epoch and
+        // read by NOTHING but the disagreement counters and the trace.  Default OFF;
+        // ON is byte-identical on the solve, the wire and every graded trace, which
+        // is the phase's own bar (standing invariant 6 in both knob states).
+        network_signal_roster_ =
+            jval<bool>(json, "network.signal_roster", "network_signal_roster", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
@@ -10240,6 +10247,20 @@ namespace GnssProcessor {
                       "absorbs about a quarter of H and the rest reaches the satellite clocks.  "
                       "Per-station lines and a summary follow at station build; a station whose "
                       "header carries no eccentricity record is left unchanged and warned.");
+        // Card SID phase 1: the armed line.  Trace-class and byte-identical on the
+        // solve in BOTH states, so it carries no INERT case; what a reader needs is
+        // that this run pays the observatory's cost and writes its extra artifacts.
+        if (network_signal_roster_)
+            log->info("Network producer (card SID phase 1): network.signal_roster is ON — the "
+                      "per-station SIGNAL ROSTER (tracked / modelled / companion / excluded per "
+                      "station, constellation and band digit, reproduced from the canonical latch) "
+                      "and the ARC LEDGER (Absent / Tracking / Gap / Reentered / Dead per "
+                      "(station, satellite, signal)) are built once per epoch and read by NOTHING "
+                      "but the disagreement counters and the trace, so the solve, the wire and "
+                      "every graded trace are byte-identical against an unarmed run.  Extra "
+                      "artifacts: logs/network_arc_ledger.csv (one row per transition), the ARC "
+                      "event tier in network_events.csv (holdoff-throttled), and the run-end "
+                      "disagreement table.");
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.

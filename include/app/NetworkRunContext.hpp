@@ -47,6 +47,8 @@
 #include "filter/NetworkBiasAdmission.hpp" // CB-ADM: latched W6 code-bias admission census (ctx.admission)
 #include "filter/NetworkInject.hpp"        // NetworkInjectState — the EVENT HARNESS schedule + ledger
 #include "filter/NetworkCanonicalPairAdmission.hpp" // Card CPA: canonical-pair admission state + counters
+#include "app/SignalRoster.hpp"            // Card SID phase 1: SignalRoster + its counters
+#include "filter/ArcLedger.hpp"            // Card SID phase 1: the arc lifecycle machine
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
 #include "common/PppUtils.hpp"          // eq34_ppp_utils
 
@@ -3810,6 +3812,12 @@ namespace GnssProcessor {
         /// teardown line says so in those words rather than reading as a quiet run.
         /// Untouched unless network.canonical_pair_admission.
         NetworkCanonicalPairCounters cpa;
+
+        /// --- Card SID phase 1: the signal roster / arc ledger OBSERVATORY.
+        /// Every disagreement class is a named counter with its own denominator
+        /// (standing invariant 4), and the run-end table prints all of them.
+        /// Untouched unless network.signal_roster.
+        NetworkSignalRosterCounters sid;
     };
 
     /// @internal The run context: one instance per runNetwork() invocation,
@@ -3838,6 +3846,18 @@ namespace GnssProcessor {
         /// armed == false (the default, network.inject absent) ⇒ every consumer of
         /// this object short-circuits and the run is byte-identical.
         NetworkInjectState     inject;
+        /// Card SID phase 1 (docs/refound/SID_signal_identity_2026-09-22.md section 5):
+        /// the per-epoch SIGNAL ROSTER and its run-scope caches.  Deliberately OUTSIDE
+        /// the warm-resume fingerprint and the state snapshot: nothing here is read by
+        /// the solve, so a resumed run re-seats every cell at its first post-resume
+        /// epoch, which is the honest posture for a fresh observer.
+        /// armed == false (the default, network.signal_roster off) leaves every member
+        /// untouched and both seams unreachable.
+        SignalRoster           roster;
+        /// Card SID phase 1: the arc lifecycle machine, one record per
+        /// (station, satellite, signal).  Same exemption and same reason as
+        /// @ref roster; advanced by the same single call.
+        ArcLedger              arc_ledger;
     };
 
     // ------------------------------------------------------------------

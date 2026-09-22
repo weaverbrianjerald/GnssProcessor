@@ -6012,6 +6012,35 @@ namespace GnssProcessor {
         bool networkStationMarkerToArp() const { return network_station_marker_to_arp_; }
 
         /**
+         * @brief Card SID phase 1 — build the per-station SIGNAL ROSTER and the ARC
+         *        LEDGER once per epoch, read by nobody (@c network.signal_roster).
+         *
+         * The audit of 2026-09-22 (`runs/_msc/sid_audit_report_2026-09-22.md`) found
+         * 128 sites in 38 files that decide WHICH signal stands for a band, under at
+         * least nine rules and six independent implementations of "the two lowest
+         * distinct bands", and 29 arc-keyed containers of which 31 lifecycle holders
+         * have both edges silent.  Measured on the field baseline
+         * (`runs/_rf0hv8_field6`): the arc-level slip tracker's band signal differs
+         * from the carried one at 46 station-band cells of 44 of 58 stations, 0 of
+         * 31 band-1 re-entries at those cells were answered, and the wire's L1W
+         * phase-bias family is absent for 23.6 per cent of satellite-epochs.
+         *
+         * Armed, one call in the epoch body fills @c NetworkRunContext::roster from
+         * the station canonical latch, the epoch's raw records and the config, and
+         * advances @c NetworkRunContext::arc_ledger; a second, read-only pass counts
+         * every disagreement between the roster or the ledger and the site that
+         * decides the same question today.  NOTHING else reads either object, so the
+         * solve, the wire and every graded trace are byte-identical with the knob on
+         * and off (standing invariant 6 in BOTH states).  The outputs are the
+         * run-end table, the @c ARC event tier and @c logs/network_arc_ledger.csv.
+         *
+         * Not fingerprinted: no carried quantity changes meaning across the flip, so
+         * the knob is legal on a warm resume (the trace-class knob precedent).
+         * Network mode only.  Default false.
+         */
+        bool networkSignalRoster() const { return network_signal_roster_; }
+
+        /**
          * @brief Whether RAIM refloats are driven by prominence attribution
          *        (@c network.raim_attribution) instead of the per-satellite consensus.
          *
@@ -8262,6 +8291,7 @@ namespace GnssProcessor {
         double network_phase_bias_min_station_fraction_{0.0}; ///< Phase-bias coverage gate: a signal below this network coverage keeps its observation but gets NO satellite phase-bias state (float ambiguity absorbs it, signal not AR-eligible) — the "float not drop" alternative. 0 = off (every phase signal gets a bias, byte-identical). Network mode only.
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has NO ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state — its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). OFF = every station contributes (byte-identical). Network mode only.
         bool   network_station_marker_to_arp_{false};              ///< Card UPO (network.station_marker_to_arp): reduce every roster station's configured position_ecef from the MONUMENT to the antenna reference point at setup, via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N` — the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. OFF = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
+        bool   network_signal_roster_{false};                      ///< Card SID phase 1 (network.signal_roster): build the per-station SIGNAL ROSTER (tracked / modelled / companion / excluded per station, constellation and band digit, reproduced from the canonical latch) and the ARC LEDGER (Absent / Tracking / Gap / Reentered / Dead per (station, satellite, signal)) once per epoch, and count every disagreement between them and the site that decides the same question today. OBSERVATORY: nothing but the counters and the trace reads either object, so the solve is byte-identical ARMED and disarmed. Outputs: the run-end table, the ARC event tier, logs/network_arc_ledger.csv. Not fingerprinted. Network mode only.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
         bool   network_raim_carry_invariant_{false};         ///< POOL RE-HOST (measure-only): run the post-fit RAIM screen on the Card-4 invariant-carry lineage by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Post-fit RAIM is otherwise structurally inert under carry_invariant — the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). ⚠ NOT emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. OFF = byte-identical.

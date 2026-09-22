@@ -459,6 +459,21 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief The installed network signal allow list (card SID phase 1).
+         *
+         * A const read of what @ref setSignalAllowlist installed, so the signal
+         * roster can record an allow-list exclusion as a per-station reason rather
+         * than re-deriving the coverage gate.  An EMPTY map, or a constellation
+         * absent from it, means every tracked code of that constellation is
+         * admitted, which is the byte-identical default.
+         *
+         * @return System display name (e.g. "GPS") -> admitted RINEX codes.
+         */
+        const std::map<std::string, std::set<std::string>>& signalAllowlist() const {
+            return signal_allowlist_;
+        }
+
+        /**
          * @struct CanonicalSignal
          * @brief One locked per-(constellation, band, obs-type) canonical pick.
          *
@@ -586,6 +601,28 @@ namespace GnssProcessor {
          * @return The flat rows; empty before the first processed epoch.
          */
         std::vector<CanonicalSignal> exportCanonicalSignals() const;
+
+        /**
+         * @brief The candidate channels the latch decided on, retained for card SID.
+         *
+         * @c decideConstellationCanonicals builds one @ref CanonicalCandidate per
+         * admitted priority-list channel, in priority order, with that channel's
+         * satellite count at the constellation's first observed epoch, and hands
+         * them to @ref decideCanonicalPicks.  The candidates are the only input from
+         * which a SECOND rule can be evaluated, so card SID's "what would the count
+         * rule have latched here" counter needs them outside the class.
+         *
+         * Retained ONLY when @c network.signal_roster is armed, so an unarmed run
+         * allocates nothing and is byte-identical; the retention is a pure store
+         * that no decision reads.  Filled at the constellation's decision epoch and
+         * never revised, exactly like the latch itself.
+         *
+         * @return Constellation display name -> its candidates, in priority order.
+         *         Empty on any run that did not arm the knob, and on any
+         *         constellation that has not been decided yet.
+         */
+        const std::map<std::string, std::vector<CanonicalCandidate>>&
+        canonicalCandidates() const { return canonical_candidates_; }
 
         /**
          * @brief Restore a previously exported canonical-signal latch (RS-8, §21.16).
@@ -803,6 +840,16 @@ namespace GnssProcessor {
                  std::map<std::pair<std::string, char>, std::string>>
                 constellation_canonical_;
         std::set<std::string> constellation_canonical_decided_; /**< Constellations whose canonical set is locked. */
+
+        /**
+         * @brief Card SID phase 1: the candidates the latch decided on, retained.
+         *
+         * Filled at the constellation's decision epoch ONLY when
+         * @c network.signal_roster is armed, and read only by
+         * @ref canonicalCandidates.  Nothing in the decision path reads it, so an
+         * unarmed run neither allocates nor branches differently.
+         */
+        std::map<std::string, std::vector<CanonicalCandidate>> canonical_candidates_;
 
         /**
          * @brief Constellations whose latch was RESTORED and not yet audited (RS-8).

@@ -118,6 +118,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
     src/core/app/NetworkRunContext.cpp
+    src/core/app/SignalRoster.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
@@ -232,6 +233,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkTeardown.cpp
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
+    src/core/filter/ArcLedger.cpp
     src/core/filter/NetworkOraclePin.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
@@ -365,6 +367,8 @@ add_executable(gnss_tests
     tests/test_gap_reentry_relevel.cpp
     tests/test_gap_reentry_per_signal.cpp
     tests/test_tracker_modeled_first.cpp
+    tests/test_signal_roster.cpp
+    tests/test_arc_ledger.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
     tests/test_if_td_pair_width.cpp

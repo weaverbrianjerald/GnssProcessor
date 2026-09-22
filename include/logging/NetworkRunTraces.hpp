@@ -335,6 +335,19 @@ namespace GnssProcessor {
     /// are 78 % uncheckable.  The value is reported rather than clamped (the
     /// prior-residual census's rule — the deflation IS the measurement), but a
     /// deflating bin must be read together with its `n_inf`, never quoted alone.
+    /// network_arc_ledger.csv header (card SID phase 1, @c network.signal_roster).
+    /// ONE row per arc TRANSITION, never one per record: the ledger holds about
+    /// 1 200 live arcs per epoch at 58 stations and about 6 000 at 305, so a
+    /// per-record file would be a firehose while the edges are what the card is
+    /// about.  @c from and @c to are the state names (absent / tracking / gap /
+    /// reentered / dead), @c gap_ep the epochs missed (meaningful at a reentry and
+    /// at a death), @c generation the arc's birth count after the transition,
+    /// @c reason the death cause ("horizon" today) and @c role the roster's role for
+    /// that signal (modelled or tracked).  Unlike the @c ARC event tier in
+    /// network_events.csv, this file is NOT holdoff-throttled: a reader that needs
+    /// every edge reads it here.
+    inline constexpr const char* kArcLedgerHeader =
+        "week,tow,station,sat,signal,from,to,generation,gap_ep,reason,role\n";
     inline constexpr const char* kNetworkMdbHeader =
         "week,tow,const,class,n_rows,n_inf,n_finite,n_over,"
         "mdb_med_m,mdb_p95_m,mdb_max_m,sigma0_f,sigma0_src,"
@@ -707,6 +720,13 @@ namespace GnssProcessor {
         /// @ref openMwWlDumps for the same reason as @ref d5_flags_trace.
         std::ofstream wl_lane_trace;
         const std::filesystem::path wl_lane_trace_path;
+        /// Card SID phase 1 (@c network.signal_roster): the ARC LIFECYCLE trace —
+        /// one row per (station, satellite, signal) TRANSITION, written from
+        /// @c networkBuildSignalRoster through @ref writeArcLedgerRow.  Columns:
+        /// @ref kArcLedgerHeader.  The complete edge record the @c ARC event tier
+        /// only samples.  Off by default (byte-identical when OFF: no file, no rows).
+        std::ofstream arc_ledger_trace;
+        const std::filesystem::path arc_ledger_trace_path;
         /// L15: run-provenance manifest path (startup record written by
         /// writeRunManifestStartup, end-of-run record APPENDED by
         /// writeRunManifestComplete — one member so both target the same file).
@@ -881,6 +901,25 @@ namespace GnssProcessor {
          */
         std::size_t writeConsumerSatRows(const GnssTime& t,
                                          const std::vector<ConsumerSatRow>& rows);
+
+        /**
+         * @brief Card SID phase 1: write one arc TRANSITION row (no-op when OFF).
+         *
+         * @param t          Epoch time (week / tow of the row).
+         * @param station    Station name.
+         * @param sat        Satellite id.
+         * @param signal     RINEX signal id of the arc.
+         * @param from       State before the transition.
+         * @param to         State after it.
+         * @param generation The arc's generation after the transition.
+         * @param gap_ep     Epochs missed (meaningful at a reentry and at a death).
+         * @param reason     Death cause, or an empty string.
+         * @param role       The roster's role for this signal, or an empty string.
+         */
+        void writeArcLedgerRow(const GnssTime& t, const std::string& station,
+                               const std::string& sat, const std::string& signal,
+                               const char* from, const char* to, int generation,
+                               int gap_ep, const char* reason, const char* role);
 
         /// L2: one network_events.csv row for a discrete QC action (no-op OFF).
         /// Commas in @p detail are sanitized to semicolons (single CSV field).

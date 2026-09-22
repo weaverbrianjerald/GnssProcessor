@@ -14,6 +14,7 @@
 #include "logging/CsvRotator.hpp"       // maybeRotateCsv (P1 rotation, INC-4)
 #include "filter/NetworkPivotHandover.hpp" // formatPivotMap (health heartbeat, INC-4)
 #include "filter/NetworkAmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
+#include "filter/ArcLedger.hpp"             // card SID phase 1: the ledger's two window constants
 #include "realtime/ConsumerSatTrace.hpp"    // card CST: ConsumerSatRow + kConsumerSatTraceHeader
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
@@ -67,6 +68,7 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
       station_block_trace_path(log_dir_ / "network_station_block.csv"),
       amb_state_trace_path(log_dir_ / "network_amb_state.csv"),
+      arc_ledger_trace_path(log_dir_ / "network_arc_ledger.csv"),
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
       sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
@@ -546,6 +548,28 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open ambiguity carry-state trace {}",
                       amb_state_trace_path.string());
+    }
+    if (config_.networkSignalRoster()) {
+        // Card SID phase 1: one row per arc TRANSITION.  The provenance line above
+        // the header states what a row is and, more importantly, what it is not:
+        // this is not a per-record census of the ledger, and a count of rows here is
+        // a count of EDGES.
+        arc_ledger_trace.open(arc_ledger_trace_path);
+        if (arc_ledger_trace)
+            arc_ledger_trace
+                << "# network_arc_ledger.csv - card SID phase 1 (docs/refound/"
+                   "SID_signal_identity_2026-09-22.md, network.signal_roster). One row "
+                   "per (station, satellite, signal) arc TRANSITION, never one per "
+                   "record: Absent->Tracking is a birth, Tracking->Gap opens a gap, "
+                   "Gap->Reentered is a return inside the readers' longest gap window, "
+                   "Gap->Dead is a death past it, and Dead->Tracking is a birth whose "
+                   "generation says the arc had been here before. An arc whose STATION "
+                   "reported nothing at an epoch is frozen, never gapped. Not "
+                   "holdoff-throttled (the ARC tier of network_events.csv is).\n"
+                << kArcLedgerHeader;
+        else
+            log->warn("Network: failed to open arc-ledger trace {}",
+                      arc_ledger_trace_path.string());
     }
     if (nc.trace_phase_anchor) {
         // S1 anchor partition (docs/SPEC_lane_spectrometer.md §3.3).  One row per
@@ -1157,6 +1181,17 @@ void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char
         o << ',';
         if (threshold) o << fmt::format("{:.6f}", *threshold);
         o << ',' << action << ',' << d << '\n';
+}
+
+void NetworkRunTraces::writeArcLedgerRow(const GnssTime& t, const std::string& station,
+                                         const std::string& sat, const std::string& signal,
+                                         const char* from, const char* to, int generation,
+                                         int gap_ep, const char* reason, const char* role) {
+    if (!arc_ledger_trace.is_open()) return;
+    arc_ledger_trace << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
+                     << station << ',' << sat << ',' << signal << ','
+                     << from << ',' << to << ',' << generation << ',' << gap_ep << ','
+                     << reason << ',' << role << '\n';
 }
 
 void NetworkRunTraces::writeCarryVceApplyRows(const GnssTime& t,
@@ -1948,6 +1983,33 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << (nc.slip_qc.tracker_modeled_first
                        ? std::string("\"tracker_modeled_first\":true,")
                        : std::string())
+               // Card SID phase 1: the observatory's own object.  It is NOT
+               // solve-affecting, but an archived logs/ folder still has to be able
+               // to say that this run carries network_arc_ledger.csv and the ARC
+               // event tier, and on what horizon the ledger's gaps and deaths were
+               // decided (four config values, so the number is auditable without
+               // re-reading the config).  Emitted ONLY when armed (the gap_reentry
+               // precedent), so an unarmed run's manifest bytes are unchanged.
+               << (config_.networkSignalRoster()
+                       ? fmt::format("\"signal_roster\":{{\"armed\":true,"
+                                     "\"horizon_s\":{},"
+                                     "\"phase_leveling_max_gap_s\":{},"
+                                     "\"iono_carry_max_gap_s\":{},"
+                                     "\"emit_pb_hold_max_gap_s\":{},"
+                                     "\"readmit_seed_horizon_s\":{},"
+                                     "\"forget_ep\":{},\"event_holdoff_ep\":{},"
+                                     "\"trace\":\"network_arc_ledger.csv\","
+                                     "\"event_tier\":\"ARC\"}},",
+                                     std::max(std::max(config_.networkPhaseLevelingMaxGapS(),
+                                                       config_.networkIonoCarryMaxGapS()),
+                                              std::max(nc.emit_pb_hold_max_gap_s,
+                                                       config_.networkReadmitSeedHorizonS())),
+                                     config_.networkPhaseLevelingMaxGapS(),
+                                     config_.networkIonoCarryMaxGapS(),
+                                     nc.emit_pb_hold_max_gap_s,
+                                     config_.networkReadmitSeedHorizonS(),
+                                     kArcLedgerForgetEp, kArcLedgerEventHoldoffEp)
+                       : std::string())
                // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp).
                // SOLVE-AFFECTING and truth-fed, so an archived logs/ folder MUST be
                // able to say that its products are a diagnostic ceiling rather than a
@@ -2280,6 +2342,9 @@ void NetworkRunTraces::closeAll() {
     // Same rationale: a NEW member, and the contingency is the graded artifact
     // of a datum-graph arm.
     if (datum_graph_trace.is_open()) datum_graph_trace.close();
+    // Same rationale: a NEW member, and the complete edge record is the graded
+    // artifact of a card SID arm (the ARC event tier only samples it).
+    if (arc_ledger_trace.is_open()) arc_ledger_trace.close();
     // Same rationale: a NEW member, and the per-row residual dump is the graded
     // artifact of a §24.6 attribution leg — its tail must be flushed at teardown.
     if (pf_rows_trace.is_open()) pf_rows_trace.close();
