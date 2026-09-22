@@ -5,9 +5,9 @@
 - **id:** SID
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PHASE 4 BUILT 2026-09-22 (main `c85e03c`, `network.ledger_screens` and `network.ledger_anchor`, default OFF): the reason-mask writers attribute phase 3's 87 no-verdict returns completely (admission 61, nomodel 26); the anchor election reads 19 of 114 incumbent-less elections as first sightings of a returning family; the re-entry restore is exercised and byte-identical on the field (the coverage rank elects the same station) and on card EV7's bed (refused by the held-basis rule). Earlier summary: PHASE 3 BUILT 2026-09-22 (main `ff8b05b`, `network.ledger_reentry`, default OFF, fingerprinted): the re-entry response on the admitted ledger reproduces the raw-driven response arc for arc (byte-identical at 2 h, over 6 h and at 16 census sites), so after card GRK no hole remains in the response on this bed; the two silent prune edges are events; 87 of 301 returns in 6 h had no raw verdict (a screen-side decoupling, to be attributed by phase 4's reason-mask writers); the refloat policy frees them without moving the wire. Earlier summary: PHASE 2 BUILT 2026-09-22 (main `2ea87bb`, `network.roster_tracker`, default OFF): the tracker reads the roster and reproduces card GRK byte for byte with and without GRK's knob; the IF pin writes the roster's datum fields; the ledger carries the ADMITTED lifecycle beside the raw one (carry-side gaps of 2 to 30 epochs 49 in 2 h, 12 unanswered: phase 3's population); cost 11.1 ms per epoch. Earlier summary: PHASE 1 BUILT 2026-09-22 (main `6202cbc`, `network.signal_roster`, default OFF): the roster and the ledger as an observatory, byte-identical armed on both beds, reproducing the audit's identity population exactly (46 cells at 44 stations, 6 count-against-priority stations, L1W family 24.1 percent missing) at +0.31 percent of the loop; structural finding: the ledger is raw-side, the carry is admitted-side, so phase 3 needs an admitted lifecycle beside the raw one. Earlier summary: AUDIT and DESIGN 2026-09-22 (Opus audit worker, read-only; every number re-read by the manager from `runs/`), opened by the author's question whether the whole signal and channel organisation needs rethinking on the way to every satellite, frequency and channel. Verdict: the estimator is per signal already and stays; the layer that decides WHICH signal stands for a band, and the lifecycle of an arc, are decided in 128 sites across 38 files with at least six independent "two lowest bands" rules and 29 arc-keyed containers of which 31 lifecycle holders have both edges silent. Measured on the field baseline: the raw tracker's signal differs from the carried one at 46 station-band cells of 44 of 58 stations (not the 10 of card GRK: those were the ten with a re-entry in the window); 0 of 31 band-1 re-entries at L1W stations were answered against 55 of 67 elsewhere; the wire's L1W PHASE-BIAS family is missing for 23.6 percent of satellite-epochs (5 323 of 22 586, 17 of 32 satellites; median 4 carried stations) because a station contributes one phase per band, the class card SCC fixed on the code side only, and the mechanism behind card EV7's edges. Plan: a per-station SignalRoster and an ArcLedger owned by the run context, built as an OBSERVATORY first (phase 1, byte-identical armed), then migrated one reader at a time (phases 2 to 5), then `channel_mode: all` on the network path (phase 6). Phase 1 pre-registered in section 5; the author passed the recommended fixes to the build.
+- **summary:** PHASE 5 BUILT 2026-09-22 (main `66a1f12`, `network.ledger_emit` and `network.closed_loop.roster_latch`, default OFF): the roster is declared on the wire (record N), the wire and the census byte-identical armed; the observatory names 3 hold restarts without an arc and 8 returning families read as first sightings; the census's freshness flips are 4, not 50; 5b (the consumer follows the declared primary) is a TRADE (5 sites better, 3 worse, WUH200CHN +0.021 m) and stays OFF. Earlier summary: PHASE 4 BUILT 2026-09-22 (main `c85e03c`, `network.ledger_screens` and `network.ledger_anchor`, default OFF): the reason-mask writers attribute phase 3's 87 no-verdict returns completely (admission 61, nomodel 26); the anchor election reads 19 of 114 incumbent-less elections as first sightings of a returning family; the re-entry restore is exercised and byte-identical on the field (the coverage rank elects the same station) and on card EV7's bed (refused by the held-basis rule). Earlier summary: PHASE 3 BUILT 2026-09-22 (main `ff8b05b`, `network.ledger_reentry`, default OFF, fingerprinted): the re-entry response on the admitted ledger reproduces the raw-driven response arc for arc (byte-identical at 2 h, over 6 h and at 16 census sites), so after card GRK no hole remains in the response on this bed; the two silent prune edges are events; 87 of 301 returns in 6 h had no raw verdict (a screen-side decoupling, to be attributed by phase 4's reason-mask writers); the refloat policy frees them without moving the wire. Earlier summary: PHASE 2 BUILT 2026-09-22 (main `2ea87bb`, `network.roster_tracker`, default OFF): the tracker reads the roster and reproduces card GRK byte for byte with and without GRK's knob; the IF pin writes the roster's datum fields; the ledger carries the ADMITTED lifecycle beside the raw one (carry-side gaps of 2 to 30 epochs 49 in 2 h, 12 unanswered: phase 3's population); cost 11.1 ms per epoch. Earlier summary: PHASE 1 BUILT 2026-09-22 (main `6202cbc`, `network.signal_roster`, default OFF): the roster and the ledger as an observatory, byte-identical armed on both beds, reproducing the audit's identity population exactly (46 cells at 44 stations, 6 count-against-priority stations, L1W family 24.1 percent missing) at +0.31 percent of the loop; structural finding: the ledger is raw-side, the carry is admitted-side, so phase 3 needs an admitted lifecycle beside the raw one. Earlier summary: AUDIT and DESIGN 2026-09-22 (Opus audit worker, read-only; every number re-read by the manager from `runs/`), opened by the author's question whether the whole signal and channel organisation needs rethinking on the way to every satellite, frequency and channel. Verdict: the estimator is per signal already and stays; the layer that decides WHICH signal stands for a band, and the lifecycle of an arc, are decided in 128 sites across 38 files with at least six independent "two lowest bands" rules and 29 arc-keyed containers of which 31 lifecycle holders have both edges silent. Measured on the field baseline: the raw tracker's signal differs from the carried one at 46 station-band cells of 44 of 58 stations (not the 10 of card GRK: those were the ten with a re-entry in the window); 0 of 31 band-1 re-entries at L1W stations were answered against 55 of 67 elsewhere; the wire's L1W PHASE-BIAS family is missing for 23.6 percent of satellite-epochs (5 323 of 22 586, 17 of 32 satellites; median 4 carried stations) because a station contributes one phase per band, the class card SCC fixed on the code side only, and the mechanism behind card EV7's edges. Plan: a per-station SignalRoster and an ArcLedger owned by the run context, built as an OBSERVATORY first (phase 1, byte-identical armed), then migrated one reader at a time (phases 2 to 5), then `channel_mode: all` on the network path (phase 6). Phase 1 pre-registered in section 5; the author passed the recommended fixes to the build.
 - **source:** the author's question of 2026-09-22; cards [CSL](CSL_canonical_signal_latch_2026-09-20.md), [GRS](GRS_gap_reentry_per_signal_2026-09-20.md), [EV7](EV7_all_sat_clock_decouple_2026-09-21.md), [SCC](SCC_second_code_channel_2026-09-21.md), [GRK](GRK_gap_reentry_key_mismatch_2026-09-22.md) (the six defects of one shape); the audit report (`runs/_msc/sid_audit_report_2026-09-22.md`, 912 lines, outside the repository with the run directories; its tables are summarised here and its measurements are reproducible from the run directories named)
-- **knobs / posture:** `network.signal_roster` (phase 1), `network.roster_tracker` (phase 2), `network.ledger_reentry` with `network.ledger_reentry_no_verdict` (phase 3), `network.ledger_screens` and `network.ledger_anchor` (phase 4), all built 2026-09-22, default OFF; phases 5 and 6 named in section 4. Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
+- **knobs / posture:** `network.signal_roster` (phase 1), `network.roster_tracker` (phase 2), `network.ledger_reentry` with `network.ledger_reentry_no_verdict` (phase 3), `network.ledger_screens` and `network.ledger_anchor` (phase 4), `network.ledger_emit` and `network.closed_loop.roster_latch` (phase 5), all built 2026-09-22, default OFF; phase 6 named in section 4 and split in section 10. Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** `runs/_rf0hv8_field6` (all Part D numbers), `runs/_rap_k1_strip_l1c`, `runs/_rap_grk_g1_field_on`; traces `network_slip_raw.csv`, `network_amb_state.csv`, `network_events.csv`, `network_pf_rows.csv`, `closed_loop_sat_trace.csv`, `products.txt`
 
@@ -405,3 +405,73 @@ Readings:
 
 Phase 5 (the emitter hold, the consumer latch and freshness on the roster; the roster declared on
 the wire) is the last identity phase before `channel_mode: all`.
+
+## 10. Phase 5 result (2026-09-22; Opus build worker, every number re-graded by the manager from `runs/`; 2 h arms, one 6 h wire and two 16-site censuses)
+
+Main `66a1f12`. Two knobs. 5a, `network.ledger_emit` (default OFF; refused without
+`network.signal_roster`): the emitter's per-family bookkeeping is READ against the ledger (E1: the
+phase-bias hold's generation against the ledger's admitted arc births at the same epoch, in both
+directions; the emitter baselines' first sighting against the ledger's memory of the family), the
+producer DECLARES its roster on the wire (E2: record `N,<constellation>,<band digit>[,ph=..][,co=..]
+[,comp=..][,dph=..][,dco=..]`, one per constellation and band, the lists ordered by producer
+station support with a lexical tie break, written as a block ahead of the epoch's records only when
+the declaration changes; the legend comment extended, so every file this build writes carries one
+more comment line in both knob states), and the consumer's side is counted (E3: its band latch
+compared with the declaration; its freshness flips become events with identity, attributed at the
+flip epoch as off-wire, undeclared or stale). 5b, `network.closed_loop.roster_latch` (consumer side,
+default OFF, inert without a declaration on the wire): C1 the consumer's canonical signal per band
+follows the declared primary when the consumer tracks it; C2 a fresh-to-stale flip of a family the
+declaration does not carry is not a staleness event. New seams `NetworkLedgerEmit` and
+`SignalDeclaration`; `LedgerEmitTest` 17 cases; `gnss_tests` 2523 ran, 2522 passed, 1 known skip;
+exe `gnss_processor_sid5.exe` (`05C58FEC...`). A build defect found on the way: two headers
+forward-declared `class NetworkRunContext` where the type is a `struct`, and MSVC mangled a free
+function over it two ways by include order (a link failure in the new test TU); both now say
+`struct`.
+
+| gate | bar | measured | verdict |
+| --- | --- | --- | --- |
+| G0 | knobs absent, identical on both beds | identical over the 2 h window (`runs/_rap_sid5_g0_field2` against `runs/_rf0hv10_field6`, `_g0_sim2` against `_rf0hv10_sim6`) | PASS |
+| G1 (5a, 2 h) | traces identical; products identical after the N records | both beds: `closed_loop_trace.csv` and `network_epoch_status.csv` identical to G0; `products.txt` identical after 4 N records; the field declaration `GPS 1 ph=L1C+L1W co=C1C+C1W comp=C1W+C1C dco=C1C; GPS 2 ph=L2W co=C2W dco=C2W` (dph added at the second change); WTZZ00DEU's latch differs from the declared primary on band 1 (phase and code) | PASS |
+| G2 (5a, 6 h wire and census) | identical to the baseline after the records; the census identical | `runs/_rap_sid5_g2_field6` identical to `runs/_rf0hv10_field6` on the three files after 4 N records and the legend line; census key `sid5` against `rf3gl2nb` identical at 16 of 16 (median count 348.0 both) | PASS |
+| G3 (5b, 6 h census, key `sid5b`) | no site worse by more than 0.01 m on hours 2 to 6; QUIN00USA without an excursion above 5 m after hour 2 | the latch moved at 11 of 16 sites (C1W to C1C at all 11; L1W to L1C at ARHT, BADG, BAKE, QUIN, UTQI, WUH2, and at WTZZ00DEU); counts 5 better (QUIN00USA 583 to 611, BADG00RUS 185 to 249, POHN00FSM 0 to 43, BAKE00CAN 504 to 528, ARHT00ATA +3) and 3 worse (WUH200CHN 69 to 32, HARB00ZAF 358 to 339, DAV100ATA -6); hours 2 to 6 mean p50 WUH200CHN +0.021 m, BADG00RUS -0.026, QUIN00USA -0.010; per hour, WUH200CHN +0.047 (hour 3), DAV100ATA +0.017 (hour 2), POHN00FSM +0.014, HARB00ZAF +0.012; QUIN00USA's largest excursion after hour 1 0.97 to 0.10 m, none above 5 m; WTZZ00DEU 611 to 612, hours 2 to 6 +0.003 m | bar 1 **FAIL** (one site on the mean, four in some hour); bar 2 PASS |
+| G4 | cost | loop +3.8 percent field (86 485 to 89 734 ms per pass of the summary's `loop_ms`), +7.3 percent sim; the phase-5 fold 3.3 ms per epoch at 6 h; the wire +169 bytes per run (the declaration changes twice) | read |
+
+The 6 h table (`runs/_rap_sid5_g2_field6/stdout.txt`): 62 322 emitted families carried a hold
+generation; 15 generation changes, 12 with an admitted arc birth and **3 without** (all G20 at TOW
+262920 on L1C, L1W and L2W at once: a satellite-level emission gap longer than
+`emit_pb_hold_max_gap_s` while the arcs stayed admitted, so the consumer is told of a new
+generation that no arc birth caused); 1 165 arc births with no generation change, all of them one
+more station joining a family the wire already carried (0 family returns); the emitter's phase
+first-sighting test fired 96 times, all on a family with a returning arc, 88 of them the ledger's
+own first admission at the same epoch and **8 genuine returns read as first sightings** (G32 260130,
+G25 262500, G03 267390, G29 267510, G28 271500, G31 272280, G01 279420, G26 280350); the code row of
+that test is dead wiring (the ledger's arcs are phase arcs); 116 of 125 274 roster cells (0.09
+percent) were answered by the station latch because the cell had no modelled role yet at the
+constellation's first epoch.
+
+Readings:
+
+- The census's freshness-flip population is **4** on the current wire, not card MSC's 50: one event
+  (G25 C1W absent from the wire at TOW 259230, off-wire at ARHT00ATA and DAV100ATA, the return
+  read as stale). Cards SCC, EV7, UPO and GRK removed the rest four wires ago; the phase-5 bar of
+  section 4 ("the 50 dropouts each attributable") is met on what remains. The undeclared class is
+  empty: the network declares both band-1 attributes, so no consumer tracks a signal the network
+  carries no family for, and C2 never fires.
+- 5b's whole effect is C1, and it is a trade: the declared primary is the network's majority
+  signal (L1C at 40 stations against L1W at 18; C1C likewise), and following it helps the sites
+  whose own rule had chosen the thinner family (QUIN00USA, BADG00RUS, POHN00FSM, BAKE00CAN) and
+  hurts others (WUH200CHN, HARB00ZAF). Which family serves a given consumer is a product-selection
+  question the declaration now makes visible and does not answer; the knob stays built and OFF.
+  The hole itself (the L1W family at a median of 4 stations per column) is phase 6's.
+- Two producer-side classes the observatory names for the first time: a hold generation restarted
+  by an emission gap with no arc behind it (3), and a returning family read by the emitter as a
+  first sighting (8). Both are re-coupling edges without identity (standing invariant 7); their
+  consumer cost is unread.
+- The declaration is written on change only (a consumer joining mid-file holds none until the
+  next change); a periodic re-broadcast is owed with the seam work. A pre-card consumer reading
+  this wire warns once on the unknown tag and parses every epoch (the reader's sticky flag,
+  `LedgerEmitTest.AnUnknownRecordIsIgnoredByTheParser`).
+
+Phase 6 (`channel_mode: all`) is split by the manager into 6a, the second PHASE channel on band 1
+(the twin of card SCC, allow-listed, bounded: the L1W hole), and 6b, every band and channel with
+the interlock lifted.
