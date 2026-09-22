@@ -5,9 +5,9 @@
 - **id:** SID
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** PHASE 1 BUILT 2026-09-22 (main `6202cbc`, `network.signal_roster`, default OFF): the roster and the ledger as an observatory, byte-identical armed on both beds, reproducing the audit's identity population exactly (46 cells at 44 stations, 6 count-against-priority stations, L1W family 24.1 percent missing) at +0.31 percent of the loop; structural finding: the ledger is raw-side, the carry is admitted-side, so phase 3 needs an admitted lifecycle beside the raw one. Earlier summary: AUDIT and DESIGN 2026-09-22 (Opus audit worker, read-only; every number re-read by the manager from `runs/`), opened by the author's question whether the whole signal and channel organisation needs rethinking on the way to every satellite, frequency and channel. Verdict: the estimator is per signal already and stays; the layer that decides WHICH signal stands for a band, and the lifecycle of an arc, are decided in 128 sites across 38 files with at least six independent "two lowest bands" rules and 29 arc-keyed containers of which 31 lifecycle holders have both edges silent. Measured on the field baseline: the raw tracker's signal differs from the carried one at 46 station-band cells of 44 of 58 stations (not the 10 of card GRK: those were the ten with a re-entry in the window); 0 of 31 band-1 re-entries at L1W stations were answered against 55 of 67 elsewhere; the wire's L1W PHASE-BIAS family is missing for 23.6 percent of satellite-epochs (5 323 of 22 586, 17 of 32 satellites; median 4 carried stations) because a station contributes one phase per band, the class card SCC fixed on the code side only, and the mechanism behind card EV7's edges. Plan: a per-station SignalRoster and an ArcLedger owned by the run context, built as an OBSERVATORY first (phase 1, byte-identical armed), then migrated one reader at a time (phases 2 to 5), then `channel_mode: all` on the network path (phase 6). Phase 1 pre-registered in section 5; the author passed the recommended fixes to the build.
+- **summary:** PHASE 2 BUILT 2026-09-22 (main `2ea87bb`, `network.roster_tracker`, default OFF): the tracker reads the roster and reproduces card GRK byte for byte with and without GRK's knob; the IF pin writes the roster's datum fields; the ledger carries the ADMITTED lifecycle beside the raw one (carry-side gaps of 2 to 30 epochs 49 in 2 h, 12 unanswered: phase 3's population); cost 11.1 ms per epoch. Earlier summary: PHASE 1 BUILT 2026-09-22 (main `6202cbc`, `network.signal_roster`, default OFF): the roster and the ledger as an observatory, byte-identical armed on both beds, reproducing the audit's identity population exactly (46 cells at 44 stations, 6 count-against-priority stations, L1W family 24.1 percent missing) at +0.31 percent of the loop; structural finding: the ledger is raw-side, the carry is admitted-side, so phase 3 needs an admitted lifecycle beside the raw one. Earlier summary: AUDIT and DESIGN 2026-09-22 (Opus audit worker, read-only; every number re-read by the manager from `runs/`), opened by the author's question whether the whole signal and channel organisation needs rethinking on the way to every satellite, frequency and channel. Verdict: the estimator is per signal already and stays; the layer that decides WHICH signal stands for a band, and the lifecycle of an arc, are decided in 128 sites across 38 files with at least six independent "two lowest bands" rules and 29 arc-keyed containers of which 31 lifecycle holders have both edges silent. Measured on the field baseline: the raw tracker's signal differs from the carried one at 46 station-band cells of 44 of 58 stations (not the 10 of card GRK: those were the ten with a re-entry in the window); 0 of 31 band-1 re-entries at L1W stations were answered against 55 of 67 elsewhere; the wire's L1W PHASE-BIAS family is missing for 23.6 percent of satellite-epochs (5 323 of 22 586, 17 of 32 satellites; median 4 carried stations) because a station contributes one phase per band, the class card SCC fixed on the code side only, and the mechanism behind card EV7's edges. Plan: a per-station SignalRoster and an ArcLedger owned by the run context, built as an OBSERVATORY first (phase 1, byte-identical armed), then migrated one reader at a time (phases 2 to 5), then `channel_mode: all` on the network path (phase 6). Phase 1 pre-registered in section 5; the author passed the recommended fixes to the build.
 - **source:** the author's question of 2026-09-22; cards [CSL](CSL_canonical_signal_latch_2026-09-20.md), [GRS](GRS_gap_reentry_per_signal_2026-09-20.md), [EV7](EV7_all_sat_clock_decouple_2026-09-21.md), [SCC](SCC_second_code_channel_2026-09-21.md), [GRK](GRK_gap_reentry_key_mismatch_2026-09-22.md) (the six defects of one shape); the audit report (`runs/_msc/sid_audit_report_2026-09-22.md`, 912 lines, outside the repository with the run directories; its tables are summarised here and its measurements are reproducible from the run directories named)
-- **knobs / posture:** `network.signal_roster` (phase 1, built 2026-09-22, default OFF); later phases named in section 4. Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
+- **knobs / posture:** `network.signal_roster` (phase 1), `network.roster_tracker` (phase 2), both built 2026-09-22, default OFF; later phases named in section 4. Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** `runs/_rf0hv8_field6` (all Part D numbers), `runs/_rap_k1_strip_l1c`, `runs/_rap_grk_g1_field_on`; traces `network_slip_raw.csv`, `network_amb_state.csv`, `network_events.csv`, `network_pf_rows.csv`, `closed_loop_sat_trace.csv`, `products.txt`
 
@@ -262,3 +262,37 @@ Readings:
 
 Phase 2 (the tracker reads the roster) and phase 3 (carry, re-entry and the prune on the
 admitted lifecycle) are next, in that order; phase 2 retires card GRK's knob by construction.
+
+## 7. Phase 2 result (2026-09-22; Opus build worker, every number re-graded by the manager from `runs/`; rapid mode, 2 h arms)
+
+Main `2ea87bb`. Knob `network.roster_tracker` (default OFF; refused without `network.signal_roster`).
+Armed, the arc-level tracker names each band by the roster's `modelled_phase` of the current
+epoch (the station latch is the fall-back on a constellation's FIRST epoch, where the roster has
+no modelled role yet: the latch is decided inside `computeModels`, downstream of the build site;
+955 fall-backs and 60 lookups neither could answer, all in the first epoch), so card GRK's latch
+lookup is superseded by construction. The S-basis IF pin is a roster writer: it is elected per
+satellite and realized in `NetworkSolveGlue`, so the roster cell (station, constellation, band)
+takes the per-band mode over the epoch's pinned satellites (27 838 cells with a datum code,
+23 421 with a datum phase, 4 417 off-model where the pin names C1C at an L1W station, 0
+ambiguous); a defect found at the gate (the datum seam keys a constellation by the satellite
+id's first character, the roster by the system string, so the first armed run wrote no datum
+cell) was fixed and pinned by a unit case. Each `ArcRecord` carries the ADMITTED lifecycle beside
+the raw one, fed from the modelled row set after the elevation mask, the allow list and the
+latch (the set `local_carry` and the ambiguity states are keyed from); `arc_reentry` events carry
+both gap lengths; `network_arc_ledger.csv` gains the admitted columns and rows. Not
+fingerprinted. `SignalRosterTest` 14 and `ArcLedgerTest` 13 cases; `gnss_tests` 2461 ran, 2460
+passed, 1 known skip; exe `gnss_processor_sid2b.exe` (`B51822D2...`).
+
+| gate | bar | measured | verdict |
+| --- | --- | --- | --- |
+| G0 | knob absent, identical to the baselines over the shared window | `runs/_rap_sid2_g0_field2` equals `runs/_rf0hv9_field6` and `_sid2_g0_sim2` equals `_rf0hv9_sim6` | PASS |
+| G1 | the roster reader byte-identical to the control, with and without card GRK's knob | `runs/_rap_sid2_g1_field2` and `_sid2_g1b_field2` (GRK's knob off): all three files identical; tracker mismatch 0 of 116 cells; unreachable re-entries 0 of 21 | PASS |
+| G2 | sim identical | `runs/_rap_sid2_g2_sim2`: identical; identity classes 0 | PASS |
+| G3 | the admitted lifecycle stated beside the raw one | (c) 23 915 modelled arcs Tracking without a carry entry (raw 84 256); (d) 41 543 in a Gap inside the horizon whose state is gone (raw 52 851); carry-side gaps of 2 to 30 epochs 49 with 37 answered and 12 not (raw-stamp reading 51 / 14; the worker's Python 51 / 13) | read |
+| G4 | cost | field loop 98 510 to 101 506 ms over 241 epochs (+3.0 percent); roster section 2 635 ms (2.6 percent), 11.1 ms per epoch (build 5.6, audit 5.5) | read |
+
+Readings: the reader reproduces GRK exactly, so the tracker no longer decides a signal; the
+admitted lifecycle halves the raw-side gap population and is the one phase 3 keys on; the 12
+unanswered carry-side re-entries of the 2 h window are phase 3's target population; the cost
+rose from 8.3 to 11.1 ms per epoch with the admitted pass and is to be measured again when the
+readers land (the audit pass becomes cheaper as containers turn into readers).
