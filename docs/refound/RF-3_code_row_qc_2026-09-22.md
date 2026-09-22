@@ -5,9 +5,9 @@
 - **id:** RF-3
 - **topic:** raim-qc
 - **status:** open
-- **summary:** BUILT 2026-09-22 (main `0436002`, RF-3a `network.amb_float_drop_var_m2` and RF-3b's four screen rules, default OFF). The drop floor removes the walk (rows above 3 m 394 to 80 at 100 m2, T4_attrib 81 to 19, WTZZ00DEU hours 3 to 6 to 0.015 0.015 0.027 0.037 m, census absolute Up smaller at 10 of 16) but costs hour 1 (0.560 to 0.651 m; census +0.034 m): drops happen in hour 1 too; a warm-up gate is the next arm. The screen's one-row rule and same-epoch emission work (rows above 10 m 100 to 32, census 13 of 16 better on hours 4 to 6, none worse, first changed emission at the declaring epoch); the hold (`gross_los_bound`) is FALSIFIED (the erase is the bounded response); the station tier needs the `fixed` rule to have a population. Earlier summary: READ 2026-09-22 (Opus read worker, config-only arms; every number re-graded by the manager from `runs/`), plus a birth-floor ladder run by the manager. The field baseline `runs/_rf0hv9_field6` folds 101 post-fit code rows above 10 m (404 above 3 m) at full weight, in 70 line-of-sight episodes. Five of the six largest have CLEAN code data: they are the RE-COUPLING edge of the slip and gap re-entry response, not code faults. At a refloat the float ambiguity is re-born with the arc's FIRST-STASH variance (STHL00GBR G11: 0.036 m2 from two hours earlier, `network.amb_float_birth_var_m2` being 0 in the posture), so a level wrong by 40 m is folded at 0.19 m and walks down geometrically for 24 epochs while the code rows carry the misfit with the ionospheric band ratio. The gross-LOS screen (card GL) cures what it declares because its response ERASES the carry: four of six episodes die within one epoch of the fold; with a one-row declaration full-weight gross rows fall 101 to 33 and 13 of 16 census sites improve; the prefit fuse is blind by construction (the fault is created by the solve). A birth floor of 4 or 100 m2 removes the walk (rows above 3 m 404 to 101 / 86; WTZZ00DEU hours 3 to 6 0.028 0.030 0.036 0.045 to 0.015 0.016 0.029 0.038 m) but slows every BIRTH (hour 1 0.56 to 0.66 m; census hour 1 +0.03 to +0.04 m, count median 342 to 301). Build pre-registered in section 4: a DROP-only floor (RF-3a), the gross-LOS screen's one-row rule, bounded decoupling, same-epoch emission and station tier (RF-3b), the wire's discontinuity tokens on this path (RF-3c). Nothing built.
+- **summary:** ROUND 2 2026-09-22 (main `6b48749`): the warm-up gate on the drop floor returns hours 1 and 2 to the base and gives the settled gain back with them (the convergence-era drops own both); the station tier works when it has a population; the screen with the ungated floor is the strongest hygiene (rows above 3 m 394 to 58) at the hour-1 price. RECOMMENDATION: arm the screen with the one-row rule and the emission exclusion (census 13 of 16 better on hours 4 to 6, none worse); leave the drop floor built and OFF (a trade the census does not decide); the hold KEEP OFF. The decision is the author's. Earlier summary: BUILT 2026-09-22 (main `0436002`, RF-3a `network.amb_float_drop_var_m2` and RF-3b's four screen rules, default OFF). The drop floor removes the walk (rows above 3 m 394 to 80 at 100 m2, T4_attrib 81 to 19, WTZZ00DEU hours 3 to 6 to 0.015 0.015 0.027 0.037 m, census absolute Up smaller at 10 of 16) but costs hour 1 (0.560 to 0.651 m; census +0.034 m): drops happen in hour 1 too; a warm-up gate is the next arm. The screen's one-row rule and same-epoch emission work (rows above 10 m 100 to 32, census 13 of 16 better on hours 4 to 6, none worse, first changed emission at the declaring epoch); the hold (`gross_los_bound`) is FALSIFIED (the erase is the bounded response); the station tier needs the `fixed` rule to have a population. Earlier summary: READ 2026-09-22 (Opus read worker, config-only arms; every number re-graded by the manager from `runs/`), plus a birth-floor ladder run by the manager. The field baseline `runs/_rf0hv9_field6` folds 101 post-fit code rows above 10 m (404 above 3 m) at full weight, in 70 line-of-sight episodes. Five of the six largest have CLEAN code data: they are the RE-COUPLING edge of the slip and gap re-entry response, not code faults. At a refloat the float ambiguity is re-born with the arc's FIRST-STASH variance (STHL00GBR G11: 0.036 m2 from two hours earlier, `network.amb_float_birth_var_m2` being 0 in the posture), so a level wrong by 40 m is folded at 0.19 m and walks down geometrically for 24 epochs while the code rows carry the misfit with the ionospheric band ratio. The gross-LOS screen (card GL) cures what it declares because its response ERASES the carry: four of six episodes die within one epoch of the fold; with a one-row declaration full-weight gross rows fall 101 to 33 and 13 of 16 census sites improve; the prefit fuse is blind by construction (the fault is created by the solve). A birth floor of 4 or 100 m2 removes the walk (rows above 3 m 404 to 101 / 86; WTZZ00DEU hours 3 to 6 0.028 0.030 0.036 0.045 to 0.015 0.016 0.029 0.038 m) but slows every BIRTH (hour 1 0.56 to 0.66 m; census hour 1 +0.03 to +0.04 m, count median 342 to 301). Build pre-registered in section 4: a DROP-only floor (RF-3a), the gross-LOS screen's one-row rule, bounded decoupling, same-epoch emission and station tier (RF-3b), the wire's discontinuity tokens on this path (RF-3c). Nothing built.
 - **source:** the re-founding plan (RF-3: "QC that acts on CODE rows ... and the wire contract on every channel"); [RF-1](RF-1_float_ambiguities_design.md) sections 3.3 and 3.4 (the birth floor and the drop); [SCU](SCU_station_coordinates_unknowns_2026-09-22.md) and [GRK](GRK_gap_reentry_key_mismatch_2026-09-22.md) (the gross rows named there); card GL (`include/filter/NetworkGrossLos.hpp`)
-- **knobs / posture:** built 2026-09-22: `network.amb_float_drop_var_m2`, `network.gross_los_min_rows_rule`, `network.gross_los_bound` (KEEP OFF), `network.gross_los_emit_exclude`, `network.gross_los_station_tier`; existing: `network.gross_los_screen` (+ `gross_los_k` 8, `gross_los_min_rows` 2, `gross_los_epochs`, `gross_los_deweight`, `gross_los_clear_*`, `gross_los_max_gap_s`, `gross_los_max_station_frac`), `network.prefit_fuse_sigma`, `network.amb_float_birth_var_m2` (0 in the posture). Proposed: `network.amb_float_drop_var_m2`, the GL rules of section 4. Posture: the RF-0hv working bases (baseline `runs/_rf0hv9_{field,sim}6`)
+- **knobs / posture:** built 2026-09-22: `network.amb_float_drop_var_m2`, `network.gross_los_min_rows_rule`, `network.gross_los_bound` (KEEP OFF), `network.gross_los_emit_exclude`, `network.gross_los_station_tier`, `network.amb_float_drop_floor_after_ep`; existing: `network.gross_los_screen` (+ `gross_los_k` 8, `gross_los_min_rows` 2, `gross_los_epochs`, `gross_los_deweight`, `gross_los_clear_*`, `gross_los_max_gap_s`, `gross_los_max_station_frac`), `network.prefit_fuse_sigma`, `network.amb_float_birth_var_m2` (0 in the posture). Proposed: `network.amb_float_drop_var_m2`, the GL rules of section 4. Posture: the RF-0hv working bases (baseline `runs/_rf0hv9_{field,sim}6`)
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** `runs/_rf0hv9_field6`; arms `runs/_rap_rf3_gl`, `_rf3_gl1`, `_rf3_fuse`, `_rf3_bv025`, `_rf3_bv4`, `_rf3_bv100`; census keys `rf3gl`, `rf3gl1`, `rf3fuse`, `bv4`, `bv100` (against `grk`); exe `gnss_processor_sid3.exe` (`41C04F7F...`); the read report `runs/_msc/rf3_read_report_2026-09-22.md`
 
@@ -238,3 +238,50 @@ dedicated writer needs no format change: carry the channel, name the tier in the
 A warm-up gate on the drop floor (`network.amb_float_drop_floor_after_ep`), the floor at 100 m2
 from epoch 120; the same with the screen (one-row rule and emission exclusion, no bound); and the
 station tier under the `fixed` rule.
+
+## 6. Round 2 (2026-09-22): the warm-up gate, the station tier, and the combination (manager re-graded; 6 h arms, exe `gnss_processor_rf3b.exe` `3DF760E8...`, main `6b48749`)
+
+`network.amb_float_drop_floor_after_ep` (default 0): the drop floor applies to drops at processed
+epoch N or later, through one resolver at the slip latches and the RAIM drop sites; counters of
+drops floored and drops held back.
+
+| arm | rows above 3 m / 10 m at full weight | WTZZ00DEU 3D p50 by hour (m) | below 0.1 m | screen | census against `grk` |
+| --- | --- | --- | --- | --- | --- |
+| base | 394 / 100 | 0.560 0.059 0.028 0.030 0.036 0.045 | 611 | | |
+| floor 100, gate 120 (`runs/_rap_rf3c_a100_w120`) | 238 / 59 | 0.560 0.060 0.030 0.032 0.040 0.051 | 611 | | hour 1 +0.000; hours 2 to 6 1 better 0 worse; absolute Up smaller at 6 of 16; counts 10 better 4 worse |
+| screen (one-row rule, emission exclusion) + floor 100, gate 120 (`_rf3c_gl_nb_a100_w120`) | 230 / 37 | 0.560 0.060 0.030 0.032 0.041 0.050 | 611 | 5 declarations, 4 releases, 1 expiry; the guard fires 3 times at BSHM00ISR | as above (9 / 5 on counts) |
+| screen, `fixed` rule, station tier (`_rf3c_gl_st_fixed`) | 246 / 60 | 0.560 0.059 0.028 0.030 0.038 0.046 | 611 | 3 / 3 / 0; largest folded residual 0.75 m; the guard never fires (the read's firing was under `min_rows` 1) | not run |
+| screen + gated floor + station tier (`_rf3d_gl_tier_pop`) | 177 / 19 | 0.560 0.060 0.030 0.034 0.042 0.052 | 611 | 2 / 1 / 1; **1 station declaration, 1 release** at BSHM00ISR | not run |
+| **screen + floor 100, no gate (`_rf3d_gl_nb_a100`)** | **58 / 13** | 0.651 0.051 0.015 0.015 0.029 0.036 | 585 | 3 / 2 / 1 | hour 1 +0.034 m (3 better, 6 worse); hours 2 to 6 3 / 4 (median -0.002); absolute Up smaller at 9 of 16; counts 6 better 8 worse (ANMG00MYS 204 to 106, WUH200CHN 67 to 25, DAV100ATA 335 to 254; HARB00ZAF 349 to 551, BADG00RUS 185 to 243) |
+
+Readings:
+
+- The gate is not a free separation: it returns hours 1 and 2 to the base exactly and gives the
+  settled gain back with them (hours 3 to 6 slightly worse than the base). The 312 drops held back
+  before the gate (17 percent of the run's drops) own the whole difference: the settled gain of the
+  floor comes from the convergence-era drops being floored, and so does the hour-1 cost. A follow-up
+  read of the hour-1 drops on the base (the level change within 10 minutes after each) finds a
+  median of 0.84 m with 46 percent above 1 m, against 0.23 to 0.57 m in the settled hours: in hour 1
+  the values are unconverged, so the drop's restored prior decides how fast an arc re-converges, and
+  the two behaviours trade hour 1 against the settled hours.
+- The station tier works when it has a population (one station declaration and release at
+  BSHM00ISR under the one-row rule with the floor), and the `fixed` rule with the tier is the only
+  arm that clears the largest-folded-residual bar (0.75 m) and the expiry bar (0), by declaring
+  fewer lines of sight; it does not reach the family-S episodes.
+- The strongest network hygiene is the screen with the ungated floor: rows above 3 m at full
+  weight 394 to 58, above 10 m 100 to 13, WTZZ00DEU settled at 0.015 to 0.036 m; its price is the
+  hour-1 cost at WTZZ00DEU (+0.09 m) and across the census (+0.034 m at the median, three sites'
+  epoch counts falling at the decimetre threshold while two rise), with the hours 2 to 6 census a
+  wash (3 better, 4 worse) and the absolute Up smaller at 9 of 16.
+
+**Recommendation.** Arm the screen with the one-row rule and the emission exclusion
+(`network.gross_los_screen`, `gross_los_min_rows_rule: available`, `gross_los_emit_exclude`): the
+census is better at 13 of 16 sites on hours 4 to 6 with none worse, counts 5 better and none worse,
+WTZZ00DEU within 0.003 m, the clock wire 0.0045 to 0.0041 m, and the first changed emission at the
+declaring epoch. Do not arm the drop floor in either form yet: ungated it is a trade the census
+does not decide (hour 1 against the settled hours), gated it is a null. The floor stays built as the
+instrument that showed the walk is the response's re-coupling edge; the principled route to a free
+gain is a response that does not have to choose between keeping and discarding the value (the
+lane-preserving refloat of the L5 return plan, the verdict quality of the slip tiers during
+ignition), sequenced. `gross_los_bound` KEEP OFF. The station tier stays built and OFF until a
+posture exercises it beyond one declaration. The decision is the author's.
