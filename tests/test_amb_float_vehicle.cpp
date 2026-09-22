@@ -750,6 +750,109 @@ TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
 }
 
 // =============================================================================
+// (7b) THE DROP-ONLY FLOOR — RF-3a
+//      (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A4).
+//
+// The RF-3 read separated two populations that the birth floor treats as one: a DROP
+// hands back a variance the level no longer deserves (STHL00GBR G11 restored 0.036 m2
+// from two hours earlier for a level wrong by 40 m, which then walked down for 24
+// epochs), while a BIRTH is honest and a floor there costs 0.10 m of hour 1 at the
+// held-out consumer.  These cases pin the separation: the drop floor raises what a drop
+// restores, it never touches the birth stash, and it is mapped exactly as the birth
+// floor is.
+// =============================================================================
+
+TEST(AmbFloatVehicleTest, DropFloorRaisesTheRestoredVarianceAboveBirthAndVarFirst) {
+    // The arc's own history says 0.01 m2 and the posture's BIRTH floor says 0.25; the
+    // DROP floor says 4.  The drop restores the largest of the three, and reports that
+    // the drop floor is where the number came from.
+    LocalCarry lc{7.5, /*var=*/1.0e-6, /*last_seen_s=*/0.0};
+    lc.var_first = 0.01;
+    lc.var_birth = 0.25;
+    const auto o = GnssProcessor::ambFloatDropFloored(lc, /*birth_floor_m2=*/0.25,
+                                                      /*drop_floor_m2=*/4.0,
+                                                      /*now_s=*/900.0, /*now_ep=*/31);
+    EXPECT_TRUE(o.acted);
+    EXPECT_TRUE(o.from_drop_floor);
+    EXPECT_DOUBLE_EQ(lc.var, 4.0);
+    EXPECT_DOUBLE_EQ(lc.value_abs, 7.5);    // a drop is about confidence, not identity
+    EXPECT_DOUBLE_EQ(lc.var_first, 0.01);   // the handover ratio's denominator is untouched
+    EXPECT_DOUBLE_EQ(lc.var_birth, 0.25);   // so is the recorded birth prior
+    EXPECT_EQ(lc.dropped_ep, 31);
+}
+
+TEST(AmbFloatVehicleTest, DropFloorIsNotTheSourceWhenBirthSideAlreadyExceedsIt) {
+    // An arc born looser than the drop floor keeps its own variance, and the counter
+    // must NOT claim the drop floor supplied it — otherwise the ON-path telemetry reads
+    // as evidence where there is none (standing invariant #4).
+    LocalCarry loose{0.0, 1e-6, 0.0};
+    loose.var_first = 9.0;
+    loose.var_birth = 9.0;
+    const auto o1 = GnssProcessor::ambFloatDropFloored(loose, 0.25, 4.0, 1.0, 1);
+    EXPECT_TRUE(o1.acted);
+    EXPECT_FALSE(o1.from_drop_floor);
+    EXPECT_DOUBLE_EQ(loose.var, 9.0);
+    // The same when the BIRTH floor is the larger of the two floors.
+    LocalCarry tight{0.0, 1e-6, 0.0};
+    tight.var_first = 0.01;
+    tight.var_birth = 0.01;
+    const auto o2 = GnssProcessor::ambFloatDropFloored(tight, /*birth=*/6.0,
+                                                       /*drop=*/4.0, 1.0, 1);
+    EXPECT_TRUE(o2.acted);
+    EXPECT_FALSE(o2.from_drop_floor);
+    EXPECT_DOUBLE_EQ(tight.var, 6.0);
+}
+
+TEST(AmbFloatVehicleTest, DropFloorAtZeroIsTodaysBehaviourAndAnIdempotentDropIsNotCounted) {
+    // Byte-identity of the OFF path, stated as a test: with the drop floor at 0 the
+    // operator is exactly max(var_birth, var_first, birth floor).
+    LocalCarry a{0.0, 1e-6, 0.0}; a.var_first = 0.5; a.var_birth = 0.5;
+    LocalCarry b = a;
+    EXPECT_TRUE(GnssProcessor::ambFloatDrop(a, /*floor_m2=*/0.0, 10.0, 1));
+    const auto ob = GnssProcessor::ambFloatDropFloored(b, 0.0, 0.0, 10.0, 1);
+    EXPECT_TRUE(ob.acted);
+    EXPECT_FALSE(ob.from_drop_floor);
+    EXPECT_DOUBLE_EQ(a.var, b.var);
+    // An arc ALREADY at or above the floor is an idempotent re-drop: the variance does
+    // not move, so the drop floor is not its source even though it is armed.
+    const auto o2 = GnssProcessor::ambFloatDropFloored(b, 0.0, 0.25, 20.0, 2);
+    EXPECT_FALSE(o2.acted);
+    EXPECT_FALSE(o2.from_drop_floor);
+    EXPECT_DOUBLE_EQ(b.var, 0.5);
+    EXPECT_DOUBLE_EQ(b.relevel_s, 20.0);   // the age clock still restarts
+}
+
+TEST(AmbFloatVehicleTest, DropFloorUsesTheSameElevationMappingAsTheBirthFloor) {
+    // One mapping, one function: the drop floor is stated at zenith and read at the
+    // line of sight's elevation through ambFloatBirthFloor, exactly as the birth floor
+    // is, so a floor that is honest at zenith is not optimistic at 15 degrees.
+    using GnssProcessor::ambFloatBirthFloor;
+    constexpr double p = 1.0;
+    const double zen = 4.0;
+    const double low = ambFloatBirthFloor(zen, 15.0, p);
+    EXPECT_GT(low, zen);
+    LocalCarry hi{0.0, 1e-9, 0.0};  hi.var_first = 0.0; hi.var_birth = 0.0;
+    LocalCarry lo = hi;
+    GnssProcessor::ambFloatDropFloored(hi, 0.0, ambFloatBirthFloor(zen, 90.0, p), 1.0, 1);
+    GnssProcessor::ambFloatDropFloored(lo, 0.0, low, 1.0, 1);
+    EXPECT_DOUBLE_EQ(hi.var, zen);
+    EXPECT_DOUBLE_EQ(lo.var, low);
+    EXPECT_GT(lo.var, hi.var);
+}
+
+TEST(AmbFloatVehicleTest, EveryDropArmsTheWalkMetricIncludingAnIdempotentOne) {
+    // RF-3a A2: the WALK metric's population is "every drop that doubted the level",
+    // which is what lets an OFF run report the walk it suffers.  The phase is armed on
+    // both branches of the operator and the harvest is what advances it.
+    LocalCarry moved{0.0, 1e-6, 0.0}; moved.var_first = 0.5; moved.var_birth = 0.5;
+    EXPECT_TRUE(GnssProcessor::ambFloatDrop(moved, 0.0, 10.0, 1));
+    EXPECT_EQ(moved.drop_walk_ph, 1);
+    LocalCarry idem{0.0, 4.0, 0.0}; idem.var_first = 0.5; idem.var_birth = 0.5;
+    EXPECT_FALSE(GnssProcessor::ambFloatDrop(idem, 0.0, 10.0, 1));
+    EXPECT_EQ(idem.drop_walk_ph, 1);
+}
+
+// =============================================================================
 // (8) THE DECLARED ANCHOR S-TRANSFORM (design §6.2 test 6) — RF-1 step 5.
 //
 // A frame step is a KNOWN, exact basis change, so the carry is EXPRESSED in the new

@@ -24,8 +24,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -40,9 +43,11 @@ double networkGrossLosUndoDeweight(double r_folded, double scale) {
 }
 
 GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
-                                      double k, int min_rows, double clear_sigma) {
+                                      double k, int min_rows, double clear_sigma,
+                                      bool min_rows_available) {
     GrossLosVerdict d;
     d.n_rows = static_cast<int>(rows.size());
+    d.min_rows_eff = std::max(1, min_rows);
     if (rows.empty()) return d;   // absence is not evidence of health — under_clear stays false
     std::set<std::string> sigs;
     bool all_under_clear = true;
@@ -57,7 +62,21 @@ GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
         }
         if (s.r > clear_sigma) all_under_clear = false;
     }
-    d.over = d.n_over >= std::max(1, min_rows);
+    // RF-3b B1 (requirement F1): the bar as a RULE.  `fixed` is today — at least
+    // min_rows rows over k, whatever the line of sight has, which is unsatisfiable when
+    // it has fewer rows than the constant.  `available` reads it as
+    // min(min_rows, the LOS's own code rows), so a one-row line of sight is reachable
+    // while a three-row one still needs two: the multi-band corroboration the constant
+    // exists for is kept exactly where the line of sight can supply it.
+    const int bar_fixed = std::max(1, min_rows);
+    const int bar_avail = std::max(1, std::min(bar_fixed, d.n_rows));
+    d.min_rows_eff = min_rows_available ? bar_avail : bar_fixed;
+    d.over = d.n_over >= d.min_rows_eff;
+    // B5 (requirement F6): the population the FIXED rule cannot reach, counted under
+    // both rules so an arm that does not arm B1 still reports what B1 would have
+    // reached.  It is exactly "the evidence clears the available bar and the line of
+    // sight is SHORT" — four of the six largest episodes on runs/_rf0hv9_field6.
+    d.short_over = (d.n_rows < bar_fixed) && (d.n_over >= bar_avail);
     // The release evidence is NOT `!over`: the band between clear_sigma and k is
     // neither, and a line of sight sitting there keeps whatever disposition it
     // has.  That gap is what makes the hysteresis real rather than nominal.
@@ -121,9 +140,43 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
         if (i >= fresh.size()) continue;
         fresh[i][key.second] = f;
     }
+    // RF-3b B4 (requirement F4): a STATION-level declaration folds EVERY one of that
+    // station's code rows.  The assembly's map is keyed per satellite — it is the same
+    // map the per-LOS response writes — so a station-wide fold is expressed as "every
+    // satellite this station was last seen screening".  That set is refreshed each
+    // screened epoch, so a satellite that rises while the station is declared is folded
+    // from the epoch it is first seen, and one that sets stops being carried.
+    for (const auto& [si, sst] : ctx.carry.gl_sta_state) {
+        if (!sst.gross) continue;
+        const std::size_t i = static_cast<std::size_t>(si);
+        if (i >= fresh.size()) continue;
+        for (const auto& sat : sst.sats) fresh[i][sat] = f;
+    }
     for (std::size_t i = 0; i < stations.size(); ++i)
         stations[i].gl_code_sigma_scale.swap(fresh[i]);
 }
+
+// ---------------------------------------------------------------------------
+// RF-3b B2: the HOLD — the bounded decoupling edge (standing invariant #7)
+// ---------------------------------------------------------------------------
+namespace {
+
+/// RF-3b B2: freeze one carried entry at its pre-declaration value.  The border
+/// regression and the joint block are cleared (that half IS the decoupling: a
+/// regression harvested against a level the screen has stopped trusting would keep
+/// injecting that level's relationship to the shared border at full strength), while
+/// the VALUE and the VARIANCE are kept exactly as they were.  With q = 0 on the
+/// ambiguity block a prior that is re-written unchanged after every harvest is
+/// literally "a fixed prior with zero process noise".
+LocalCarry glFreeze(const LocalCarry& src) {
+    LocalCarry h = src;
+    h.coupling.clear();
+    h.blk.reset();
+    h.blk_idx = -1;
+    return h;
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // The seam
@@ -139,8 +192,15 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                            const Eigen::VectorXd& x_s,
                            const std::vector<StationAssembly>& asm_res,
                            const std::vector<int>& est_index_of,
-                           double now_s) {
+                           double now_s,
+                           GrossLosPhase phase) {
     if (!ctx.knobs.gl_on) return;
+    // RF-3b B3: the ACT half is the deferred response of this epoch's DECIDE pass.  It
+    // is a separate entry point so the driver has one call shape at both sites.
+    if (phase == GrossLosPhase::Act) {
+        networkGrossLosAct(ctx, log, stations, asm_res);
+        return;
+    }
 
     const NetworkConfig& nc = config_.getNetworkConfig();
     const double k            = nc.gross_los_k;
@@ -168,11 +228,25 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     // as the RAIM isolated-arc refloat's networkWarmupRampLifted.
     const bool mature = ctx.counters.n_emitted >= static_cast<long long>(warmup_ep);
 
+    // --- RF-3b sub-rules.  Each already ANDed with gl_on at the knob resolve, so an
+    // unarmed run reads exactly today's constants and today's path.
+    const bool   mrr_avail    = ctx.knobs.gl_min_rows_available;
+    const bool   gl_bound     = ctx.knobs.gl_bound;
+    const bool   gl_emit_excl = ctx.knobs.gl_emit_exclude;
+    const bool   gl_sta_tier  = ctx.knobs.gl_station_tier;
+
     auto& tal    = ctx.counters.gross_los;
     auto& gstate = ctx.carry.gl_state;
     ++tal.epochs;
     ++ctx.carry.gl_seq;
     const long long seq = ctx.carry.gl_seq;
+    // RF-3b B3: this epoch's deferred work.  Rebuilt every screened epoch, so a release
+    // stops being carried in the same pass a new declaration starts.
+    ctx.carry.gl_act_declare.clear();
+    ctx.carry.gl_act_release.clear();
+    ctx.carry.gl_act_station.clear();
+    ctx.carry.gl_emit_withhold.clear();
+    ctx.carry.gl_emit_disc.clear();
 
     auto emitEvent = [&](const char* event, const std::string& sat,
                          const std::string& station, std::optional<double> statistic,
@@ -314,6 +388,16 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             const double r = networkGrossLosUndoDeweight(
                 std::abs(v(row)) * std::sqrt(std::max(0.0, w)), gl_scale_here);
             if (!std::isfinite(r)) continue;
+            // RF-3b B5 (requirement F6): the F2 alarm — how far a row that is ACTUALLY
+            // FOLDED has run.  A folded row's residual is supposed to stay a MEASURE of
+            // the fault; on `runs/_rap_rf3_gl1` it ran to 445.48 m, which is what an
+            // unbounded decoupling edge looks like from the outside.  Counted whether or
+            // not network.gross_los_bound is armed, so the two arms are comparable.
+            if (gl_scale_here > 1.0) {
+                const double av_f = std::abs(v(row));
+                if (std::isfinite(av_f) && av_f > tal.folded_v_abs_max_m)
+                    tal.folded_v_abs_max_m = av_f;
+            }
             by_sat[*row_sat].push_back(
                 GrossLosSample{ row_sig ? *row_sig : std::string(), r, v(row) });
         }
@@ -330,10 +414,15 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
             ++tal.los_screened;
             tal.rows_screened += static_cast<long long>(rows.size());
             const GrossLosVerdict d =
-                networkGrossLosAssess(rows, k, min_rows, clear_sigma);
+                networkGrossLosAssess(rows, k, min_rows, clear_sigma, mrr_avail);
             if (d.r_max > tal.r_max) tal.r_max = d.r_max;
             if (d.v_abs_max > tal.v_abs_max_m) tal.v_abs_max_m = d.v_abs_max;
             if (d.over) { ++tal.los_over; ++n_over_here; }
+            // RF-3b B5: B1's own population, counted under BOTH rules (the verdict fills
+            // it either way) — LOS-epochs whose evidence clears the available bar while
+            // the line of sight has fewer code rows than the configured constant.  With
+            // the fixed rule this is exactly what the screen CANNOT reach.
+            if (d.short_over) ++tal.los_over_short;
             ++n_los_here;
             verdicts.emplace(sat, d);
         }
@@ -367,6 +456,56 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                       max_sta_frac, "standdown",
                       fmt::format("n_over={};n_los={};reason=whole_station_not_one_los",
                                   n_over_here, n_los_here));
+        }
+        // --- RF-3b B4 (requirement F4): the STATION TIER --------------------
+        // The guard above is correct about the diagnosis and does nothing with it: it
+        // holds THIS epoch's declarations and the next epoch declares the same lines of
+        // sight one by one on the same evidence, which is how a station fault becomes N
+        // line-of-sight faults (BSHM00ISR: guard at TOW 269310 with n_over=5 of n_los=7,
+        // per-LOS declaration at 269340).  With the tier armed the guard becomes a
+        // VERDICT with its own two edges: every one of the station's code rows folds at
+        // the deweight, its freed states are held exactly as a per-LOS declaration's are
+        // (under network.gross_los_bound), and it is RELEASED when its over-bar fraction
+        // sits at or under the cap for gross_los_clear_epochs consecutive screened
+        // epochs.  The release bar is deliberately the CAP and not gross_los_clear_sigma:
+        // the station-level statistic IS the fraction, so its hysteresis is the streak.
+        if (gl_sta_tier && mature) {
+            auto& sst = ctx.carry.gl_sta_state[static_cast<int>(i)];
+            sst.sats.clear();
+            for (const auto& [sat, d] : verdicts) { (void)d; sst.sats.insert(sat); }
+            if (!sst.gross && sta_standdown) {
+                sst.gross        = true;
+                sst.clear_streak = 0;
+                sst.declared_tow = se.time.tow;
+                ++sst.n_declared;
+                ++tal.sta_declared;
+                ++tal.sta_declared_by_station[stations[i].name];
+                ctx.carry.gl_act_station.push_back({ static_cast<int>(i), true });
+                emitEvent("gross_los_station_declare", "", stations[i].name,
+                          static_cast<double>(n_over_here) / static_cast<double>(n_los_here),
+                          max_sta_frac, "station_declare",
+                          fmt::format("n_over={};n_los={};n_sats={};deweight_sigma_x={:g};"
+                                      "episode={};reason=whole_station_not_one_los",
+                                      n_over_here, n_los_here, sst.sats.size(),
+                                      ctx.knobs.gl_deweight, sst.n_declared));
+            } else if (sst.gross) {
+                ++tal.sta_los_epochs;
+                if (sta_standdown) sst.clear_streak = 0;
+                else               ++sst.clear_streak;
+                if (sst.clear_streak >= std::max(1, clr_epochs)) {
+                    sst.gross        = false;
+                    sst.clear_streak = 0;
+                    ++tal.sta_released;
+                    ctx.carry.gl_act_station.push_back({ static_cast<int>(i), false });
+                    emitEvent("gross_los_station_release", "", stations[i].name,
+                              static_cast<double>(n_over_here)
+                                  / static_cast<double>(n_los_here),
+                              max_sta_frac, "station_release",
+                              fmt::format("n_over={};n_los={};declared_tow={:.1f};episode={}",
+                                          n_over_here, n_los_here, sst.declared_tow,
+                                          sst.n_declared));
+                }
+            }
         }
 
         if (gl2_on)
@@ -458,7 +597,6 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     // --- ACT ------------------------------------------------------------------
     for (auto& pass : passes) {
         const std::size_t i = pass.i;
-        const StationAssembly& R = asm_res[i];
         const bool sta_standdown = pass.sta_standdown;
         for (const auto& [sat, d] : pass.verdicts) {
             const auto key = std::make_pair(static_cast<int>(i), sat);
@@ -478,8 +616,33 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 st.over_streak = 0;
                 st.clear_streak = 0;
                 ++tal.sat_los_released;
+                // RF-3b B2: the hold is the response's state, so it lifts with the
+                // response — a released line of sight must stop being frozen.
+                ctx.carry.gl_act_release.push_back({ static_cast<int>(i), sat });
             }
-            const bool allow = mature && !sta_standdown && !sat_down;
+            // RF-3b B5: the per-episode latency's ORIGIN.  Stamped when an over-bar
+            // streak OPENS, cleared when it ends, so a declaration can state how long
+            // the evidence stood rather than only when the response acted.
+            if (d.over) {
+                if (st.over_streak == 0 && !st.gross) {
+                    st.first_over_tow    = se.time.tow;
+                    st.first_over_age_ep = 0;
+                } else {
+                    ++st.first_over_age_ep;
+                }
+            } else if (!st.gross) {
+                st.first_over_tow    = 0.0;
+                st.first_over_age_ep = 0;
+            }
+            // RF-3b B4: a STATION-level declaration replaces the per-LOS ones — that is
+            // the whole point of the tier, so it forbids new per-LOS declarations at
+            // that station for as long as it stands, exactly as the guard does for one
+            // epoch.  Releases stay allowed (the step's own contract).
+            const bool sta_declared_now =
+                gl_sta_tier && ctx.carry.gl_sta_state.count(static_cast<int>(i))
+                && ctx.carry.gl_sta_state[static_cast<int>(i)].gross;
+            const bool allow =
+                mature && !sta_standdown && !sat_down && !sta_declared_now;
             const GrossLosEdge edge =
                 networkGrossLosStep(st, d, dec_epochs, clr_epochs, se.time.tow, allow);
             if (edge == GrossLosEdge::Suppressed) {
@@ -495,59 +658,33 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                 ++tal.declared_by_station[stations[i].name];
                 ++tal.declared_by_sat[sat];
                 // --- THE RESPONSE (decoupling edge) --------------------------
-                // Exactly the T4 attribution-erase vocabulary, so the two
-                // responses cannot drift.  Every step is idempotent: a line of
-                // sight RAIM already refloated this epoch is unharmed by a
-                // second visit.
-                int n_amb = 0;
-                for (const auto& pa : (R.qc_amb.empty() ? R.pl_amb : R.qc_amb)) {
-                    if (pa.sat != sat) continue;
-                    if (ctx.carry.local_carry.erase(
-                            std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)))
-                        ++ctx.counters.n_cr_gross_los;
-                    // BOOKKEEPING on a Card-4 lineage and THE actuator on the
-                    // phase-leveling one — the same asymmetry the RAIM erase
-                    // documents.  Marked unconditionally for the same reason it
-                    // is there: the leveling vehicle is where this screen runs.
-                    if (stations[i].sm) stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
-                    // Card SID phase 4a (S1): the GROSS-LOS writer.  The screen's
-                    // published action is a CODE-row de-weight (a cap, not a drop:
-                    // the rows still fold), so the arc is recorded with the
-                    // `deweight` bit, which @ref kArcReasonGapMask excludes from
-                    // every gap mask by construction.  The carry erase and the
-                    // refloat on the same line ARE a removal of carried state, so
-                    // the `gross` bit is recorded beside it.
-                    arcReasonRecord(ctx.reasons,
-                                    ArcLedger::Key{ static_cast<int>(i), pa.sat, pa.signal },
-                                    kArcReasonDeweight);
-                    arcReasonRecord(ctx.reasons,
-                                    ArcLedger::Key{ static_cast<int>(i), pa.sat, pa.signal },
-                                    kArcReasonGross);
-                    ++n_amb;
-                }
-                tal.amb_refloated += n_amb;
-                // The LOS's slant iono was estimated jointly with a level this
-                // screen has just stopped trusting, and the code residual it
-                // fired on is exactly the channel that feeds it — so the iono
-                // carry cannot vouch for itself either.  Erasing it makes the
-                // line of sight re-draw its slant iono from the SH tie (the
-                // field value at its pierce point) plus this epoch's data, which
-                // is what §24.18's "re-seed its per-LOS iono from the SH field"
-                // is in this producer's vocabulary: there is no separate write
-                // path for a per-LOS iono value, and inventing one would be a
-                // second mechanism where the carry erase already reaches the
-                // same state through the sanctioned route.
-                if (ctx.carry.iono_carry.erase({static_cast<int>(i), sat})) ++tal.iono_erased;
-                if (ctx.carry.iono_blk_carry.erase({static_cast<int>(i), sat})) ++tal.iono_erased;
+                // RF-3b B3: the response is DEFERRED here and applied by
+                // @ref networkGrossLosAct, which the Full phase calls at the end of
+                // this same pass (today's behaviour, byte for byte) and the split
+                // phases call after the carry harvest.  The ordering reason is
+                // unchanged: erasing or freezing a local_carry entry before the
+                // harvest would simply be re-stashed.
+                ctx.carry.gl_act_declare.push_back({ static_cast<int>(i), sat });
+                // RF-3b B5: the per-episode latency, in screened epochs, from the
+                // first row over the bar to the declaration.
+                const long long lat = static_cast<long long>(st.first_over_age_ep);
+                tal.declare_latency_sum_ep += lat;
+                if (lat > tal.declare_latency_max_ep) tal.declare_latency_max_ep = lat;
                 emitEvent("gross_los_declare", sat, stations[i].name, d.r_max, k, "declare",
-                          fmt::format("n_over={};n_rows={};v_abs_max_m={:.3f};sigs={};"
-                                      "amb_refloat={};episode={};deweight_sigma_x={:g}",
-                                      d.n_over, d.n_rows, d.v_abs_max,
+                          fmt::format("n_over={};n_rows={};min_rows_eff={};"
+                                      "v_abs_max_m={:.3f};sigs={};episode={};"
+                                      "deweight_sigma_x={:g};response={};latency_ep={};"
+                                      "first_over_tow={:.1f};wire_latency_ep={}",
+                                      d.n_over, d.n_rows, d.min_rows_eff, d.v_abs_max,
                                       d.signals.empty() ? "-" : d.signals,
-                                      n_amb, st.n_declared, ctx.knobs.gl_deweight));
+                                      st.n_declared, ctx.knobs.gl_deweight,
+                                      gl_bound ? "hold" : "erase", lat,
+                                      st.first_over_tow, gl_emit_excl ? 0 : 1));
+                st.first_over_age_ep = 0;
             } else if (edge == GrossLosEdge::Clear) {
                 ++tal.cleared;
                 ++n_cleared_ep;
+                ctx.carry.gl_act_release.push_back({ static_cast<int>(i), sat });
                 emitEvent("gross_los_clear", sat, stations[i].name, d.r_max, clear_sigma,
                           "clear",
                           fmt::format("n_rows={};v_abs_max_m={:.3f};declared_tow={:.1f};"
@@ -576,6 +713,10 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                       gap, max_gap_s, "expire",
                       fmt::format("unseen_s={:.1f};declared_tow={:.1f};episode={}",
                                   gap, it->second.declared_tow, it->second.n_declared));
+            // RF-3b B2: the expiry is the other exit from a declaration, so it drops the
+            // hold too — otherwise a frozen prior would ride a line of sight the screen
+            // has stopped answering for (standing invariant #1's absent-satellite edge).
+            ctx.carry.gl_act_release.push_back({ it->first.first, it->first.second });
         }
         it = gstate.erase(it);
     }
@@ -585,15 +726,209 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
     tal.currently_gross = now_gross;
     if (now_gross > tal.max_concurrent) tal.max_concurrent = now_gross;
 
+    // --- RF-3b B3 (requirement F3): the EMISSION's contributor set ---------------
+    // The screen has always acted one epoch late on the wire: it runs after the emit
+    // seams, so the two largest rows of every episode are already emitted when the
+    // response lands (products first differ at TOW 269700 for a declaration at 269670).
+    // With the seam split, this pass runs BEFORE the emission, and the declared line of
+    // sight leaves its satellite's CONTRIBUTOR SET for the epoch it declares.
+    //
+    // ⚠ WHAT THIS IS NOT.  The emitted clock and code bias are joint-solve SHARED
+    // states — NetworkEstimator::toSolutionEpoch copies x_s(c) straight into
+    // clock_c0_m / code_bias_m — so there is no per-contributor decomposition to
+    // subtract and no aggregation to re-average.  Changing the emitted VALUE without
+    // the line of sight is a second network solve of the epoch, which this knob
+    // deliberately does not take.  What it does is exact: the satellite's records are
+    // WITHHELD when too few contributors remain to stand behind them, and otherwise
+    // emitted with the producer's existing per-satellite DISCONTINUITY mark, so the
+    // consumer is told the contributor set moved instead of reading a silent step.
+    if (gl_emit_excl) {
+        std::map<std::string, int> contrib, excluded;
+        for (const auto& pass : passes) {
+            const int si = static_cast<int>(pass.i);
+            const bool sta_down_here =
+                gl_sta_tier && ctx.carry.gl_sta_state.count(si)
+                && ctx.carry.gl_sta_state[si].gross;
+            for (const auto& [sat, d] : pass.verdicts) {
+                (void)d;
+                ++contrib[sat];
+                const auto sit = gstate.find({ si, sat });
+                if (sta_down_here || (sit != gstate.end() && sit->second.gross))
+                    ++excluded[sat];
+            }
+        }
+        for (const auto& [sat, n_ex] : excluded) {
+            if (n_ex <= 0) continue;
+            ++tal.emit_excluded;
+            const int n_left = contrib[sat] - n_ex;
+            if (n_left < gl2_min_sta) {
+                ctx.carry.gl_emit_withhold.insert(sat);
+                emitEvent("gross_los_emit_withhold", sat, "",
+                          static_cast<double>(n_left),
+                          static_cast<double>(gl2_min_sta), "drop_sat",
+                          fmt::format("n_contrib={};n_excluded={};epoch_still_emits=1;"
+                                      "reason=declared_los_left_contributor_set",
+                                      contrib[sat], n_ex));
+            } else {
+                ctx.carry.gl_emit_disc.insert(sat);
+                emitEvent("gross_los_emit_disc", sat, "",
+                          static_cast<double>(n_left),
+                          static_cast<double>(gl2_min_sta), "declare_step",
+                          fmt::format("n_contrib={};n_excluded={};"
+                                      "reason=declared_los_left_contributor_set",
+                                      contrib[sat], n_ex));
+            }
+        }
+    }
+
     // Republish the assembly's code-scale map from the set this epoch leaves
     // behind.  SERIAL and immediately after the decision, so the next epoch's
     // parallel produce reads a settled map (the phase_sigma_scale contract).
     networkGrossLosPublishScales(ctx, stations);
 
+    // RF-3b B3: the FULL phase applies the deferred response right here, which is the
+    // post-harvest site and therefore exactly today's ordering.  Split, the ACT half
+    // runs from its own call after the harvest.
+    if (phase == GrossLosPhase::Full)
+        networkGrossLosAct(ctx, log, stations, asm_res);
+
     if (n_declared_ep > 0 || n_cleared_ep > 0)
         log->info("Network (gross-LOS screen) TOW {:.1f}: {} declared, {} cleared, "
                   "{} currently gross (run-max standardized code residual so far {:.1f} sigma)",
                   se.time.tow, n_declared_ep, n_cleared_ep, now_gross, tal.r_max);
+}
+
+// ---------------------------------------------------------------------------
+// RF-3b B3: the deferred RESPONSE (the post-harvest half)
+// ---------------------------------------------------------------------------
+
+void networkGrossLosAct(NetworkRunContext& ctx,
+                        const std::shared_ptr<spdlog::logger>& log,
+                        std::vector<NetStation>& stations,
+                        const std::vector<StationAssembly>& asm_res) {
+    if (!ctx.knobs.gl_on) return;
+    auto& tal      = ctx.counters.gross_los;
+    const bool gl_bound = ctx.knobs.gl_bound;
+
+    // --- The per-LOS response.  The two forms are exclusive: OFF is the ERASE the
+    //     screen has always applied (a true rebirth — the episode dies within one epoch
+    //     of the fold on four of the six measured cases), ON is the HOLD that bounds
+    //     what the freed states can accumulate (standing invariant #7's decoupling
+    //     edge).  The erase's cost is measured: with only a folded code row left to
+    //     determine them, the freed states re-level from an under-determined epoch and
+    //     the folded row's residual then runs to 445 m, which the clear test can never
+    //     come back from — 2 of 7 declarations ended by expiry rather than release.
+    const auto respond = [&](int si, const std::string& sat) {
+        const std::size_t i = static_cast<std::size_t>(si);
+        if (i >= stations.size() || i >= asm_res.size()) return;
+        const StationAssembly& R = asm_res[i];
+        int n_amb = 0;
+        for (const auto& pa : (R.qc_amb.empty() ? R.pl_amb : R.qc_amb)) {
+            if (pa.sat != sat) continue;
+            const auto lk = std::make_tuple(si, pa.sat, pa.signal);
+            if (gl_bound) {
+                const auto lit = ctx.carry.local_carry.find(lk);
+                if (lit != ctx.carry.local_carry.end()) {
+                    const LocalCarry h = glFreeze(lit->second);
+                    ctx.carry.gl_hold_amb[lk] = h;
+                    lit->second = h;
+                    ++tal.bound_amb_held;
+                }
+                // NO pending-reseed under the hold: the state is not refloated, it is
+                // pinned.  Marking it would hand the next assembly a free column, which
+                // is the very thing this rule exists to stop.
+            } else {
+                if (ctx.carry.local_carry.erase(lk)) ++ctx.counters.n_cr_gross_los;
+                // BOOKKEEPING on a Card-4 lineage and THE actuator on the
+                // phase-leveling one — the same asymmetry the RAIM erase documents.
+                if (stations[i].sm) stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+            }
+            // Card SID phase 4a (S1): the GROSS-LOS writer.  The screen's published
+            // action is a CODE-row de-weight (a cap, not a drop: the rows still fold),
+            // so the arc is recorded with the `deweight` bit, which kArcReasonGapMask
+            // excludes from every gap mask by construction.  The `gross` bit records a
+            // REMOVAL of carried state, so it is written on the erase path only — a
+            // held arc keeps its state and a gap mask must not read it as gone.
+            arcReasonRecord(ctx.reasons,
+                            ArcLedger::Key{ si, pa.sat, pa.signal }, kArcReasonDeweight);
+            if (!gl_bound)
+                arcReasonRecord(ctx.reasons,
+                                ArcLedger::Key{ si, pa.sat, pa.signal }, kArcReasonGross);
+            ++n_amb;
+        }
+        tal.amb_refloated += n_amb;
+        // The LOS's slant iono was estimated jointly with a level this screen has just
+        // stopped trusting, and the code residual it fired on is exactly the channel
+        // that feeds it — so the iono carry cannot vouch for itself either.  Under the
+        // hold it is FROZEN for the same reason the level is: a re-drawn iono is what
+        // the folded code row would have to determine, and it cannot.
+        const std::pair<int, std::string> ik{ si, sat };
+        if (gl_bound) {
+            const auto it1 = ctx.carry.iono_carry.find(ik);
+            if (it1 != ctx.carry.iono_carry.end()) {
+                const LocalCarry h = glFreeze(it1->second);
+                ctx.carry.gl_hold_iono[ik] = h;
+                it1->second = h;
+                ++tal.bound_iono_held;
+            }
+            const auto it2 = ctx.carry.iono_blk_carry.find(ik);
+            if (it2 != ctx.carry.iono_blk_carry.end()) {
+                const LocalCarry h = glFreeze(it2->second);
+                ctx.carry.gl_hold_iono_blk[ik] = h;
+                it2->second = h;
+                ++tal.bound_iono_held;
+            }
+        } else {
+            if (ctx.carry.iono_carry.erase(ik))     ++tal.iono_erased;
+            if (ctx.carry.iono_blk_carry.erase(ik)) ++tal.iono_erased;
+        }
+    };
+
+    for (const auto& [si, sat] : ctx.carry.gl_act_declare) respond(si, sat);
+    // RF-3b B4: a STATION declaration is the same response over every satellite the
+    // station was last seen screening — one verdict, not N sequential ones.
+    for (const auto& [si, declared] : ctx.carry.gl_act_station) {
+        const auto sit = ctx.carry.gl_sta_state.find(si);
+        if (sit == ctx.carry.gl_sta_state.end()) continue;
+        if (declared) {
+            for (const auto& sat : sit->second.sats) respond(si, sat);
+        } else {
+            for (const auto& sat : sit->second.sats)
+                ctx.carry.gl_act_release.push_back({ si, sat });
+        }
+    }
+    // --- The RE-COUPLING edge: a release or an expiry drops the hold, and the states
+    //     continue from the values they were held at.  Idempotent.
+    for (const auto& [si, sat] : ctx.carry.gl_act_release) {
+        ctx.carry.gl_hold_iono.erase({ si, sat });
+        ctx.carry.gl_hold_iono_blk.erase({ si, sat });
+        for (auto it = ctx.carry.gl_hold_amb.begin(); it != ctx.carry.gl_hold_amb.end(); ) {
+            if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
+                it = ctx.carry.gl_hold_amb.erase(it);
+            else
+                ++it;
+        }
+    }
+    // --- RF-3b B2: RE-APPLY the hold over whatever the harvest re-stashed.  This is
+    //     the half that makes the prior FIXED and its process noise ZERO: without it
+    //     the harvest would re-level the held column from the same under-determined
+    //     epoch the erase does, and the bound would be nominal.
+    if (gl_bound && !ctx.carry.gl_hold_amb.empty()) {
+        std::set<std::pair<int, std::string>> los_held;
+        for (const auto& [key, h] : ctx.carry.gl_hold_amb) {
+            ctx.carry.local_carry[key] = h;
+            los_held.insert({ std::get<0>(key), std::get<1>(key) });
+        }
+        for (const auto& [key, h] : ctx.carry.gl_hold_iono)     ctx.carry.iono_carry[key] = h;
+        for (const auto& [key, h] : ctx.carry.gl_hold_iono_blk) ctx.carry.iono_blk_carry[key] = h;
+        tal.bound_los_epochs += static_cast<long long>(los_held.size());
+    }
+    if (log && !ctx.carry.gl_act_declare.empty())
+        log->debug("Network (gross-LOS, RF-3b): applied {} declaration response(s) as {}; "
+                   "{} carried level(s) and {} iono carr(ies) currently held.",
+                   ctx.carry.gl_act_declare.size(), gl_bound ? "HOLD" : "erase",
+                   ctx.carry.gl_hold_amb.size(),
+                   ctx.carry.gl_hold_iono.size() + ctx.carry.gl_hold_iono_blk.size());
 }
 
 } // namespace GnssProcessor

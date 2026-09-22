@@ -109,6 +109,44 @@ namespace GnssProcessor {
     bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep);
 
     /**
+     * @brief RF-3a A1 — the outcome of a drop taken with BOTH floors in hand.
+     *
+     * @c from_drop_floor is the drop floor's own ON-path telemetry (standing invariant
+     * #4): it is true exactly when the DROP-only floor is what the restored variance
+     * came from, i.e. when it exceeded the arc's own birth prior and the birth floor.
+     * 0 of these under an armed drop floor means every arc was already born looser
+     * than it, which is a reading, not a quiet run.
+     */
+    struct AmbDropOutcome {
+        bool acted{false};            ///< The entry's variance actually moved (@ref ambFloatDrop's return).
+        bool from_drop_floor{false};  ///< The restored variance came from @c network.amb_float_drop_var_m2.
+    };
+
+    /**
+     * @brief RF-3a A1 — the DROP taken at both floors, the one site the four drop
+     *        call sites share so they cannot drift.
+     *
+     * The restored variance is @c max(var_birth, var_first, birth_floor, drop_floor),
+     * with both floors already elevation-mapped by @ref ambFloatBirthFloor at the call
+     * site (the mapping is the code weights' own, so a floor stated at zenith is not
+     * optimistic at the low elevations that own the metre-plus tail).  The BIRTH stash
+     * is untouched by @p drop_floor_m2 — that separation is the whole point of the
+     * knob: the RF-3 read measured that a floor at the birth removes the post-drop walk
+     * AND slows every birth, while the defect it is aimed at is the re-coupling edge of
+     * the slip and gap re-entry response.
+     *
+     * @param lc            The entry.
+     * @param birth_floor_m2 This LOS's @c network.amb_float_birth_var_m2 floor (m²).
+     * @param drop_floor_m2  This LOS's @c network.amb_float_drop_var_m2 floor (m²).
+     * @param now_s         Continuous-GPS seconds — the new @c relevel_s.
+     * @param now_ep        This epoch's @c n_loop_epochs — the new @c dropped_ep.
+     * @return the outcome.
+     */
+    AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
+                                       double drop_floor_m2, double now_s,
+                                       long long now_ep);
+
+    /**
      * @brief The SERIAL pre-assembly drop pass — the free-epoch latch and the gap cliff.
      *
      * Runs after PASS A's slip scans (which fill @c ctx.carry.relevel.free_ambs) and

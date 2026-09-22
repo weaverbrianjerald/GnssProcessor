@@ -2681,6 +2681,17 @@ int Application::runNetwork() {
                           est_index_of, asm_res, plan, ar_ppp_utils, log_dir_);
         subEnd(SB_NETAR);      // D0b: close producer-AR / pre-emit tail
         subBegin(SB_SOLPREP);  // D0b: toSolutionEpoch + per-sat discontinuity signalling
+        // RF-3b B3 (docs/refound/RF-3_code_row_qc_2026-09-22.md §4): the gross-LOS
+        // screen's DECISION half, moved ahead of the emission so a declaration reaches
+        // the epoch it declares rather than the one after it.  The RESPONSE stays at the
+        // post-harvest site below, where it must be.  Placed inside this existing bracket
+        // rather than behind a new timer slot, because adding a slot would change the
+        // section-timing artifact for every run, armed or not (the networkSdEwlAr
+        // precedent).  Unreachable unless network.gross_los_emit_exclude.
+        if (ctx.knobs.gl_emit_exclude)
+            networkGrossLosScreen(ctx, config_, log, traces, se, stations, est, x_s,
+                                  asm_res, est_index_of, pl_now_s,
+                                  GrossLosPhase::Decide);
         NetworkSolPrepResult sp_ = networkSolPrep(ctx, config_, log, traces, setup, se, est, x_s,
                                                   plan, pl_now_s, datum_changed, changed_consts,
                                                   sigma0_adapt, perconst_active, perconst_publish,
@@ -2773,8 +2784,15 @@ int Application::runNetwork() {
         // walk and its own state precisely because every other tier is phase-only,
         // and it must be able to run on a lineage that arms none of them.  No-op
         // (not even a state allocation) unless network.gross_los_screen.
+        // RF-3b B3 (docs/refound/RF-3_code_row_qc_2026-09-22.md §4): with
+        // network.gross_los_emit_exclude armed the DECISION half already ran above,
+        // before the emission, and what is left here is the deferred RESPONSE — which
+        // still belongs at this site for the ordering reason above.  Unarmed, this one
+        // call does both halves exactly as it always has.
         networkGrossLosScreen(ctx, config_, log, traces, se, stations, est, x_s,
-                              asm_res, est_index_of, pl_now_s);
+                              asm_res, est_index_of, pl_now_s,
+                              ctx.knobs.gl_emit_exclude ? GrossLosPhase::Act
+                                                        : GrossLosPhase::Full);
         subEnd(SB_RAIM);       // D0b: close block 2 (RAIM)
         subBegin(SB_CLOCKUPD); // D0b block 8: two-state clock update + fault QC + retro-flag feed
         networkClockQc(ctx, config_, log, traces, ws, se, est, x_s,

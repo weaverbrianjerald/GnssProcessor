@@ -460,6 +460,43 @@ NetworkSolPrepResult networkSolPrep(
                           "reason=whole_satellite_standdown;epoch_still_emits=1");
         }
     }
+    // --- RF-3b B3 (docs/refound/RF-3_code_row_qc_2026-09-22.md §4): the declared line
+    // of sight leaves its satellite's CONTRIBUTOR SET for the epoch it declares.  Two
+    // outcomes, both exact and both landing on THIS epoch because the screen's decision
+    // half now runs above this seam:
+    //   * too few contributing stations left to stand behind the satellite's records ⇒
+    //     the satellite is WITHHELD, by the same swap-prune the GL-2 block and the RT0-5
+    //     runaway quarantine use.  Per satellite, never per epoch;
+    //   * enough left ⇒ the satellite still emits and is marked with the producer's
+    //     per-satellite DISCONTINUITY, so the consumer is TOLD the contributor set moved
+    //     instead of reading a silent step (the ura_retro_sats queue, drained below with
+    //     mark-==-land semantics).
+    // Empty (never populated) unless network.gross_los_emit_exclude, so the OFF path is
+    // byte-identical.
+    if (!ctx.carry.gl_emit_disc.empty()) {
+        for (const auto& gsat : ctx.carry.gl_emit_disc)
+            ctx.carry.ura_retro_sats.insert(gsat);
+        ctx.counters.gross_los.emit_disc_marked +=
+            static_cast<long long>(ctx.carry.gl_emit_disc.size());
+    }
+    if (!ctx.carry.gl_emit_withhold.empty()) {
+        std::set<std::string> gl3_pruned;
+        std::vector<NetworkSatSolution> gl3_kept;
+        gl3_kept.reserve(sol.sats.size());
+        for (auto& gs : sol.sats) {
+            if (ctx.carry.gl_emit_withhold.count(gs.sat)) gl3_pruned.insert(gs.sat);
+            else                                          gl3_kept.push_back(std::move(gs));
+        }
+        if (!gl3_pruned.empty()) {
+            sol.sats.swap(gl3_kept);
+            ctx.counters.gross_los.emit_withheld +=
+                static_cast<long long>(gl3_pruned.size());
+            for (const auto& gsat : gl3_pruned)
+                emitEvent("GROSSLOS", "gross_los_emit_withheld", gsat, "",
+                          std::nullopt, std::nullopt, "drop_sat",
+                          "reason=declared_los_left_contributor_set;epoch_still_emits=1");
+        }
+    }
     // B1: per-sat URA = EWMA(σ̂0) × formal clock σ (shared-covariance diagonal),
     // skipping datum-pinned clock columns (their variance is the artificial pin,
     // not a physical σ) and inflating a recently-refloated sat for its warmup horizon.
@@ -723,7 +760,12 @@ NetworkSolPrepResult networkSolPrep(
     // silently never landed (the exact leak this comment predicts).
     // RF-2 item 2: a DECLARED anchor handover also queues its satellite here, so the
     // held-basis arm needs no second drain — the knob joins the arming OR.
-    if ((ura_retro || mark_refsat || datum_detect || ctx.knobs.pd_held_basis)
+    // RF-3b B3: the emission-exclusion disc mark arrives through the same queue, so it
+    // joins the arming OR for the reason the comment above states — a mark queued into
+    // a run with every other source off would never land, and the R record would never
+    // be written, which is exactly the silent leak this predicate exists to prevent.
+    if ((ura_retro || mark_refsat || datum_detect || ctx.knobs.pd_held_basis
+         || ctx.knobs.gl_emit_exclude)
         && !ura_retro_sats.empty()) {
         // RT0-5 seam (P0-1: the R record must describe bumps that LANDED in the
         // emitted product): a flagged sat ABSENT from this epoch's emission —

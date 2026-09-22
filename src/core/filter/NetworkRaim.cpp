@@ -137,6 +137,9 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     };
 
     auto& local_carry = ctx.carry.local_carry;
+    // RF-3a A1: the code weights' elevation power, the one mapping both ambiguity
+    // variance floors are stated in (ambFloatBirthFloor).  Read once per pass.
+    const double amb_elev_power_ = config_.getCodeElevationPower();
     auto& raim_refloat_pending = ctx.carry.raim_refloat_pending;
     // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): both measure-only, both
     // loader-guaranteed to require network.raim.  R2 additionally needs per-row
@@ -1050,11 +1053,25 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                 // so the next epoch re-couples against a stated prior
                                 // instead of a first sighting.
                                 if (ctx.knobs.amb_float_kf) {
-                                    ambFloatDrop(lane_lit->second,
-                                                 ctx.knobs.amb_birth_var_floor,
-                                                 se.time.week * 604800.0 + se.time.tow,
-                                                 static_cast<long long>(
-                                                     ctx.counters.n_loop_epochs));
+                                    // RF-3a A1: the drop is taken at BOTH floors, and both
+                                    // are elevation-mapped at this line of sight's own
+                                    // elevation — the same mapping the birth stash uses.
+                                    // ⚠ The pre-RF-3a code passed the ZENITH birth floor
+                                    // here while the birth stash mapped it; the two now
+                                    // agree, which changes the T4/T3 drop only on a run
+                                    // that arms a floor at all (both are 0 by default).
+                                    const double e_pa = pa.elev_deg;
+                                    const auto o_t4 = ambFloatDropFloored(
+                                        lane_lit->second,
+                                        ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
+                                                           e_pa, amb_elev_power_),
+                                        ambFloatBirthFloor(ctx.knobs.amb_drop_var_floor,
+                                                           e_pa, amb_elev_power_),
+                                        se.time.week * 604800.0 + se.time.tow,
+                                        static_cast<long long>(
+                                            ctx.counters.n_loop_epochs));
+                                    if (o_t4.from_drop_floor)
+                                        ++ctx.counters.n_amb_drop_floored;
                                     ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                      stations[i].name, pa.sat, pa.signal,
                                                      lane_lit->second,
@@ -1252,11 +1269,19 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                             // RF-1 §7.4 D3 — see the attribution site.
                             // RF-1 step 4 — see the attribution site.
                             if (ctx.knobs.amb_float_kf) {
-                                ambFloatDrop(lane_lit->second,
-                                             ctx.knobs.amb_birth_var_floor,
-                                             se.time.week * 604800.0 + se.time.tow,
-                                             static_cast<long long>(
-                                                 ctx.counters.n_loop_epochs));
+                                // RF-3a A1 — see the attribution site.
+                                const double e_pa = pa.elev_deg;
+                                const auto o_t3 = ambFloatDropFloored(
+                                    lane_lit->second,
+                                    ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
+                                                       e_pa, amb_elev_power_),
+                                    ambFloatBirthFloor(ctx.knobs.amb_drop_var_floor,
+                                                       e_pa, amb_elev_power_),
+                                    se.time.week * 604800.0 + se.time.tow,
+                                    static_cast<long long>(
+                                        ctx.counters.n_loop_epochs));
+                                if (o_t3.from_drop_floor)
+                                    ++ctx.counters.n_amb_drop_floored;
                                 ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                  stations[i].name, pa.sat, pa.signal,
                                                  lane_lit->second,

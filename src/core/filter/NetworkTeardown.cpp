@@ -1021,6 +1021,69 @@ int networkTeardown(
                   "(retirement census family [C], the same one-solve refloat the T4 attribution "
                   "erase performs — the arc stays tracked and the next harvest re-stashes it).",
                   ctx.counters.n_cr_gross_los);
+        // --- RF-3b (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5, requirement F6).
+        //     Every line here is maintained in BOTH states of the sub-knob it reports on,
+        //     so an arm that leaves a rule off still states the population it would have
+        //     reached (standing invariant #4).
+        {
+            const NetworkConfig& gnc3 = config_.getNetworkConfig();
+            const bool mrr_av = gnc3.gross_los_min_rows_rule
+                                    == NetworkGrossLosMinRowsRule::Available;
+            log->info("Network (gross-LOS, RF-3b B1 min_rows rule = {}): {} LOS-epoch(s) "
+                      "cleared the AVAILABLE bar while the line of sight had FEWER than {} "
+                      "code rows.  That population is UNREACHABLE under the fixed rule and "
+                      "is exactly where four of the six largest episodes of the RF-3 read "
+                      "live (a line of sight whose station has lost every signal but one "
+                      "band-1 code).  {} of the run's {} declaration(s) were taken at a "
+                      "reduced bar.",
+                      mrr_av ? "available" : "fixed", g.los_over_short,
+                      gnc3.gross_los_min_rows,
+                      mrr_av ? "Some" : "None", g.declared);
+            log->log((g.expired > 0) ? spdlog::level::warn : spdlog::level::info,
+                     "Network (gross-LOS, RF-3b B2 bound = {}): {} release(s) against {} "
+                     "expiry(ies) — RELEASE is the intended exit and EXPIRY the exception, "
+                     "because an expiry means the clear test could never fire.  The largest "
+                     "|v| any FOLDED row reached was {:.3f} m (the F2 alarm: 445.48 m on "
+                     "runs/_rap_rf3_gl1 with the bound off).  The hold froze {} carried "
+                     "level(s) and {} iono carr(ies) and was re-applied over {} "
+                     "LOS-epoch(s).",
+                     gnc3.gross_los_bound ? "on" : "off", g.cleared, g.expired,
+                     g.folded_v_abs_max_m, g.bound_amb_held, g.bound_iono_held,
+                     g.bound_los_epochs);
+            log->info("Network (gross-LOS, RF-3b B3 emit_exclude = {}): {} satellite-epoch(s) "
+                      "lost a declared line of sight from their contributor set at the "
+                      "DECLARING epoch — {} withheld for want of {} contributing stations, "
+                      "{} emitted with a per-satellite discontinuity mark.  ⚠ The emitted "
+                      "clock and code bias are joint-solve states, so the VALUE is not "
+                      "re-solved without the line of sight; what lands on the declaring "
+                      "epoch is the contributor-set exclusion and its declaration.",
+                      gnc3.gross_los_emit_exclude ? "on" : "off", g.emit_excluded,
+                      g.emit_withheld, gnc3.gross_los_sat_min_stations,
+                      g.emit_disc_marked);
+            log->info("Network (gross-LOS, RF-3b B4 station_tier = {}): {} STATION "
+                      "declaration(s), {} release(s), {} station-epoch(s) spent declared, "
+                      "against {} whole-station guard firing(s).  With the tier off a guard "
+                      "firing only defers: the next epoch declares the same lines of sight "
+                      "one by one on the same evidence.",
+                      gnc3.gross_los_station_tier ? "on" : "off", g.sta_declared,
+                      g.sta_released, g.sta_los_epochs, g.standdowns);
+            if (g.declared > 0)
+                log->info("Network (gross-LOS, RF-3b B5 latency): per-episode, the "
+                          "declaration landed a median-free mean of {:.2f} screened epoch(s) "
+                          "after the first row over the bar (max {}).  The wire's own "
+                          "latency is {} epoch(s) by construction on this arm.",
+                          static_cast<double>(g.declare_latency_sum_ep)
+                              / static_cast<double>(g.declared),
+                          g.declare_latency_max_ep,
+                          gnc3.gross_los_emit_exclude ? 0 : 1);
+            if (!g.sta_declared_by_station.empty()) {
+                std::string sline;
+                for (const auto& [nm, n] : g.sta_declared_by_station)
+                    sline += fmt::format("{}{}={}", sline.empty() ? "" : " ", nm, n);
+                log->info("Network (gross-LOS, RF-3b B4): station declarations by station: {}",
+                          sline);
+            }
+        }
         if (g.declared > 0 && g.rows_deweighted == 0)
             log->warn("Network (gross-LOS screen): {} declaration(s) but ZERO code rows were "
                       "ever folded at the deweighted σ.  The actuator lives in "
@@ -5178,6 +5241,40 @@ int networkTeardown(
                  C.n_amb_drop_idempotent, ctx.knobs.amb_birth_var_floor,
                  C.n_amb_birth_floored, C.n_cr_gap_prune,
                  C.n_relevel_free_skips, C.n_cr_inject_stale);
+    }
+    // RF-3a (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A2): the DROP-ONLY floor's
+    // inventory and the WALK it is aimed at.  Emitted in BOTH knob states — an OFF run
+    // reports the walk it suffers, which is the only way the ON run's number means
+    // anything (standing invariant #4).  The two fold buckets separate the correction
+    // the first fold after a drop absorbed from the walk that followed it: a stiff
+    // restored prior lets a 40 m level error through a few metres per epoch for tens of
+    // epochs, a floored one lands it at once.
+    if (ctx.knobs.amb_float_kf) {
+        const auto& C = ctx.counters;
+        auto stat = [](std::vector<double> v) {
+            struct { double max; double med; std::size_t n; } s{0.0, 0.0, v.size()};
+            if (v.empty()) return s;
+            s.max = *std::max_element(v.begin(), v.end());
+            const std::size_t h = v.size() / 2;
+            std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(h), v.end());
+            s.med = v[h];
+            return s;
+        };
+        const auto w1 = stat(C.amb_walk_fold1_m);
+        const auto w2 = stat(C.amb_walk_fold2_m);
+        log->info("Network (RF-3a drop-only floor): network.amb_float_drop_var_m2 = {} m^2 "
+                  "at zenith ({}), elevation-mapped at the code weights' power beside the "
+                  "birth floor {} m^2.  {} of {} drop(s) had their restored variance come "
+                  "FROM the drop floor.  WALK (measure-only, both knob states): the FIRST "
+                  "fold after a drop absorbed max {:.3f} m / median {:.3f} m over {} "
+                  "measured drop(s); the SECOND fold absorbed max {:.3f} m / median "
+                  "{:.3f} m over {}.  A drop floor of 0 with a large second-fold walk is "
+                  "the re-coupling edge this card names: the restored prior is too stiff "
+                  "for a level the response has just doubted.",
+                  ctx.knobs.amb_drop_var_floor,
+                  ctx.knobs.amb_drop_var_floor > 0.0 ? "ARMED" : "OFF (today's behaviour)",
+                  ctx.knobs.amb_birth_var_floor, C.n_amb_drop_floored, C.n_amb_drop,
+                  w1.max, w1.med, w1.n, w2.max, w2.med, w2.n);
     }
     // RF-1 step 5 (§3.6): the DECLARED ANCHOR S-TRANSFORM's inventory, with the REFUSED
     // population beside it — that split IS the honest limit of the step: a cold handover

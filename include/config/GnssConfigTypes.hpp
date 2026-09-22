@@ -1073,6 +1073,20 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief RF-3b B1: how the gross-LOS screen reads @c network.gross_los_min_rows
+     *        (docs/refound/RF-3_code_row_qc_2026-09-22.md §4, requirement F1).
+     *
+     * The constant's rationale ("a gross line of sight is wrong on every code band at
+     * once; one heavy-tailed row is one band's multipath") holds for a line of sight
+     * that HAS several code rows and is false for one that has lost every signal but
+     * a single band-1 code, where the bar is unsatisfiable by construction.
+     */
+    enum class NetworkGrossLosMinRowsRule {
+        Fixed,     ///< (default) today: at least @c gross_los_min_rows rows over the bar, whatever the line of sight has.
+        Available  ///< The bar is @c min(gross_los_min_rows, the LOS's code rows this epoch) — a one-row LOS is reachable, a three-row LOS still needs two.
+    };
+
+    /**
      * @brief BAND SCOPE of the whole-satellite DETECTOR refloats (§Z).
      *
      * The other half of the same finding.  MW and LLI already act per pair /
@@ -1860,6 +1874,28 @@ namespace GnssProcessor {
         /// ⚠ INERT in RF-1 step 1: the value is parsed, validated and recorded in the run
         /// manifest, and nothing reads it (the floor lands with the drop, step 4).
         double amb_float_birth_var_m2{ 0.0 };
+        /// RF-3a (docs/refound/RF-3_code_row_qc_2026-09-22.md §4): FLOOR (m²) applied at a
+        /// DROP ONLY, so the restored prior is
+        /// @c max(var_birth, var_first, amb_float_birth_var_m2, amb_float_drop_var_m2),
+        /// elevation-mapped exactly as @ref amb_float_birth_var_m2 is.  The BIRTH stash is
+        /// untouched, which is the whole point of the separate knob: the RF-3 read measured
+        /// that a birth floor of 4 m² removes the post-drop walk (post-fit code rows above
+        /// 3 m at full weight 404 -> 101, the WTZZ00DEU consumer 0.028 0.030 0.036 0.045 ->
+        /// 0.015 0.016 0.029 0.038 m at hours 3 to 6) and pays for it at every BIRTH
+        /// (hour 1 0.56 -> 0.66 m, census hour 1 +0.03 to +0.04 m).  The defect is the
+        /// re-coupling edge of the slip and gap re-entry response, not the birth, so the
+        /// floor belongs at the drop.
+        ///
+        /// Mechanism (RF-1 §3.4, measured at STHL00GBR G11 in @c runs/_rf0hv9_field6): a
+        /// refloat restores the arc's FIRST-STASH variance (0.036 m² from two hours
+        /// earlier), so a level wrong by 40 m folds at 0.19 m and decays geometrically for
+        /// 24 epochs while the code rows carry the misfit at the ionospheric band ratio.
+        /// A drop floor states what a re-determined level is actually worth.
+        ///
+        /// SOLVE-AFFECTING when armed; 0.0 is today's behaviour and byte-identical.  NOT
+        /// fingerprinted, for the same reason RF-1's drop is not: it is a forward-only
+        /// variance at a response, and it changes no carried state's MEANING.
+        double amb_float_drop_var_m2{ 0.0 };
         /// RF-1 §3.5: process noise (m²/s) on the ambiguity block under @c FloatKf.
         /// **The card's posture is 0.0 and any nonzero value is a separate,
         /// evidence-bearing arm.**  An ambiguity is a random constant punctuated by
@@ -2172,6 +2208,70 @@ namespace GnssProcessor {
         int    gross_los_sat_min_stations{ 3 }; ///< Stations that must have the same satellite OVER THE BAR in one epoch for the satellite stand-down to fire.  Deliberately the same number and the same meaning as @c network.raim_min_stations, whose loader line reads "a satellite so flagged at >= 3 stations is refloated network-wide": this is that rule's code-side twin, and the two should not disagree about what counts as a satellite fault.  The trigger is the OVER-BAR count, not the DECLARED count, so the satellite is caught on its first bad epoch rather than after the per-LOS persistence gate has already spent two.
         bool   gross_los_sat_wire_withhold{ true }; ///< Whether a stood-down satellite is also pruned from the epoch's EMISSION (a per-satellite wire withhold — NEVER an epoch withhold; every other satellite still emits, and the epoch is still adapt-and-emit).  The consumer is told by the retro disc bump, which lands with mark-==-land semantics at the satellite's next actual emission.  Set false to arm the disc bump alone — the A/B that separates "the consumer needed the satellite dropped" from "the consumer needed to be told".
         int    gross_los_event_holdoff_ep{ 0 }; ///< Per-(station, satellite) rate limit on GROSSLOS events, in screened epochs.  0 = no limit, which is the right default here: unlike MDB/PREFIT this stream is EDGE-triggered (a declare and a clear per episode), so it is already self-limiting and every row of it is an identity the grade needs.
+        // --- RF-3b: the screen made complete (docs/refound/RF-3_code_row_qc_2026-09-22.md
+        //     §4, requirements F1 to F4 of runs/_msc/rf3_read_report_2026-09-22.md).
+        //     Every one of the four is default = today's behaviour.
+        /// RF-3b B1 (F1).  How @ref gross_los_min_rows is read.  @c Fixed is today: at least
+        /// that many of the LOS's code rows must clear the bar together, which is
+        /// UNSATISFIABLE for a line of sight that has fewer rows than the constant — and the
+        /// RF-3 read measured that this is the exact reason four of the six largest episodes
+        /// were unreachable (BSHM00ISR G13/G22 and KIT300UZB G22 have ONE code row, the
+        /// station having lost every other signal of the line of sight).  @c Available reads
+        /// the bar as @c min(gross_los_min_rows, the LOS's code rows this epoch), so a
+        /// one-row line of sight is reachable while a multi-row one keeps the multi-band
+        /// corroboration the header's rationale relies on.  A flat @c gross_los_min_rows = 1
+        /// reaches family S too (gross rows at full weight 101 -> 33) but removes that
+        /// corroboration everywhere; the rule keeps both.
+        NetworkGrossLosMinRowsRule gross_los_min_rows_rule{ NetworkGrossLosMinRowsRule::Fixed };
+        /// RF-3b B2 (F2), standing invariant #7's DECOUPLING edge.  OFF is today: a
+        /// declaration ERASES the line of sight's carried level and per-LOS iono, and the
+        /// freed states then re-determine themselves from an epoch whose only code row is
+        /// folded at σ × @ref gross_los_deweight — an under-determined fit — after which the
+        /// folded row's residual is a random walk rather than a measure of the fault.
+        /// MEASURED on `runs/_rap_rf3_gl1`: BSHM00ISR G13 declared at 112.5 m and its folded
+        /// row ran to 445.5 m, BSHM00ISR G22 195.1 -> 415.9 m, and because the release test
+        /// ("the worst row under @ref gross_los_clear_sigma") can never fire on a runaway,
+        /// BOTH ended by EXPIRY at the 900 s horizon rather than by release (2 of 7
+        /// declarations).  ON: the freed states are HELD — the line of sight's carried
+        /// ambiguity levels and its iono carry are frozen at their PRE-DECLARATION values
+        /// and variances with zero process noise, their border coupling and joint block
+        /// cleared (the decoupling half), and re-applied after every harvest for as long as
+        /// the declaration stands, so the phase rows fold against a fixed prior and the
+        /// folded code row's residual stays a measure of the fault.  RELEASE then becomes
+        /// the normal exit and EXPIRY the exception.  SOLVE-AFFECTING; requires
+        /// @ref gross_los_screen.
+        bool   gross_los_bound{ false };
+        /// RF-3b B3 (F3).  OFF is today: the screen runs after the epoch's emission, so a
+        /// declaration first reaches the wire one epoch later and the two largest rows of
+        /// every episode are emitted before any response lands (products first differ at
+        /// TOW 269700 for a declaration at 269670).  ON: the screen's DECISION half (assess,
+        /// state machine, both edges, the deweight publish) is moved ahead of the emission,
+        /// and the declared line of sight is excluded from its satellite's CONTRIBUTOR SET
+        /// for that epoch — if the satellite's remaining contributing stations fall below
+        /// @ref gross_los_sat_min_stations its records are WITHHELD for the epoch (a per
+        /// satellite withhold, never an epoch withhold: every other satellite still emits),
+        /// otherwise the satellite is emitted with the producer's existing per-satellite
+        /// DISCONTINUITY mark so the consumer is told the contributor set moved.  ⚠ The
+        /// emitted clock and code bias are joint-solve shared states copied straight out of
+        /// @c x_s, so there is no per-contributor decomposition to subtract: changing the
+        /// VALUE would require a second network solve of the epoch, which this knob does not
+        /// do.  The carry response still runs after the harvest, where it must.
+        /// SOLVE-AFFECTING (through the moved decision's one-epoch shift of the maturity
+        /// horizon and the earlier deweight publish); requires @ref gross_los_screen.
+        bool   gross_los_emit_exclude{ false };
+        /// RF-3b B4 (F4).  OFF is today: when the whole-station guard fires
+        /// (@ref gross_los_max_station_frac) it only HOLDS this epoch's declarations, and
+        /// the next epoch declares the same lines of sight one by one on the same evidence —
+        /// which is how a station fault becomes N line-of-sight faults (BSHM00ISR, guard at
+        /// TOW 269310 with @c n_over=5 of @c n_los=7, per-LOS declaration at 269340).  ON:
+        /// the guard becomes a STATION-level verdict with its own two edges
+        /// (@c station_declare / @c station_release), folding every one of the station's
+        /// code rows at @ref gross_los_deweight and, under @ref gross_los_bound, holding its
+        /// freed states the same way a per-LOS declaration does.  Released when the
+        /// station's over-bar fraction sits at or under the cap for
+        /// @ref gross_los_clear_epochs consecutive screened epochs.  SOLVE-AFFECTING;
+        /// requires @ref gross_los_screen.
+        bool   gross_los_station_tier{ false };
         // --- Datum graph census (docs/SPEC_datum_graph_census.md;
         //     filter/NetworkDatumGraph) ----------------------------------------
         // MEASURE-ONLY, default-OFF and fingerprint-SAFE, same class as the

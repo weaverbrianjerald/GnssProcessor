@@ -564,6 +564,17 @@ struct LocalCarry {
     /// by the drop's own idempotence guard (one drop per arc per epoch).
     /// ⚠ RF-1 STEP 1: declared and never written — the drop lands in step 4.
     long long dropped_ep{0};
+    /// RF-3a A2 (docs/refound/RF-3_code_row_qc_2026-09-22.md §4): the WALK metric's
+    /// per-arc phase.  A drop sets it to 1; the next harvest of the arc records
+    /// @c |value_abs(after) − value_abs(before)| as the change the FIRST fold after the
+    /// drop absorbed and advances it to 2; the fold after that records the same
+    /// quantity as the residual WALK and clears it.  MEASURE-ONLY and maintained in
+    /// both knob states, because the point of the metric is that an OFF run reports the
+    /// walk it suffers: a stiff restored prior lets a 40 m level error through a few
+    /// metres per epoch for tens of epochs, a floored one lands the correction at once.
+    /// Not snapshotted, like every other RF-1 stamp — a restored entry reads 0, which
+    /// is "no drop pending" and the conservative direction.
+    int drop_walk_ph{0};
 };
 
 /// RF-1 §7.4: WHICH ROUTE the PASS-B inject actually folded a carried ambiguity

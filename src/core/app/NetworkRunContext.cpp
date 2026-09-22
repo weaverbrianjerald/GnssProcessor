@@ -82,6 +82,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.amb_float_kf = config_.getNetworkConfig().ambiguity_vehicle
                      == NetworkAmbiguityVehicle::FloatKf;
     k.amb_birth_var_floor = config_.getNetworkConfig().amb_float_birth_var_m2;
+    // RF-3a: the DROP-only floor.  ANDed with the vehicle here so every downstream site
+    // reads ONE number and a miswired arm (a floor without float_kf) cannot half-act.
+    k.amb_drop_var_floor  = k.amb_float_kf
+                                ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
     k.amb_float_q_m2s = config_.getNetworkConfig().amb_float_q_m2s;
     k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
     // RF-2 item 1: the held S-BASIS, already interlocked at load against float_kf and
@@ -338,6 +342,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // The satellite rule is a SCOPE decision on the gross-LOS rule — it tallies the
     // same over-bar verdicts — so it cannot mean anything without the screen itself.
     k.gl2_on = k.gl_on && config_.getNetworkConfig().gross_los_sat_standdown;
+    // RF-3b: the four sub-rules, each ANDed with the screen for the same reason GL-2 is.
+    k.gl_min_rows_available = k.gl_on
+        && config_.getNetworkConfig().gross_los_min_rows_rule
+               == NetworkGrossLosMinRowsRule::Available;
+    k.gl_bound         = k.gl_on && config_.getNetworkConfig().gross_los_bound;
+    k.gl_emit_exclude  = k.gl_on && config_.getNetworkConfig().gross_los_emit_exclude;
+    k.gl_station_tier  = k.gl_on && config_.getNetworkConfig().gross_los_station_tier;
     k.raim_ci_refloat = k.raim_ci_on && config_.networkRaimCarryInvariantRefloat();
     k.eq34_rpb_prior_sigma = config_.networkPhaseDatumEq34RpbPriorSigmaM();
     k.eq34_rpb_prior_w = (k.phase_datum_eq34 && k.eq34_rpb_prior_sigma > 0.0) ? 1.0 / (k.eq34_rpb_prior_sigma * k.eq34_rpb_prior_sigma) : 0.0;
@@ -4743,6 +4754,25 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                     // life of the arc and the trace's `event` column reads "" for it.
                     nlc.dropped_ep =
                         (oldc != local_carry.end()) ? oldc->second.dropped_ep : 0;
+                    // RF-3a A2: the WALK metric.  This is the one site that sees the
+                    // pre-fold carried value and the post-fold stash together, so it is
+                    // where "what the first fold after a drop absorbed" is measurable at
+                    // all.  MEASURE-ONLY, maintained whenever the vehicle is armed and in
+                    // BOTH states of network.amb_float_drop_var_m2 — an OFF run has to
+                    // report the walk it suffers or the ON run's number means nothing
+                    // (standing invariant #4).
+                    nlc.drop_walk_ph =
+                        (oldc != local_carry.end()) ? oldc->second.drop_walk_ph : 0;
+                    if (nlc.drop_walk_ph > 0 && oldc != local_carry.end()) {
+                        const double dv = std::abs(value_abs - oldc->second.value_abs);
+                        if (std::isfinite(dv)) {
+                            if (nlc.drop_walk_ph == 1)
+                                ctx.counters.amb_walk_fold1_m.push_back(dv);
+                            else
+                                ctx.counters.amb_walk_fold2_m.push_back(dv);
+                        }
+                        nlc.drop_walk_ph = (nlc.drop_walk_ph == 1) ? 2 : 0;
+                    }
                     localCarryStampBirth(
                         nlc, (oldc != local_carry.end() ? &oldc->second : nullptr),
                         static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);

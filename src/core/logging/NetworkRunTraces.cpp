@@ -1685,6 +1685,28 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.amb_float_declared_handover ? "true" : "false",
                                      nc.trace_amb_state ? "true" : "false")
                        : std::string())
+               // RF-3a: the DROP-only floor is solve-affecting provenance, so the
+               // manifest records it when armed.  Emitted ONLY when armed, so an
+               // unarmed run's manifest bytes are unchanged.
+               << ((nc.amb_float_drop_var_m2 > 0.0)
+                       ? fmt::format("\"amb_float_drop_var_m2\":{},",
+                                     nc.amb_float_drop_var_m2)
+                       : std::string())
+               // RF-3b: the four sub-rules of the gross-LOS screen, same rule.
+               << ((nc.gross_los_min_rows_rule != NetworkGrossLosMinRowsRule::Fixed
+                    || nc.gross_los_bound || nc.gross_los_emit_exclude
+                    || nc.gross_los_station_tier)
+                       ? fmt::format("\"gross_los_min_rows_rule\":\"{}\","
+                                     "\"gross_los_bound\":{},"
+                                     "\"gross_los_emit_exclude\":{},"
+                                     "\"gross_los_station_tier\":{},",
+                                     nc.gross_los_min_rows_rule
+                                             == NetworkGrossLosMinRowsRule::Available
+                                         ? "available" : "fixed",
+                                     nc.gross_los_bound ? "true" : "false",
+                                     nc.gross_los_emit_exclude ? "true" : "false",
+                                     nc.gross_los_station_tier ? "true" : "false")
+                       : std::string())
                // docs/SPEC_measurement_admission.md: the arm provenance a §7 grader
                // needs to tell a screened leg from its control without re-reading the
                // config — and, because `adm_screen` is solve-affecting, to know that

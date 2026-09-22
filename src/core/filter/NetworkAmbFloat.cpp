@@ -47,6 +47,10 @@ bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_e
         // clock still restarts: the LEVEL is still doubted even if the variance is not.
         lc.relevel_s  = now_s;
         lc.dropped_ep = now_ep;
+        // RF-3a A2: the WALK metric's population is "every drop that doubted the level",
+        // which includes this one — the level is re-determined either way, and an OFF run
+        // has to report the walk it suffers whether or not the variance moved.
+        lc.drop_walk_ph = 1;
         return false;
     }
     lc.var = target;
@@ -60,9 +64,29 @@ bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_e
     lc.blk_idx = -1;
     lc.relevel_s  = now_s;
     lc.dropped_ep = now_ep;
+    // RF-3a A2: arm the WALK metric.  The next harvest of this arc reads the phase,
+    // records |value_abs(after) - value_abs(before)| and advances it; the fold after
+    // that records the residual walk.  Measure-only.
+    lc.drop_walk_ph = 1;
     // value_abs, var_first, var_birth, birth_s, birth_ep, last_seen_s and n_folds are
     // KEPT by construction (the manager's decision of 2026-09-14, question 2).
     return true;
+}
+
+AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
+                                   double drop_floor_m2, double now_s,
+                                   long long now_ep) {
+    AmbDropOutcome out;
+    // What the arc would have been restored to WITHOUT the drop-only floor.  Read
+    // before the call, because the call overwrites lc.var.
+    const double without_drop = std::max({lc.var_birth, lc.var_first, birth_floor_m2});
+    out.from_drop_floor = (drop_floor_m2 > 0.0) && (drop_floor_m2 > without_drop);
+    out.acted = ambFloatDrop(lc, std::max(birth_floor_m2, drop_floor_m2), now_s, now_ep);
+    // An arc already looser than every floor is not evidence that the drop floor did
+    // anything: report the floor as the SOURCE only when the variance actually moved
+    // to it.  (Without this an idempotent re-drop would inflate the counter.)
+    if (!out.acted) out.from_drop_floor = false;
+    return out;
 }
 
 void networkAmbFloatApplyDrops(
@@ -77,6 +101,9 @@ void networkAmbFloatApplyDrops(
     auto& relevel     = ctx.carry.relevel;
     auto& counters    = ctx.counters;
     const double floor_base = ctx.knobs.amb_birth_var_floor;
+    // RF-3a A1: the DROP-only floor, elevation-mapped with exactly the same mapping the
+    // birth floor uses (@ref ambFloatBirthFloor is the mapping, not the knob).
+    const double drop_base  = ctx.knobs.amb_drop_var_floor;
     const double elev_power = config_.getCodeElevationPower();
     const double max_gap_s  = ctx.knobs.pl_max_gap_s;
     const long long now_ep  = static_cast<long long>(counters.n_loop_epochs);
@@ -96,7 +123,17 @@ void networkAmbFloatApplyDrops(
                          std::get<1>(key), std::get<2>(key), lc, cause);
     };
 
-    long long n_free = 0, n_stale = 0, n_idem = 0;
+    long long n_free = 0, n_stale = 0, n_idem = 0, n_dropfloor = 0;
+    // RF-3a A1: one lambda so the two populations below cannot take the drop at
+    // different floors.  Both floors are mapped at THIS line of sight's elevation.
+    const auto dropAt = [&](LocalCarry& lc, int sta, const std::string& sat) {
+        const double e = elevOf(sta, sat);
+        const AmbDropOutcome o = ambFloatDropFloored(
+            lc, ambFloatBirthFloor(floor_base, e, elev_power),
+            ambFloatBirthFloor(drop_base,  e, elev_power), pl_now_s, now_ep);
+        if (o.from_drop_floor) ++n_dropfloor;
+        return o.acted;
+    };
     // (1) THE LATCHED FREE-EPOCH SET.  The set itself is NOT consumed — §4.1: the lane
     //     observatory, the phase-datum candidacy screen, the anchor-slip handover staging
     //     and the harvest's own statistics guards all read it, and re-pointing them is a
@@ -114,10 +151,8 @@ void networkAmbFloatApplyDrops(
         const auto it = local_carry.find(
             std::make_tuple(sta, parts->satellite, parts->signal));
         if (it == local_carry.end()) continue;      // nothing carried ⇒ nothing to drop
-        const double fl = ambFloatBirthFloor(floor_base,
-                                             elevOf(sta, parts->satellite), elev_power);
-        if (ambFloatDrop(it->second, fl, pl_now_s, now_ep)) ++n_free;
-        else                                                ++n_idem;
+        if (dropAt(it->second, sta, parts->satellite)) ++n_free;
+        else                                           ++n_idem;
         note(it->first, it->second, AmbDropCause::kReLevelFree);
     }
     // (2) THE GAP CLIFF.  An arc PRESENT this epoch whose sighting gap already exceeds the
@@ -129,11 +164,8 @@ void networkAmbFloatApplyDrops(
     for (auto it = local_carry.begin(); it != local_carry.end(); ++it) {
         const double gap = pl_now_s - it->second.last_seen_s;
         if (!(gap > max_gap_s)) continue;
-        const double fl = ambFloatBirthFloor(floor_base,
-                                             elevOf(std::get<0>(it->first), std::get<1>(it->first)),
-                                             elev_power);
-        if (ambFloatDrop(it->second, fl, pl_now_s, now_ep)) ++n_stale;
-        else                                               ++n_idem;
+        if (dropAt(it->second, std::get<0>(it->first), std::get<1>(it->first))) ++n_stale;
+        else                                                                    ++n_idem;
         note(it->first, it->second, AmbDropCause::kStaleGap);
     }
 
@@ -145,6 +177,7 @@ void networkAmbFloatApplyDrops(
     counters.n_amb_drop_relevel_free += n_free;
     counters.n_amb_drop_stale_gap    += n_stale;
     counters.n_amb_drop_idempotent   += n_idem;
+    counters.n_amb_drop_floored      += n_dropfloor;
     if (log && n > 0)
         log->debug("Network (RF-1 step 4): TOW {:.1f} — dropped {} carried prior(s) back to "
                    "their birth variance ({} free-epoch latch, {} stale gap; {} already at "

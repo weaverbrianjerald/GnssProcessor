@@ -170,6 +170,23 @@ struct NetworkGrossLosTallies {
     double    v_abs_max_m = 0.0;     ///< Largest |v| (metres) any screened LOS reached.
     std::map<std::string, long long> declared_by_station;   ///< Declarations per station name.
     std::map<std::string, long long> declared_by_sat;       ///< Declarations per satellite.
+    // --- RF-3b (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5, requirement F6).
+    //     Maintained in BOTH states of every RF-3b sub-knob, so an arm that does not
+    //     arm a rule still reports the population that rule would have reached.
+    long long los_over_short = 0;    ///< B1's population: LOS-epochs whose evidence clears the bar under the AVAILABLE rule while the LOS has FEWER code rows than @c gross_los_min_rows — unreachable under the fixed rule.  Counted whatever the rule is.
+    long long bound_los_epochs = 0;  ///< B2: LOS-epochs on which a hold was re-applied over the carry (0 unless @c network.gross_los_bound).
+    long long bound_amb_held = 0;    ///< B2: carried ambiguity entries frozen at a declaration.
+    long long bound_iono_held = 0;   ///< B2: per-LOS iono carry entries frozen at a declaration.
+    double    folded_v_abs_max_m = 0.0;  ///< B5: the largest |v| (m) reached by a row that was actually FOLDED at the deweight — the F2 alarm (445.48 m on `runs/_rap_rf3_gl1`).  0 when nothing was ever folded.
+    long long declare_latency_sum_ep = 0;///< B5: summed per-episode latency, in screened epochs, from the LOS's first over-bar epoch to its declaration.
+    long long declare_latency_max_ep = 0;///< B5: the largest such latency.
+    long long emit_excluded = 0;     ///< B3: satellite-epochs whose contributor set lost a declared line of sight at the DECLARING epoch.
+    long long emit_withheld = 0;     ///< B3: satellite-epochs actually pruned from an emission because too few contributors remained.
+    long long emit_disc_marked = 0;  ///< B3: satellite-epochs emitted with a per-satellite discontinuity mark instead of being withheld.
+    long long sta_declared = 0;      ///< B4: STATION-level declarations.
+    long long sta_released = 0;      ///< B4: STATION-level releases.
+    long long sta_los_epochs = 0;    ///< B4: station-epochs spent under a standing station declaration.
+    std::map<std::string, long long> sta_declared_by_station;  ///< B4: station declarations per station name.
 };
 
 /**
@@ -219,6 +236,14 @@ struct GrossLosVerdict {
     double      r_max{0.0};      ///< Largest standardized residual on the LOS.
     double      v_abs_max{0.0};  ///< Largest |v| (metres) on the LOS.
     std::string signals;         ///< ';'-joined DISTINCT non-empty signal labels of the rows over @c k (event detail).
+    /// RF-3b B1: the bar this verdict was taken at — @c min_rows under the FIXED rule,
+    /// @c min(min_rows, n_rows) under the AVAILABLE one.  In the event detail so a
+    /// declaration states the bar it cleared rather than the configured constant.
+    int         min_rows_eff{0};
+    /// RF-3b B5: the evidence clears the AVAILABLE bar and the LOS has fewer code rows
+    /// than the configured @c min_rows — the population the fixed rule cannot reach.
+    /// Computed under BOTH rules, so an arm with the fixed rule still reports it.
+    bool        short_over{false};
 };
 
 /**
@@ -245,10 +270,16 @@ struct GrossLosVerdict {
  * @param k           Declaration bar, in units of the row's own σ.
  * @param min_rows    Rows that must clear @p k together (≥ 1).
  * @param clear_sigma Release bar, same units.
+ * @param min_rows_available RF-3b B1 (@c network.gross_los_min_rows_rule): read the bar
+ *                    as @c min(min_rows, the LOS's code rows this epoch) instead of the
+ *                    constant, so a line of sight with fewer rows than the constant is
+ *                    reachable while one with more keeps the multi-band corroboration.
+ *                    @ref GrossLosVerdict::short_over is filled under BOTH rules.
  * @return The verdict.
  */
 GrossLosVerdict networkGrossLosAssess(const std::vector<GrossLosSample>& rows,
-                                      double k, int min_rows, double clear_sigma);
+                                      double k, int min_rows, double clear_sigma,
+                                      bool min_rows_available = false);
 
 /**
  * @brief The persistent per-LOS disposition carried across epochs.
@@ -260,6 +291,12 @@ struct GrossLosState {
     double declared_tow{0.0};   ///< TOW of the declaration that is currently standing.
     double last_seen_s{0.0};    ///< Continuous seconds stamp of the last epoch this LOS produced a code row.
     long long n_declared{0};    ///< Declarations over the run for this LOS (an episode counter, not a flag).
+    /// RF-3b B5: TOW of the epoch that opened the CURRENT over-bar streak (0 = none) —
+    /// the per-episode latency's origin, so a declaration can state how long the
+    /// evidence stood before it acted rather than only when it acted.
+    double first_over_tow{0.0};
+    /// RF-3b B5: screened epochs since @ref first_over_tow, the same latency in epochs.
+    int    first_over_age_ep{0};
 };
 
 /// The edge a @ref networkGrossLosStep transition produced.
@@ -306,6 +343,46 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
                                  bool allow_declare = true);
 
 /**
+ * @brief RF-3b B3: which half of the screen a call runs.
+ *
+ * The screen has always had two halves with opposite ordering constraints.  The
+ * DECISION (assess the post-fit code rows, advance the state machine, emit both
+ * edges, publish the deweight) needs only the solved epoch and must land BEFORE the
+ * emission if a declaration is to reach the epoch it declares; the RESPONSE (erase or
+ * hold the carried level, erase the per-LOS iono, mark pending-reseed) must land AFTER
+ * the carry harvest or the harvest simply re-stashes what it removed.  With
+ * @c network.gross_los_emit_exclude OFF both run in one call at the post-harvest site,
+ * which is today's behaviour byte for byte; ON they are split across the epoch.
+ */
+enum class GrossLosPhase {
+    Full,    ///< (default) decide and respond in one call at the post-harvest site.
+    Decide,  ///< Decide only; the declarations and releases are deferred to @ref networkGrossLosAct.
+    Act      ///< Apply the deferred response of this epoch's @c Decide pass.
+};
+
+/**
+ * @brief RF-3b B3: apply the response the @c Decide phase deferred.
+ *
+ * Runs at the post-harvest site.  For every line of sight the decision declared this
+ * epoch it applies the carry response (the erase, or the HOLD under
+ * @c network.gross_los_bound); for every one it released or expired it drops the hold;
+ * and for every line of sight still declared it re-applies the hold over whatever the
+ * harvest re-stashed, which is what keeps the folded code row's residual a measure of
+ * the fault rather than a random walk.
+ *
+ * A no-op when the screen is off or the seam was not split.
+ *
+ * @param ctx      [in/out] the carry (the two maps the response reaches, the holds) and counters.
+ * @param log      "main_log".
+ * @param stations [in/out] @c sm->markAmbiguityPendingReseed on a declaration.
+ * @param asm_res  Per-station assembly — the ambiguity pool the response walks.
+ */
+void networkGrossLosAct(NetworkRunContext& ctx,
+                        const std::shared_ptr<spdlog::logger>& log,
+                        std::vector<NetStation>& stations,
+                        const std::vector<StationAssembly>& asm_res);
+
+/**
  * @brief Run the gross-LOS screen for this epoch (the seam).
  *
  * Walks each station in the solve once, forms @f$v = y - A_s x_s - A_r x_r@f$,
@@ -338,6 +415,7 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
  * @param asm_res       Per-station assembly (A_s / A_r / y / w / pl_amb / qc_amb).
  * @param est_index_of  Station → reduced-system index (< 0 = absent from the solve).
  * @param now_s         Continuous seconds (week·604800 + TOW) for the gap edge.
+ * @param phase         RF-3b B3: which half to run.  @c Full is today's single call.
  */
 void networkGrossLosScreen(NetworkRunContext& ctx,
                            const GnssConfig& config_,
@@ -349,7 +427,8 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                            const Eigen::VectorXd& x_s,
                            const std::vector<StationAssembly>& asm_res,
                            const std::vector<int>& est_index_of,
-                           double now_s);
+                           double now_s,
+                           GrossLosPhase phase = GrossLosPhase::Full);
 
 /**
  * @brief Republish each station's CODE-row σ scale from the declared set.

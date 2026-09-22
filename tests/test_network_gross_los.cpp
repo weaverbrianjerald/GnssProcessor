@@ -31,8 +31,10 @@
  */
 #include <gtest/gtest.h>
 
+#include "app/NetworkRunContext.hpp"     // RF-3b: the ACT half's carry + counters
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkGrossLos.hpp"
+#include "filter/NetworkRunTypes.hpp"    // RF-3b: NetStation / StationAssembly / LocalCarry
 #include "logging/LogManager.hpp"
 
 #include <filesystem>
@@ -516,4 +518,232 @@ TEST(NetworkGrossLosConfig, NonsenseKnobsAreClampedLoudly) {
     // rule would stand a satellite down on a single bad line of sight, which is
     // the opposite of what it is for.  Clamped to 2, loudly.
     EXPECT_EQ(nc.gross_los_sat_min_stations, 2);
+}
+
+// ===========================================================================
+// RF-3b (docs/refound/RF-3_code_row_qc_2026-09-22.md §4) — the screen made
+// complete.  Four sub-rules, each default = today's behaviour.
+// ===========================================================================
+
+// B1 (F1).  The constant's rationale holds for a line of sight that HAS several code
+// rows and is false for one that has lost every signal but a single band-1 code, where
+// the bar is unsatisfiable by construction.  The rule keeps both halves.
+TEST(NetworkGrossLosRf3b, AvailableRuleReachesAOneRowLosAndKeepsTwoForAThreeRowOne) {
+    const std::vector<GrossLosSample> one = { row("C1C", 201.8, 112.5) };
+    // FIXED: a one-row line of sight can never clear a bar of 2 — this is exactly why
+    // four of the six largest episodes of the RF-3 read were unreachable.
+    const GrossLosVerdict f = networkGrossLosAssess(one, 8.0, 2, 3.0, /*available=*/false);
+    EXPECT_FALSE(f.over);
+    EXPECT_EQ(f.min_rows_eff, 2);
+    EXPECT_TRUE(f.short_over) << "the population must be COUNTED under the fixed rule "
+                                 "too, or an unarmed run cannot report what it missed";
+    // AVAILABLE: the bar is min(2, 1) = 1 and the line of sight declares.
+    const GrossLosVerdict a = networkGrossLosAssess(one, 8.0, 2, 3.0, /*available=*/true);
+    EXPECT_TRUE(a.over);
+    EXPECT_EQ(a.min_rows_eff, 1);
+    EXPECT_TRUE(a.short_over);
+
+    // A three-row line of sight keeps the multi-band corroboration under BOTH rules:
+    // one loud row out of three is one band's multipath, and is refused.
+    const std::vector<GrossLosSample> three = { row("C1C", 158.0, -142.0),
+                                               row("C1W", 1.2, -1.0),
+                                               row("C2W", 0.9, -0.8) };
+    for (bool avail : { false, true }) {
+        const GrossLosVerdict d = networkGrossLosAssess(three, 8.0, 2, 3.0, avail);
+        EXPECT_FALSE(d.over) << "available must not become min_rows = 1 on a line of "
+                                "sight that HAS the rows to corroborate with";
+        EXPECT_EQ(d.min_rows_eff, 2);
+        EXPECT_FALSE(d.short_over);
+    }
+    // Two of the three over the bar declares under both rules, as it always did.
+    const std::vector<GrossLosSample> two_over = { row("C1C", 158.0, -142.0),
+                                                  row("C1W", 91.0, -82.0),
+                                                  row("C2W", 0.9, -0.8) };
+    EXPECT_TRUE(networkGrossLosAssess(two_over, 8.0, 2, 3.0, false).over);
+    EXPECT_TRUE(networkGrossLosAssess(two_over, 8.0, 2, 3.0, true).over);
+}
+
+namespace {
+
+/// One station carrying one line of sight with one signal — enough for the RESPONSE
+/// half of the screen to have something to reach.
+StationAssembly oneLosAssembly(const std::string& sat, const std::string& sig) {
+    StationAssembly R;
+    R.ok = true;
+    PlAmb pa;
+    pa.sat      = sat;
+    pa.signal   = sig;
+    pa.amb_key  = sat + "_" + sig;
+    pa.col      = 0;
+    pa.elev_deg = 30.0;
+    R.pl_amb.push_back(pa);
+    return R;
+}
+
+} // namespace
+
+// B2 (F2), standing invariant #7's decoupling edge.  With the bound armed a declaration
+// FREEZES the line of sight's carried level and iono at their pre-declaration values
+// rather than erasing them, and re-applies them over whatever the harvest re-stashed —
+// which is what keeps the folded code row's residual a measure of the fault.
+TEST(NetworkGrossLosRf3b, BoundHoldsTheFreedStatesInsteadOfErasingThem) {
+    LogManager log; GnssConfig cfg;
+    ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
+                         "    \"gross_los_bound\": true,\n", cfg, log, "bound"));
+    EXPECT_TRUE(cfg.getNetworkConfig().gross_los_bound);
+    // The knobs are resolved from the config by the context's constructor, so the
+    // arm above IS the arm under test — a test that poked ctx.knobs directly could
+    // pass with a loader that never sets them.
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    ASSERT_TRUE(ctx.knobs.gl_on);
+    ASSERT_TRUE(ctx.knobs.gl_bound);
+
+    std::vector<NetStation> stations(1);
+    stations[0].name = "STA1";
+    std::vector<StationAssembly> asm_res{ oneLosAssembly("G13", "L1C") };
+
+    const auto lk = std::make_tuple(0, std::string("G13"), std::string("L1C"));
+    const std::pair<int, std::string> ik{ 0, "G13" };
+    LocalCarry lc{ 42.5, 1.0e-6, 100.0 };
+    lc.coupling = { CoupledShared{ SharedParamKind::Clock, "G13", "", 0, 0, 'C',
+                                   0, 0.8, 1.5, 0.2 } };
+    ctx.carry.local_carry[lk] = lc;
+    ctx.carry.iono_carry[ik] = LocalCarry{ 3.25, 1.0e-4, 100.0 };
+
+    ctx.carry.gl_act_declare.push_back({ 0, "G13" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+
+    // The entry is STILL THERE, at its pre-declaration value and variance, with the
+    // border regression cleared (that half IS the decoupling).
+    ASSERT_EQ(ctx.carry.local_carry.count(lk), 1u);
+    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].value_abs, 42.5);
+    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].var, 1.0e-6);
+    EXPECT_TRUE(ctx.carry.local_carry[lk].coupling.empty());
+    ASSERT_EQ(ctx.carry.gl_hold_amb.count(lk), 1u);
+    EXPECT_EQ(ctx.carry.iono_carry.count(ik), 1u);
+    EXPECT_EQ(ctx.counters.gross_los.bound_amb_held, 1);
+    EXPECT_EQ(ctx.counters.gross_los.bound_iono_held, 1);
+
+    // A harvest moves the carried value; the next ACT pass must put it back, or the
+    // "fixed prior with zero process noise" is nominal only.
+    ctx.carry.local_carry[lk].value_abs = 999.0;
+    ctx.carry.iono_carry[ik].value_abs = -7.0;
+    ctx.carry.gl_act_declare.clear();
+    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].value_abs, 42.5);
+    EXPECT_DOUBLE_EQ(ctx.carry.iono_carry[ik].value_abs, 3.25);
+    EXPECT_GE(ctx.counters.gross_los.bound_los_epochs, 1);
+
+    // The RELEASE edge drops the hold, and the states continue from where they were
+    // held (standing invariant #7's re-coupling edge).
+    ctx.carry.gl_act_release.push_back({ 0, "G13" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    EXPECT_TRUE(ctx.carry.gl_hold_amb.empty());
+    EXPECT_TRUE(ctx.carry.gl_hold_iono.empty());
+    ctx.carry.local_carry[lk].value_abs = 11.0;
+    ctx.carry.gl_act_release.clear();
+    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].value_abs, 11.0);
+}
+
+// The OFF path is today's ERASE, unchanged: the same call with the bound unarmed
+// removes the entry and its iono carry.  The two forms are exclusive by construction.
+TEST(NetworkGrossLosRf3b, WithoutTheBoundTheResponseIsStillTheErase) {
+    LogManager log; GnssConfig cfg;
+    ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n", cfg, log, "nobound"));
+    EXPECT_FALSE(cfg.getNetworkConfig().gross_los_bound);
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    ASSERT_TRUE(ctx.knobs.gl_on);
+    ASSERT_FALSE(ctx.knobs.gl_bound);
+    std::vector<NetStation> stations(1);
+    stations[0].name = "STA1";
+    std::vector<StationAssembly> asm_res{ oneLosAssembly("G13", "L1C") };
+    const auto lk = std::make_tuple(0, std::string("G13"), std::string("L1C"));
+    const std::pair<int, std::string> ik{ 0, "G13" };
+    ctx.carry.local_carry[lk] = LocalCarry{ 42.5, 1.0e-6, 100.0 };
+    ctx.carry.iono_carry[ik] = LocalCarry{ 3.25, 1.0e-4, 100.0 };
+    ctx.carry.gl_act_declare.push_back({ 0, "G13" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    EXPECT_EQ(ctx.carry.local_carry.count(lk), 0u);
+    EXPECT_EQ(ctx.carry.iono_carry.count(ik), 0u);
+    EXPECT_TRUE(ctx.carry.gl_hold_amb.empty());
+    EXPECT_EQ(ctx.counters.gross_los.iono_erased, 1);
+}
+
+// B4 (F4).  The station tier is ONE verdict: the deferred station declaration reaches
+// every satellite the station was last seen screening, once, and its scale publish
+// folds every one of that station's code rows.
+TEST(NetworkGrossLosRf3b, StationTierRespondsOnceForTheWholeStation) {
+    LogManager log; GnssConfig cfg;
+    ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
+                         "    \"gross_los_station_tier\": true,\n", cfg, log, "statier"));
+    EXPECT_TRUE(cfg.getNetworkConfig().gross_los_station_tier);
+    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    ASSERT_TRUE(ctx.knobs.gl_on);
+    ASSERT_TRUE(ctx.knobs.gl_station_tier);
+    ASSERT_DOUBLE_EQ(ctx.knobs.gl_deweight, 100.0);
+
+    std::vector<NetStation> stations(1);
+    stations[0].name = "STA1";
+    StationAssembly R = oneLosAssembly("G13", "L1C");
+    PlAmb pa2; pa2.sat = "G22"; pa2.signal = "L1C"; pa2.amb_key = "G22_L1C";
+    pa2.col = 1; pa2.elev_deg = 40.0;
+    R.pl_amb.push_back(pa2);
+    std::vector<StationAssembly> asm_res{ R };
+
+    ctx.carry.local_carry[std::make_tuple(0, std::string("G13"), std::string("L1C"))] =
+        LocalCarry{ 1.0, 1e-6, 0.0 };
+    ctx.carry.local_carry[std::make_tuple(0, std::string("G22"), std::string("L1C"))] =
+        LocalCarry{ 2.0, 1e-6, 0.0 };
+    auto& sst = ctx.carry.gl_sta_state[0];
+    sst.gross = true;
+    sst.sats = { "G13", "G22" };
+    ctx.carry.gl_act_station.push_back({ 0, true });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    // One verdict, both lines of sight answered — not two sequential declarations.
+    EXPECT_EQ(ctx.carry.local_carry.size(), 0u);
+    EXPECT_EQ(ctx.counters.gross_los.amb_refloated, 2);
+    // The publish half folds EVERY satellite the station tracks.
+    networkGrossLosPublishScales(ctx, stations);
+    EXPECT_EQ(stations[0].gl_code_sigma_scale.size(), 2u);
+    EXPECT_DOUBLE_EQ(stations[0].gl_code_sigma_scale["G13"], 100.0);
+    EXPECT_DOUBLE_EQ(stations[0].gl_code_sigma_scale["G22"], 100.0);
+    // Released, the station stops folding anything.
+    sst.gross = false;
+    networkGrossLosPublishScales(ctx, stations);
+    EXPECT_TRUE(stations[0].gl_code_sigma_scale.empty());
+}
+
+// All four sub-rules parse, and all four default to today's behaviour so an existing
+// arm is a ONE-knob change rather than a posture change.
+TEST(NetworkGrossLosRf3b, SubRulesParseAndDefaultToTodaysBehaviour) {
+    LogManager log; GnssConfig cfg;
+    ASSERT_TRUE(loadWith("", cfg, log, "rf3b_def"));
+    const auto& d = cfg.getNetworkConfig();
+    EXPECT_EQ(d.gross_los_min_rows_rule, NetworkGrossLosMinRowsRule::Fixed);
+    EXPECT_FALSE(d.gross_los_bound);
+    EXPECT_FALSE(d.gross_los_emit_exclude);
+    EXPECT_FALSE(d.gross_los_station_tier);
+
+    LogManager log2; GnssConfig cfg2;
+    ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
+                         "    \"gross_los_min_rows_rule\": \"available\",\n"
+                         "    \"gross_los_bound\": true,\n"
+                         "    \"gross_los_emit_exclude\": true,\n"
+                         "    \"gross_los_station_tier\": true,\n",
+                         cfg2, log2, "rf3b_on"));
+    const auto& a = cfg2.getNetworkConfig();
+    EXPECT_EQ(a.gross_los_min_rows_rule, NetworkGrossLosMinRowsRule::Available);
+    EXPECT_TRUE(a.gross_los_bound);
+    EXPECT_TRUE(a.gross_los_emit_exclude);
+    EXPECT_TRUE(a.gross_los_station_tier);
+
+    // A typo falls back to the pre-card rule rather than to an invented one: shipping
+    // the unreachable half of the population silently is the failure this guards.
+    LogManager log3; GnssConfig cfg3;
+    ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
+                         "    \"gross_los_min_rows_rule\": \"availble\",\n",
+                         cfg3, log3, "rf3b_typo"));
+    EXPECT_EQ(cfg3.getNetworkConfig().gross_los_min_rows_rule,
+              NetworkGrossLosMinRowsRule::Fixed);
 }

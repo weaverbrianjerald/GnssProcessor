@@ -157,6 +157,11 @@ namespace GnssProcessor {
         /// arc's first-stash variance when the harvest records @ref LocalCarry::var_birth.
         /// 0.0 (default) = unfloored, so var_birth == var_first to the ULP.
         double amb_birth_var_floor{};
+        /// RF-3a: network.amb_float_drop_var_m2 — the FLOOR (m²) applied at a DROP ONLY,
+        /// so the restored prior is max(var_birth, var_first, birth floor, THIS), while
+        /// the birth stash keeps reading @ref amb_birth_var_floor alone.  0.0 (default)
+        /// is today's behaviour.
+        double amb_drop_var_floor{};
         /// RF-1 §3.5: network.amb_float_q_m2s — process noise on the ambiguity block
         /// under float_kf.  The card's posture is 0.0; carried here so the run manifest
         /// and the run-end telemetry can state it.  ⚠ INERT in step 1.
@@ -394,6 +399,19 @@ namespace GnssProcessor {
         /// ANDed with @ref gl_on — the satellite rule is a scope decision ON the gross-LOS
         /// rule and cannot fire without it.  OFF ⇒ no tally, no state, byte-identical.
         bool   gl2_on{};
+        /// RF-3b B1: network.gross_los_min_rows_rule == available.  ANDed with @ref gl_on.
+        bool   gl_min_rows_available{};
+        /// RF-3b B2: network.gross_los_bound — the declared LOS's freed states are HELD at
+        /// their pre-declaration values with zero process noise instead of erased.  ANDed
+        /// with @ref gl_on.
+        bool   gl_bound{};
+        /// RF-3b B3: network.gross_los_emit_exclude — the screen's DECISION half runs ahead
+        /// of the epoch's emission and the declared line of sight leaves its satellite's
+        /// contributor set for that epoch.  ANDed with @ref gl_on.
+        bool   gl_emit_exclude{};
+        /// RF-3b B4: network.gross_los_station_tier — the whole-station guard becomes a
+        /// STATION-level declaration with its own two edges.  ANDed with @ref gl_on.
+        bool   gl_station_tier{};
         /// QUEUE item 4 R2 (SPEC_t3_null_derivation §6/§7.5): declared per-station
         /// variance factor — measure-only, feeds no denominator.
         bool   staf_on{};
@@ -1484,6 +1502,51 @@ namespace GnssProcessor {
         std::map<std::string, long long> gl_event_last;
         /// Card GL: screened-epoch sequence number, the holdoff's clock.
         long long gl_seq{ 0 };
+        /// RF-3b B2 (@c network.gross_los_bound): the HELD carried ambiguity levels of the
+        /// declared lines of sight, keyed (station index, satellite, signal) exactly as
+        /// @ref local_carry is.  Written ONCE, at the declaration, from the PRE-declaration
+        /// entry with its border coupling and joint block cleared; re-applied over
+        /// @ref local_carry after every harvest for as long as the declaration stands;
+        /// erased at the release or the expiry.  Empty unless @c knobs.gl_bound.
+        std::map<std::tuple<int, std::string, std::string>, LocalCarry> gl_hold_amb;
+        /// RF-3b B2: the HELD per-LOS iono carries, keyed (station index, satellite) as
+        /// @ref iono_carry is.  Same lifecycle as @ref gl_hold_amb.
+        std::map<std::pair<int, std::string>, LocalCarry> gl_hold_iono;
+        /// RF-3b B2: the HELD in-block per-LOS iono carries (@ref iono_blk_carry's twin).
+        std::map<std::pair<int, std::string>, LocalCarry> gl_hold_iono_blk;
+        /// RF-3b B4 (@c network.gross_los_station_tier): the STATION-level dispositions,
+        /// keyed by station index.  @c gross means every one of that station's code rows
+        /// folds at the deweight; @c sats is the satellite set the last screened epoch saw,
+        /// which is what @ref networkGrossLosPublishScales turns into per-satellite scales
+        /// (the assembly's map is per satellite, so a station-wide fold is expressed as
+        /// "every satellite this station tracks").  Empty unless @c knobs.gl_station_tier.
+        struct GrossLosStationState {
+            bool   gross{ false };       ///< The station is declared.
+            int    clear_streak{ 0 };    ///< Consecutive screened epochs at or under the cap while declared.
+            double declared_tow{ 0.0 };  ///< TOW of the standing declaration.
+            long long n_declared{ 0 };   ///< Declarations over the run for this station.
+            std::set<std::string> sats;  ///< Satellites the station was last seen screening.
+        };
+        std::map<int, GrossLosStationState> gl_sta_state;
+        /// RF-3b B3 (@c network.gross_los_emit_exclude): satellites whose records this
+        /// epoch's emission must WITHHOLD because a declared line of sight took their
+        /// contributing station count below @c network.gross_los_sat_min_stations.  Drained
+        /// by @c networkSolPrep beside the GL-2 prune.  Rebuilt every screened epoch.
+        std::set<std::string> gl_emit_withhold;
+        /// RF-3b B3: satellites this epoch's emission must mark with a per-satellite
+        /// DISCONTINUITY because a declared line of sight left their contributor set while
+        /// enough stations remained to emit.  Drained by @c networkSolPrep.
+        std::set<std::string> gl_emit_disc;
+        /// RF-3b B3: the lines of sight the DECISION half declared this epoch, deferred to
+        /// the ACT half (which must run after the carry harvest).  Rebuilt every screened
+        /// epoch; empty unless @c knobs.gl_emit_exclude split the seam in two.
+        std::vector<std::pair<int, std::string>> gl_act_declare;
+        /// RF-3b B3: the lines of sight the DECISION half released or expired this epoch —
+        /// the ACT half drops their hold.  Same lifecycle as @ref gl_act_declare.
+        std::vector<std::pair<int, std::string>> gl_act_release;
+        /// RF-3b B3/B4: the stations the DECISION half declared (@c true) or released
+        /// (@c false) this epoch, deferred to the ACT half.
+        std::vector<std::pair<int, bool>> gl_act_station;
         /// RX-CLK-in-block (@c network.carry_rx_clock_in_block): the carried
         /// receiver-clock-family local columns, keyed (station index, kind) with kind ""
         /// for the PRIMARY receiver clock and the system name for each ISB.  Value is the
@@ -2767,6 +2830,20 @@ namespace GnssProcessor {
         long long n_amb_drop_t3           = 0;  ///< …of which from the RAIM per-satellite consensus refloat (was: ERASE the entry).
         long long n_amb_drop_idempotent   = 0;  ///< drop calls that found the arc ALREADY at or below birth strength — two detectors on one arc in one epoch, or an arc that never converged.  The age clock still restarts; the variance does not move.
         long long n_amb_birth_floored     = 0;  ///< birth stashes whose var_birth was RAISED by network.amb_float_birth_var_m2 above the arc's own first-stash variance — the ON-path telemetry of the floor (invariant #4: 0 under an armed floor means every arc was already born looser than it).
+        // RF-3a (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A2) — the DROP-ONLY
+        //     floor's own telemetry, maintained in BOTH knob states so an OFF run reports
+        //     the walk it suffers (standing invariant #4).
+        long long n_amb_drop_floored      = 0;  ///< drops whose restored variance CAME FROM network.amb_float_drop_var_m2 — that is, the drop floor at this LOS exceeded max(var_birth, var_first, birth floor).  0 by construction with the knob at 0.
+        /// RF-3a A2: |value change| (m) the FIRST fold after a drop absorbed, one entry per
+        /// drop that restarted the age clock.  Measured at the harvest from the carry's
+        /// value before and after that fold, so it is the size of the correction the drop's
+        /// restored prior let through in one epoch.  With a stiff restored prior the first
+        /// fold absorbs little and the value then WALKS for tens of epochs; with a stated
+        /// floor the correction lands at once.  Read at run end as max and median.
+        std::vector<double> amb_walk_fold1_m;
+        /// RF-3a A2: the same at the SECOND fold after the drop — the residual walk itself.
+        /// A stiff restored prior is still moving here; a floored one has settled.
+        std::vector<double> amb_walk_fold2_m;
         long long n_amb_stransform        = 0;  ///< RF-1 step 5: declared anchor S-transformations applied to the carry (one per (sat,signal) family per handover).
         long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.
         long long n_amb_sts_identity      = 0;  ///< …families whose Δ was exactly 0 (already in the new basis — a station re-pinning itself): the transform is the identity, and the family is still OWNED (no erase).

@@ -4221,6 +4221,32 @@ namespace GnssProcessor {
         if (network_config_.amb_float_birth_var_m2 < 0.0)
             throw std::runtime_error("network.amb_float_birth_var_m2 must be >= 0 "
                                      "(0 = use the arc's own first-stash variance unfloored)");
+        // RF-3a (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1): the DROP-ONLY floor.
+        // Separate from the birth floor because the RF-3 read measured that the defect is
+        // the re-coupling edge of the slip and gap re-entry response, not the birth: a
+        // birth floor removes the post-drop walk AND slows every birth (hour 1 0.56 ->
+        // 0.66 m at WTZZ00DEU, census hour 1 +0.03 to +0.04 m), while the drop is where
+        // the stale stiff variance is handed back.
+        network_config_.amb_float_drop_var_m2 =
+            jval<double>(json, "network.amb_float_drop_var_m2", "amb_float_drop_var_m2", 0.0);
+        if (network_config_.amb_float_drop_var_m2 < 0.0)
+            throw std::runtime_error("network.amb_float_drop_var_m2 must be >= 0 "
+                                     "(0 = a drop restores max(var_birth, var_first) "
+                                     "unfloored, which is today's behaviour)");
+        if (network_config_.amb_float_drop_var_m2 > 0.0
+            && network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf)
+            log->warn("Network (RF-3a): network.amb_float_drop_var_m2 = {:g} m^2 is set but "
+                      "network.ambiguity_vehicle is not 'float_kf' — the bounded DROP is the "
+                      "float vehicle's response, so the floor is INERT on this posture.  "
+                      "Read this as a miswired arm, not as a null result.",
+                      network_config_.amb_float_drop_var_m2);
+        else if (network_config_.amb_float_drop_var_m2 > 0.0)
+            log->info("Network (RF-3a drop-only floor): ON — every DROP that restores the "
+                      "birth prior restores max(var_birth, var_first, {:g}, {:g}) m^2, "
+                      "elevation-mapped at the code weights' power.  The BIRTH stash is "
+                      "untouched, so hour 1 is untouched.  SOLVE-AFFECTING.",
+                      network_config_.amb_float_birth_var_m2,
+                      network_config_.amb_float_drop_var_m2);
         network_config_.amb_float_q_m2s =
             jval<double>(json, "network.amb_float_q_m2s", "amb_float_q_m2s", 0.0);
         if (network_config_.amb_float_q_m2s < 0.0)
@@ -6472,6 +6498,49 @@ namespace GnssProcessor {
             gnc.gross_los_event_holdoff_ep =
                 jval<int>(json, "network.gross_los_event_holdoff_ep",
                           "gross_los_event_holdoff_ep", 0);
+            // --- RF-3b (docs/refound/RF-3_code_row_qc_2026-09-22.md §4): the four
+            // sub-rules that make the screen complete.  All default to today's behaviour,
+            // so an existing arm's bytes are unchanged.
+            {
+                const std::string mrr =
+                    jval<std::string>(json, "network.gross_los_min_rows_rule",
+                                      "gross_los_min_rows_rule", std::string{"fixed"});
+                if (mrr.empty() || mrr == "fixed")
+                    gnc.gross_los_min_rows_rule = NetworkGrossLosMinRowsRule::Fixed;
+                else if (mrr == "available")
+                    gnc.gross_los_min_rows_rule = NetworkGrossLosMinRowsRule::Available;
+                else {
+                    gnc.gross_los_min_rows_rule = NetworkGrossLosMinRowsRule::Fixed;
+                    log->error("Network (RF-3b B1): network.gross_los_min_rows_rule = '{}' is "
+                               "not one of fixed|available — falling back to 'fixed'.  The "
+                               "rule decides whether a line of sight with FEWER code rows "
+                               "than network.gross_los_min_rows is reachable at all; a typo "
+                               "here silently ships the unreachable half of the population.",
+                               mrr);
+                }
+            }
+            gnc.gross_los_bound =
+                jval<bool>(json, "network.gross_los_bound", "gross_los_bound", false);
+            gnc.gross_los_emit_exclude =
+                jval<bool>(json, "network.gross_los_emit_exclude",
+                           "gross_los_emit_exclude", false);
+            gnc.gross_los_station_tier =
+                jval<bool>(json, "network.gross_los_station_tier",
+                           "gross_los_station_tier", false);
+            if (!gnc.gross_los_screen
+                && (gnc.gross_los_min_rows_rule != NetworkGrossLosMinRowsRule::Fixed
+                    || gnc.gross_los_bound || gnc.gross_los_emit_exclude
+                    || gnc.gross_los_station_tier))
+                log->warn("Network (RF-3b): a gross-LOS sub-rule is set "
+                          "(min_rows_rule={}, bound={}, emit_exclude={}, station_tier={}) "
+                          "while network.gross_los_screen is OFF — the seam is never "
+                          "entered, so all four are INERT.  Read this as a miswired arm, "
+                          "not as a null result.",
+                          gnc.gross_los_min_rows_rule == NetworkGrossLosMinRowsRule::Available
+                              ? "available" : "fixed",
+                          gnc.gross_los_bound ? "true" : "false",
+                          gnc.gross_los_emit_exclude ? "true" : "false",
+                          gnc.gross_los_station_tier ? "true" : "false");
             gnc.gross_los_warmup_epochs =
                 jval<int>(json, "network.gross_los_warmup_epochs", "gross_los_warmup_epochs", 120);
             gnc.gross_los_max_station_frac =
@@ -6548,6 +6617,54 @@ namespace GnssProcessor {
                               "271200.  §24.18's status line: NOT consumer-safe without "
                               "§24.19.");
 
+                // --- RF-3b banners.  One line per armed sub-rule, each naming the
+                // population it reaches and the measurement that motivated it, so a run's
+                // stdout states which of the four halves of card RF-3b were in force.
+                if (gnc.gross_los_min_rows_rule == NetworkGrossLosMinRowsRule::Available)
+                    log->info("Network producer (gross-LOS, RF-3b B1): the declaration bar is "
+                              "min(gross_los_min_rows = {}, the LOS's code rows this epoch) — a "
+                              "line of sight that has ONE code row is reachable, a line of "
+                              "sight that has three still needs {}.  MEASURED reason: four of "
+                              "the six largest episodes on runs/_rf0hv9_field6 (BSHM00ISR G13 "
+                              "and G22, KIT300UZB G22) have exactly one code row because the "
+                              "station lost every other signal, so the fixed bar of 2 is "
+                              "unsatisfiable by construction.",
+                              gnc.gross_los_min_rows, gnc.gross_los_min_rows);
+                if (gnc.gross_los_bound)
+                    log->info("Network producer (gross-LOS, RF-3b B2): the DECOUPLING edge is "
+                              "BOUNDED — a declared line of sight's carried ambiguity levels "
+                              "and its per-LOS iono carry are HELD at their pre-declaration "
+                              "values and variances with zero process noise (border coupling "
+                              "and joint block cleared) instead of being erased, and are "
+                              "re-applied after every harvest while the declaration stands.  "
+                              "The folded code row's residual then stays a MEASURE of the "
+                              "fault: with the erase it ran to 445.5 m on BSHM00ISR G13 and "
+                              "the release test could never fire, so 2 of 7 declarations ended "
+                              "by EXPIRY (standing invariant #7).");
+                if (gnc.gross_los_emit_exclude)
+                    log->info("Network producer (gross-LOS, RF-3b B3): the screen's DECISION "
+                              "half runs BEFORE the epoch's emission, and a declared line of "
+                              "sight leaves its satellite's CONTRIBUTOR SET for that epoch — "
+                              "the satellite is WITHHELD when fewer than {} contributing "
+                              "stations remain, otherwise emitted with a per-satellite "
+                              "discontinuity mark.  ⚠ The emitted clock and code bias are "
+                              "joint-solve shared states, so the VALUE is not re-solved "
+                              "without the line of sight; what lands on the declaring epoch is "
+                              "the contributor-set exclusion and its declaration on the wire.  "
+                              "The carry response still runs after the harvest.",
+                              gnc.gross_los_sat_min_stations);
+                if (gnc.gross_los_station_tier)
+                    log->info("Network producer (gross-LOS, RF-3b B4): the whole-station guard "
+                              "is a VERDICT, not only a hold — a station over the {:g} fraction "
+                              "declares at STATION level with its own two edges, folds every "
+                              "one of its code rows at sigma x {:g}, and releases when its "
+                              "over-bar fraction sits at or under the cap for {} consecutive "
+                              "screened epochs.  Today's hold merely defers: at BSHM00ISR the "
+                              "guard fired at TOW 269310 (n_over=5 of n_los=7) and the per-LOS "
+                              "declaration landed at 269340 on the same evidence, which is how "
+                              "a station fault becomes N line-of-sight faults.",
+                              gnc.gross_los_max_station_frac, gnc.gross_los_deweight,
+                              gnc.gross_los_clear_epochs);
                 if (!(gnc.gross_los_max_station_frac > 0.0)) {
                     log->warn("Network (gross-LOS screen): network.gross_los_max_station_frac = "
                               "{:g} would stand the screen down at every station — clamped to 1.0 "
