@@ -369,6 +369,11 @@ state and stays as history; the float vehicle IS the posture now.  Field 6 h con
 0.059 0.028 0.030 0.036 0.045 m by hour, sim 0.598 0.103 0.096 0.056 0.055 0.049 m
 (`runs/_rf0hv9_{field,sim}6`).  Development checks run on 2 h arms (rapid mode, the author's
 directive of 2026-09-22); 6 h is for adoption, the census and the baselines.
+Card RF-3 (2026-09-22, later that day): the gross line-of-sight screen with its one-row rule and
+same-epoch emission exclusion (`network.gross_los_screen`, `gross_los_min_rows_rule: available`,
+`gross_los_emit_exclude`) is armed in the bases and pinned in the goldens (30 pins, `--verify` 61
+armed); baseline pair `runs/_rf0hv10_{field,sim}6` (field 0.560 0.059 0.028 0.030 0.039 0.048 m,
+sim byte-identical to `_rf0hv9_sim6`).
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base

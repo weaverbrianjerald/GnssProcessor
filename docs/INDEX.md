@@ -129,9 +129,10 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
-- [RF-3](refound/RF-3_code_row_qc_2026-09-22.md): open (BUILT 2026-09-22, two rounds; recommendation: arm
-  the screen's one-row rule and same-epoch emission, leave the drop floor OFF as a trade the census
-  does not decide, the hold KEEP OFF; the author's decision), QC
+- [RF-3](refound/RF-3_code_row_qc_2026-09-22.md): open (ARMED 2026-09-22, the author's decision: the
+  screen's one-row rule and same-epoch emission exclusion in both bases, ledger A11, golden pins,
+  baseline pair `runs/_rf0hv10_{field,sim}6`; the drop floor built and OFF, the hold KEEP OFF;
+  RF-3c's wire writer owed), QC
   that acts on code rows: the 101 gross post-fit code rows at full weight are the RE-COUPLING edge
   of the slip response, not code faults (five of six episodes have clean data; a refloat re-births
   the ambiguity at the arc's first-stash variance and the level walks for 24 epochs); the gross-LOS
