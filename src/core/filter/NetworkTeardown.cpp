@@ -11,6 +11,7 @@
 #include "filter/NetworkTeardown.hpp"
 
 #include "app/NetworkRunContext.hpp"
+#include "filter/NetworkChannelAll.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "measurement/MeasurementModel.hpp"   // complete type for NetStation::mm
 #include "model/PppModel.hpp"                  // complete type for NetStation::model (wind-up census)
@@ -2919,7 +2920,7 @@ int networkTeardown(
     // ROW counts are accumulated inside the PARALLEL produce phase and live
     // per-station (the eb_rows_deweighted precedent); sum them here, before the
     // block reads them.
-    if (config_.networkSecondCodeChannel()) {
+    if (config_.networkSecondCodeRowsActive()) {
         auto& C = ctx.counters.second_code;
         C.rows          = 0;
         C.fallback_rows = 0;
@@ -2975,7 +2976,7 @@ int networkTeardown(
     // bar, so the run has to state it (standing invariant #4).  The ROW count is
     // accumulated inside the PARALLEL produce phase and lives per-station; sum it
     // here, before the block reads it.
-    if (config_.networkSecondPhaseChannel()) {
+    if (config_.networkSecondPhaseRowsActive()) {
         auto& C = ctx.counters.second_phase;
         C.rows = 0;
         for (const auto& st : stations) C.rows += st.spc_rows;
@@ -6371,6 +6372,12 @@ int networkTeardown(
     // guard, for the reason the two clauses above give: an observatory that ran on
     // a run which produced nothing is exactly the run whose table matters.
     networkSignalRosterRunEnd(ctx, log);
+    // Card SID phase 6b: the all-channel family census and the cross-channel
+    // exposure, beside the roster's own table because the two answer the same
+    // question at different granularities.  Returns on its first line when the
+    // widening is not active.
+    networkChannelAllRunEnd(ctx, config_, log,
+                            slip_qc.counters.gap_reentry_extra_channel);
     // Card SID phase 5a run-end (filter/NetworkLedgerEmit.cpp): the emitter's
     // bookkeeping against the ledger, both generation classes with their
     // denominators, the first-sighting split, and the declared roster's own wire

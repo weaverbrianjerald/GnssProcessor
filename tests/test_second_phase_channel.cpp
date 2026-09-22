@@ -386,15 +386,20 @@ TEST(SecondPhaseChannelTest, IsDisarmedOnTheFloatVehicleWithoutTheHeldBasis) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-TEST(SecondPhaseChannelTest, IsDisarmedAlongsideChannelModeAll) {
-    // channel_mode "all" already widens every selected band to every tracking
-    // attribute on the phase side, so the two would fight over the same rows (R6).
+TEST(SecondPhaseChannelTest, IsSubsumedByChannelModeAllRatherThanRefused) {
+    // Card SID phase 6b replaced this card's channel_mode refusal with SUBSUMPTION:
+    // the widening adds every admitted phase attribute of every selected band, which
+    // contains this card's allow-listed band-1 set, so the knob stays armed, its
+    // allow-list is ignored and only its sigma scale still reads.  The resolved row
+    // predicate is what every downstream site tests.
     LogManager log;
     const fs::path p = writeTempConfig("chanall",
         networkConfig(kArmable, "    \"channel_mode\": \"all\",\n"));
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
-    EXPECT_FALSE(cfg.networkSecondPhaseChannel());
+    EXPECT_TRUE(cfg.networkChannelModeAll());
+    EXPECT_TRUE(cfg.networkSecondPhaseChannel());
+    EXPECT_TRUE(cfg.networkSecondPhaseRowsActive());
     std::error_code ec; fs::remove(p, ec);
 }
 

@@ -76,7 +76,7 @@ double secondPhaseWitness(double latched_cyc, double second_cyc) {
 void networkSecondPhaseEpochTail(NetworkRunContext& ctx, const GnssConfig& config_,
                                  const std::vector<NetStation>& stations) {
     // --- alias preamble (the seam contract) -------------------------------------
-    if (!config_.networkSecondPhaseChannel()) return;   // unarmed: one flag test
+    if (!config_.networkSecondPhaseRowsActive()) return;   // unarmed: one flag test
     auto& C = ctx.counters.second_phase;
 
     // (1) THE SLIP CENSUS BY TIER (R4, standing invariant #1).  `relevel.free_cause`

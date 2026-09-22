@@ -149,6 +149,12 @@ namespace GnssProcessor {
      * @param second_phase_allow `network.second_phase_signals`, in configured order
      *                          (card SID phase 6a).
      * @param second_phase_armed `network.second_phase_channel`.
+     * @param all_channels      Card SID phase 6b: `processing.channel_mode: all` on
+     *                          the network path.  SUBSUMES the two flags above (the
+     *                          caller passes them as false), and fills
+     *                          @c modelled_extra and @c companion_code on EVERY band
+     *                          from the tracked, admitted attributes rather than from
+     *                          an allow-list.
      * @return band digit -> cell, for every band digit that has a tracked signal or
      *         a latched one.
      */
@@ -159,7 +165,8 @@ namespace GnssProcessor {
         bool companions_armed,
         const std::set<std::string>* allowlist,
         const std::vector<std::string>& second_phase_allow = {},
-        bool second_phase_armed = false);
+        bool second_phase_armed = false,
+        bool all_channels = false);
 
     /**
      * @brief The arc-level tracker's own band pick, reproduced for comparison.

@@ -11402,13 +11402,22 @@ namespace GnssProcessor {
         // the load: the posture is then exactly the unarmed one, which is a valid run.
         if (network_config_.second_code_channel) {
             if (channel_mode_ == ChannelMode::All) {
-                log->error("Network (card SCC): network.second_code_channel is REFUSED with "
-                           "processing.channel_mode = 'all' — that mode already widens every "
-                           "band to every tracking attribute, PHASE side included, so the two "
-                           "mechanisms would fight over the same rows and the companion's "
-                           "receiver state would be asserted against an ambiguity that also "
-                           "exists.  DISARMED; set channel_mode to 'single' to use this card.");
-                network_config_.second_code_channel = false;
+                // Card SID phase 6b (R1): SUBSUMPTION, not refusal.  The all-channel
+                // widening adds every admitted code of every selected band, which is a
+                // superset of this card's allow-listed band-1 set, and phase 6b routes
+                // every one of those rows through the receiver inter-signal state this
+                // card created.  So the knob is left ARMED and its allow-list is
+                // ignored; only its SIGMA SCALE still reads, now over every
+                // non-canonical code row rather than over the listed ones.
+                log->info("Network (card SID phase 6b): network.second_code_channel is "
+                          "SUBSUMED by processing.channel_mode = 'all'.  The widening adds "
+                          "every admitted code attribute of every selected band, which "
+                          "contains card SCC's allow-listed band-1 set, so "
+                          "network.second_code_signals is IGNORED and "
+                          "network.second_code_sigma_scale ({:.3f}) applies to every "
+                          "NON-CANONICAL code row instead.  Every such row still routes "
+                          "through the receiver inter-signal state <system>_ISC_<signal>.",
+                          network_config_.second_code_sigma_scale);
             } else if (!network_carry_rx_code_bias_) {
                 log->error("Network (card SCC): network.second_code_channel requires "
                            "network.carry_rx_code_bias — the receiver INTER-SIGNAL state the "
@@ -11448,13 +11457,20 @@ namespace GnssProcessor {
         // exactly the unarmed one, which is a valid run.
         if (network_config_.second_phase_channel) {
             if (channel_mode_ == ChannelMode::All) {
-                log->error("Network (card SID phase 6a): network.second_phase_channel is "
-                           "REFUSED with processing.channel_mode = 'all' — that mode "
-                           "already widens every selected band to every tracking "
-                           "attribute on the PHASE side, so the two mechanisms would "
-                           "fight over the same rows.  DISARMED; set channel_mode to "
-                           "'single' to use this card.");
-                network_config_.second_phase_channel = false;
+                // Card SID phase 6b (R1): SUBSUMPTION, not refusal, for the same reason
+                // as card SCC above.  The widening's phase half is a superset of this
+                // card's allow-listed band-1 set and the added rows are modelled
+                // identically (an ordinary float arc in the existing satellite
+                // phase-bias family), so the allow-list is ignored and only the sigma
+                // scale still reads, over every non-canonical phase row.
+                log->info("Network (card SID phase 6b): network.second_phase_channel is "
+                          "SUBSUMED by processing.channel_mode = 'all'.  The widening adds "
+                          "every admitted phase attribute of every selected band, which "
+                          "contains card SID phase 6a's allow-listed band-1 set, so "
+                          "network.second_phase_signals is IGNORED and "
+                          "network.second_phase_sigma_scale ({:.3f}) applies to every "
+                          "NON-CANONICAL phase row instead.",
+                          network_config_.second_phase_sigma_scale);
             } else if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf
                        || !network_phase_datum_held_basis_) {
                 log->error("Network (card SID phase 6a): network.second_phase_channel "
@@ -11516,6 +11532,63 @@ namespace GnssProcessor {
                               return s;
                           }(),
                           network_config_.second_phase_sigma_scale);
+            }
+        }
+        // Card SID phase 6b (R7): `processing.channel_mode: all` on the NETWORK path.
+        // Checked here, beside cards SCC and SID phase 6a, because it subsumes both and
+        // because the vehicle and the datum knobs are final at this point.  A refused
+        // interlock CLAMPS the mode back to 'single' rather than failing the load: the
+        // posture is then exactly the historical one, which is a valid run.
+        if (channel_mode_ == ChannelMode::All
+            && processing_mode_ == ProcessingMode::PPP_RTK_Network) {
+            if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf
+                || !network_phase_datum_held_basis_) {
+                log->error("Network (card SID phase 6b): processing.channel_mode = 'all' "
+                           "requires network.ambiguity_vehicle = 'float_kf' with "
+                           "network.phase_datum_held_basis — on the LEVELING vehicle every "
+                           "extra phase channel would create its own zero-q level with no "
+                           "wired event response (standing invariant #1), and card SID "
+                           "phase 6a's interlock says the same thing about one extra "
+                           "channel.  CLAMPED to 'single'.");
+                channel_mode_ = ChannelMode::Single;
+            } else {
+                log->info("Network (card SID phase 6b): ALL-CHANNEL widening armed — every "
+                          "ADMITTED code and phase attribute of every selected band is "
+                          "modelled at every station.  Each extra PHASE is an ordinary "
+                          "float ambiguity joining the existing satellite phase-bias family "
+                          "of its signal (phase sigma x {:.3f}); each extra CODE is a code "
+                          "row routed through the receiver inter-signal state "
+                          "<system>_ISC_<signal> on ANY band digit (code sigma x {:.3f}).  "
+                          "The network coverage gate network.signal_min_station_fraction = "
+                          "{:.3f} decides which attributes are admitted at all ({} = every "
+                          "tracked channel).  The Melbourne-Wubbena detector's own channel "
+                          "mode is DECOUPLED: processing.mw_channel_mode = '{}'.",
+                          network_config_.second_phase_sigma_scale,
+                          network_config_.second_code_sigma_scale,
+                          network_signal_min_station_fraction_,
+                          network_signal_min_station_fraction_ > 0.0 ? "above 0 drops sparse "
+                                                                       "channels network-wide; 0"
+                                                                     : "0",
+                          mw_channel_mode_ == MwChannelMode::Single ? "single"
+                              : (mw_channel_mode_ == MwChannelMode::All ? "all" : "mirror"));
+                if (!network_config_.sat_isc_state)
+                    log->warn("Network (card SID phase 6b): channel_mode 'all' is armed with "
+                              "network.sat_isc_state OFF.  A companion CODE on band 2 or "
+                              "above then keeps the RF-0d geometry-free pin, which ASSERTS "
+                              "an inter-signal correction of ZERO on that column and pushes "
+                              "the real difference into the satellite family — card B5D's "
+                              "class, measured at metres on a third band.  Band-1 companions "
+                              "are unaffected (no geometry-free combination exists against "
+                              "the reference, so they are left estimable already).  Counted "
+                              "at run end.");
+                if (!network_carry_rx_code_bias_)
+                    log->warn("Network (card SID phase 6b): channel_mode 'all' is armed "
+                              "WITHOUT network.carry_rx_code_bias.  The receiver "
+                              "inter-signal code states the widening creates are receiver "
+                              "code biases like any other and cold-start every epoch without "
+                              "that carry, determining themselves from one epoch of code "
+                              "(standing invariant #1).  Card SCC refuses its own knob on "
+                              "this ground.");
             }
         }
         // Card S2H (docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1):
@@ -12328,6 +12401,22 @@ namespace GnssProcessor {
             // producer's solve or its resume fingerprint.  INERT on a wire that
             // carries no declaration, which the consumer detects and logs.
             clc.roster_latch             = cl.value("roster_latch", false);
+            // Card SID phase 6b (R6): the CONSUMER's own channel mode, separate from
+            // the producer's.  A producer at `all` does not widen the consumer unless
+            // this key asks for it, so an arm of the producer's widening moves the
+            // WIRE alone.  Anything other than "all" reads as "single", which is the
+            // historical behaviour of every consumer arm.
+            {
+                std::string cm = cl.value("channel_mode", std::string("single"));
+                std::transform(cm.begin(), cm.end(), cm.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (cm != "single" && cm != "all") {
+                    log->warn("Network (card SID phase 6b): network.closed_loop.channel_mode "
+                              "'{}' is not 'single' or 'all'; using 'single'.", cm);
+                    cm = "single";
+                }
+                clc.channel_mode = cm;
+            }
             // Card PBT (A): the EVERY-step ambiguity translation (derived into the
             // consumer engine as processing.ssr_phase_bias_step_translate).  Same
             // contract as pb_disc_carry — default false ⇒ byte-identical, and it
@@ -12627,6 +12716,13 @@ namespace GnssProcessor {
         // arming it against a pre-card wire is inert and says so.
         if (cl.roster_latch)
             c.consumer_roster_latch_ = true;
+        // Card SID phase 6b (R6): the consumer's channel mode is the consumer's.  The
+        // derived config is a full copy of the producer's, so a producer at `all`
+        // would otherwise widen the held-out station too and move two things at once.
+        // Set UNCONDITIONALLY from the harness key (default "single"), which is the
+        // one place the two modes are separated.
+        c.channel_mode_ = (cl.channel_mode == "all") ? ChannelMode::All
+                                                     : ChannelMode::Single;
         // Card PBT (A): same derivation for the EVERY-step translation.  Never
         // cleared here — an explicit processing.ssr_phase_bias_step_translate on
         // the base config is kept.  The eps is carried alongside so the harness

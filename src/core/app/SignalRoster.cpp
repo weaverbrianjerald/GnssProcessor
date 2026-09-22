@@ -91,7 +91,8 @@ namespace GnssProcessor {
             bool companions_armed,
             const std::set<std::string>* allowlist,
             const std::vector<std::string>& second_phase_allow,
-            bool second_phase_armed) {
+            bool second_phase_armed,
+            bool all_channels) {
         std::map<char, BandRoster> out;
 
         // 1. The TRACKED sets, per band digit, deduplicated and ascending.
@@ -173,6 +174,36 @@ namespace GnssProcessor {
                         b1.modelled_extra.push_back(sig);
                     }
                 }
+            }
+        }
+
+        // 3c. Card SID phase 6b: the ALL-CHANNEL widening.  It subsumes 3 and 3b, so it
+        //     runs INSTEAD of them (the caller passes their flags down as false) and
+        //     over EVERY band rather than band 1 alone: every tracked, admitted phase
+        //     of a band besides its modelled one joins `modelled_extra`, and every
+        //     tracked, admitted code besides its modelled one joins `companion_code`,
+        //     which is exactly the row set PppModel::selectUncombinedSignals adds.  The
+        //     canonical row must be TRACKED this epoch for the extra one to be a
+        //     second, which is the same clause the two cards above apply.
+        if (all_channels) {
+            for (auto& [band, br] : out) {
+                (void)band;
+                const auto take = [&](const std::vector<std::string>& tracked,
+                                      const std::string& modelled,
+                                      std::vector<std::string>& dst) {
+                    if (modelled.empty()) return;
+                    if (!std::binary_search(tracked.begin(), tracked.end(), modelled))
+                        return;
+                    for (const std::string& sig : tracked) {
+                        if (sig == modelled) continue;
+                        if (allowlist && !allowlist->empty() && !allowlist->count(sig))
+                            continue;
+                        if (std::find(dst.begin(), dst.end(), sig) != dst.end()) continue;
+                        dst.push_back(sig);
+                    }
+                };
+                take(br.tracked_phase, br.modelled_phase, br.modelled_extra);
+                take(br.tracked_code,  br.modelled_code,  br.companion_code);
             }
         }
 
@@ -483,9 +514,12 @@ namespace GnssProcessor {
         ctx.carry.sid_reentry_outcome.clear();
 
         const auto& nc = config_.getNetworkConfig();
-        const bool companions_armed = config_.networkSecondCodeChannel();
+        // Card SID phase 6b: the widening SUBSUMES both cards, so the two allow-list
+        // walks stand down and the all-channel walk fills the same two fields.
+        const bool all_channels = config_.networkChannelModeAll();
+        const bool companions_armed = config_.networkSecondCodeChannel() && !all_channels;
         const std::vector<std::string>& companion_allow = config_.networkSecondCodeSignals();
-        const bool second_phase_armed = config_.networkSecondPhaseChannel();
+        const bool second_phase_armed = config_.networkSecondPhaseChannel() && !all_channels;
         const std::vector<std::string>& second_phase_allow =
             config_.networkSecondPhaseSignals();
         const auto& prio = config_.getSignalPriorities();
@@ -553,7 +587,7 @@ namespace GnssProcessor {
                 auto cells = signalRosterBuildCells(tracked, latch, companion_allow,
                                                     companions_armed, allow,
                                                     second_phase_allow,
-                                                    second_phase_armed);
+                                                    second_phase_armed, all_channels);
 
                 // P2's SELF-CHECK.  The roster is built FROM the latch, so a nonzero
                 // count here is a bug in this file, not a finding about the run.

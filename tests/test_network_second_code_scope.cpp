@@ -329,10 +329,11 @@ TEST(NetworkSecondCodeScope, IsDisarmedWithoutTheReceiverCodeBiasCarry) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-TEST(NetworkSecondCodeScope, IsDisarmedAlongsideChannelModeAll) {
-    // channel_mode "all" already widens every band to every tracking attribute,
-    // PHASE side included, so the two mechanisms would fight over the same rows
-    // (R6).
+TEST(NetworkSecondCodeScope, IsSubsumedByChannelModeAllRatherThanRefused) {
+    // Card SID phase 6b replaced this card's channel_mode refusal with SUBSUMPTION.
+    // This posture is the LEVELING vehicle, so the widening's own interlock clamps
+    // the mode back to single and the card is then armed in its ordinary form: the
+    // two statements together are the whole contract change.
     LogManager log;
     const fs::path p = writeTempConfig("chanall",
         std::string("{\n") +
@@ -353,7 +354,8 @@ TEST(NetworkSecondCodeScope, IsDisarmedAlongsideChannelModeAll) {
         "}\n");
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
-    EXPECT_FALSE(cfg.networkSecondCodeChannel());
+    EXPECT_FALSE(cfg.networkChannelModeAll());     // clamped: the leveling vehicle
+    EXPECT_TRUE(cfg.networkSecondCodeChannel());   // armed, not disarmed
     std::error_code ec; fs::remove(p, ec);
 }
 

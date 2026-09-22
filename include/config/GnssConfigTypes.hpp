@@ -185,6 +185,22 @@ namespace GnssProcessor {
          */
         bool          pb_disc_carry{ false };
         /**
+         * @brief Card SID phase 6b: the CONSUMER's own channel mode
+         *        (@c network.closed_loop.channel_mode, "single" (default) or "all").
+         *
+         * The producer's `processing.channel_mode` is a PRODUCER-side lever: it
+         * decides how many rows every network station contributes and therefore what
+         * the wire carries. The held-out consumer is one station with no family to
+         * support, so widening it as well would change two things at once. This key
+         * decides the consumer's own widening independently, and is derived onto the
+         * consumer engine's `processing.channel_mode` by
+         * @c deriveClosedLoopConsumerConfig.
+         *
+         * Default "single" keeps the consumer exactly as every earlier arm ran it,
+         * whatever the producer is set to.
+         */
+        std::string   channel_mode{ "single" };
+        /**
          * @brief Card SID phase 5b: the consumer's band latch and its freshness
          *        response follow the producer's DECLARED roster
          *        (@c network.closed_loop.roster_latch, default false ⇒ inert).

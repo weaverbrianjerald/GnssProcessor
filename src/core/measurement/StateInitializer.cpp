@@ -122,13 +122,30 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // correction is a pure per-signal receiver delay: it needs no pin pair.
     //
     // OFF ⇒ the whole block is skipped ⇒ byte-identical.
-    if (config_.networkSecondCodeChannel() && system != System::GLONASS
-        && obs_signal.size() == 3 && obs_signal[0] == 'C' && obs_signal[1] == '1') {
+    //
+    // CARD SID PHASE 6b (R2) GENERALISES THE PREDICATE.  With
+    // `processing.channel_mode: all` on the network path a station contributes every
+    // ADMITTED code attribute of every selected band, not an allow-listed band-1 pair,
+    // and the per-band keying below would assert a zero receiver inter-signal bias on
+    // every one of them — on band 2 and above as well, where the RF-0d geometry-free
+    // pin also asserts the satellite side to zero, which is card B5D's class twice
+    // over.  So under the widening the test drops the allow-list and the band-1
+    // restriction and keeps exactly what makes a row a SECOND one: an admitted code
+    // that is not that band's latched canonical code, on any band digit.  Everything
+    // else (the unit coefficient, the absolute frame, the GLONASS exclusion, the
+    // undecided-latch fall-through) is unchanged.
+    const bool chan_all = config_.networkChannelModeAll();
+    if ((config_.networkSecondCodeChannel() || chan_all) && system != System::GLONASS
+        && obs_signal.size() == 3 && obs_signal[0] == 'C'
+        && (chan_all ? (obs_signal[1] >= '1' && obs_signal[1] <= '9')
+                     : obs_signal[1] == '1')) {
         const auto& allow = config_.networkSecondCodeSignals();
-        if (std::find(allow.begin(), allow.end(), obs_signal) != allow.end()) {
+        const bool listed =
+            chan_all || std::find(allow.begin(), allow.end(), obs_signal) != allow.end();
+        if (listed) {
             const std::string sys = PppUtils::getSystemString(system);
             const std::string canonical =
-                ppp_model_.latchedCanonicalCodeOnBandDigit(sys, '1');
+                ppp_model_.latchedCanonicalCodeOnBandDigit(sys, obs_signal[1]);
             if (!canonical.empty() && canonical != obs_signal) {
                 result.state_key   = StateKeys::makeReceiverIscKey(sys, obs_signal);
                 result.coefficient = 1.0;

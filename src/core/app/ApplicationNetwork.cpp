@@ -122,6 +122,7 @@
 #include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: canonical-pair admission seam
 #include "app/SignalRoster.hpp"  // card SID phase 1: the roster / arc-ledger observatory
 #include "filter/NetworkSecondPhaseScope.hpp"  // card SID phase 6a: the epoch tail
+#include "filter/NetworkChannelAll.hpp"      // card SID phase 6b: the all-channel census
 #include "filter/NetworkLedgerEmit.hpp"  // card SID phase 5a: the emitter read + the declared roster
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
 #include "filter/NetworkDdPriorBuild.hpp" // INC-9b: buildEnsembleGauges/buildCarryDdPriors free fns
@@ -2836,6 +2837,11 @@ int Application::runNetwork() {
         // and the phase-datum anchors have been elected.  Reads only; every class is
         // a counter.  DISARMED: returns on its first line.
         networkSecondPhaseEpochTail(ctx, config_, stations);
+        // Card SID phase 6b: the ALL-CHANNEL census, folded here beside the tail
+        // above because it reads the same two republished cell sets plus the
+        // stations' own state maps, all final at this point.  Measure-only, and it
+        // returns on its first line unless the widening is active.
+        networkChannelAllEpoch(ctx, config_, stations, modeled, present);
         subEnd(SB_ROSTER);
         // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  BEFORE the
         // stash/status block, because the epoch-status row written there reads the

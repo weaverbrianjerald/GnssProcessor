@@ -4045,6 +4045,54 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Card SID phase 6b — is `processing.channel_mode: all` active on the
+         *        NETWORK path?
+         *
+         * The one entry of the all-channel widening. Every admitted code and phase
+         * attribute of a selected band becomes its own row at every station, which
+         * SUBSUMES cards SCC (@ref networkSecondCodeChannel) and SID phase 6a
+         * (@ref networkSecondPhaseChannel): their allow-lists are ignored and their
+         * sigma scales apply to every non-canonical code row and non-canonical phase
+         * row respectively.
+         *
+         * Restricted to the network path because the receiver inter-signal code
+         * state, the satellite inter-signal bridging and the row census all live
+         * there; a user-side `all` run keeps its historical behaviour.
+         *
+         * @return True when the widening is active.
+         */
+        bool networkChannelModeAll() const {
+            return channel_mode_ == ChannelMode::All
+                && processing_mode_ == ProcessingMode::PPP_RTK_Network;
+        }
+
+        /**
+         * @brief Card SID phase 6b — do NON-CANONICAL CODE rows exist this run?
+         *
+         * True under card SCC's own knob or under the phase-6b subsumption. Every
+         * site that used to test @ref networkSecondCodeChannel to decide whether a
+         * companion code row can exist tests this instead, so one predicate answers
+         * for both mechanisms and the two cannot drift.
+         *
+         * @return True when a companion code row may be present.
+         */
+        bool networkSecondCodeRowsActive() const {
+            return network_config_.second_code_channel || networkChannelModeAll();
+        }
+
+        /**
+         * @brief Card SID phase 6b — do NON-CANONICAL PHASE rows exist this run?
+         *
+         * The phase twin of @ref networkSecondCodeRowsActive: card SID phase 6a's own
+         * knob, or the phase-6b subsumption.
+         *
+         * @return True when a second-phase row may be present.
+         */
+        bool networkSecondPhaseRowsActive() const {
+            return network_config_.second_phase_channel || networkChannelModeAll();
+        }
+
+        /**
          * @brief Card SID phase 6a — is the SECOND PHASE CHANNEL armed?
          *
          * `network.second_phase_channel`.  When true a network station contributes,

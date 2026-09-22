@@ -567,7 +567,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     std::map<std::string, std::set<std::string>> phase_bias_allowlist;   // FLOAT gate (phase only)
     const double sig_cover_min = config_.networkSignalMinStationFraction();
     const double pb_cover_min  = config_.networkPhaseBiasMinStationFraction();
-    if (sig_cover_min > 0.0 || pb_cover_min > 0.0) {
+    // Card SID phase 6b (R7): under the all-channel widening the TALLY is reported
+    // even with the gate at 0, because "0 = every tracked channel admitted" is a
+    // statement about which channels entered the solve and the run has to make it.
+    const bool chan_all_tally = config_.networkChannelModeAll();
+    if (sig_cover_min > 0.0 || pb_cover_min > 0.0 || chan_all_tally) {
         std::map<std::string, std::set<std::pair<std::string, std::string>>> sta_tracks; // station -> {(system, code)}
         for (const auto& se : synced) {
             for (const auto& [sta, sat_obs] : se.by_station) {
@@ -605,8 +609,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         }
         auto reportGate = [&](const char* label, double thr,
                               const std::map<std::string, std::set<std::string>>& allow,
-                              bool phase_only) {
-            if (thr <= 0.0) return;
+                              bool phase_only, bool force = false) {
+            if (thr <= 0.0 && !force) return;
             for (const auto& [sys, ns] : sys_n) {
                 std::set<std::string> codes;
                 for (const auto& [key, cnt] : code_n) {
@@ -619,7 +623,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 auto ait = allow.find(sys);
                 for (const auto& c : codes) {
                     const std::string tag = fmt::format("{}({:.0f}%)", c, 100.0 * code_n[{sys, c}] / ns);
-                    const bool admitted = ait != allow.end() && ait->second.count(c);
+                    // A threshold of 0 leaves the allow-list EMPTY, which the producer
+                    // reads as "admit every tracked channel"; without this clause the
+                    // forced tally of card SID phase 6b would print the whole list
+                    // under GATE and say the opposite of what the run does.
+                    const bool admitted =
+                        (thr <= 0.0) ? true : (ait != allow.end() && ait->second.count(c));
                     std::string& tgt = admitted ? keep : gate;
                     tgt += (tgt.empty() ? "" : " ") + tag;
                 }
@@ -627,8 +636,16 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           "KEEP [{}] | GATE [{}]", label, sys, 100.0 * thr, ns, sys, keep, gate);
             }
         };
-        reportGate("signal-coverage (drop)", sig_cover_min, signal_allowlist, false);
+        reportGate("signal-coverage (drop)", sig_cover_min, signal_allowlist, false,
+                   chan_all_tally);
         reportGate("phase-bias (float)",     pb_cover_min,  phase_bias_allowlist, true);
+        if (chan_all_tally && sig_cover_min <= 0.0)
+            log->info("Network (card SID phase 6b): the coverage gate "
+                      "network.signal_min_station_fraction is 0, so EVERY tracked "
+                      "channel above is admitted and the widening models all of them.  "
+                      "The KEEP list is the whole tally and the GATE list is empty by "
+                      "construction; the per-channel percentages are what a nonzero "
+                      "gate would cut against.");
     }
 
     // --- Phase 4: per-station Kalman resources (pivot at index 0) -----------

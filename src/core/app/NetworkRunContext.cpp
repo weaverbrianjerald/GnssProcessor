@@ -829,6 +829,14 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // every pre-card snapshot fingerprint is unchanged.  The allow-list and the
         // sigma scale join it: the list decides WHICH columns exist, and the scale
         // decides the weight at which their rows were accumulated.
+        // Card SID phase 6b (R8): the all-channel widening decides WHICH COLUMNS EXIST
+        // — a receiver inter-signal code state per extra code and per band, a float
+        // ambiguity per extra phase, and the shared satellite families those rows feed.
+        // A resume across the flip would restore a carry whose column set the other
+        // side does not have, which is the same argument cards SCC and SID phase 6a
+        // make for their own knobs.  Armed-only append, so every pre-card snapshot
+        // fingerprint is unchanged.
+        if (config_.networkChannelModeAll()) add("chanmode:all");
         if (config_.networkSecondCodeChannel()) {
             add("scc:2ndcode");
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);

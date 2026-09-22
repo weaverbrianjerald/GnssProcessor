@@ -373,7 +373,7 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
     //
     // OFF ⇒ the whole block is skipped ⇒ byte-identical, and with the knob armed at
     // scale 1 the weights are untouched (no division is performed at all).
-    if (config_.networkSecondCodeChannel() && st.sm) {
+    if (config_.networkSecondCodeRowsActive() && st.sm) {
         std::set<std::string> isc_sigs;   // signals with an inter-signal state HERE
         for (const auto& [key, idx] : st.sm->getCodeBiasStates()) {
             (void)idx;
@@ -1731,7 +1731,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     //
     // OFF ⇒ the whole block is skipped, every set stays empty and nothing is
     // emitted, so the epoch is byte-identical.
-    if (config_.networkSecondCodeChannel()) {
+    if (config_.networkSecondCodeRowsActive()) {
         auto& C = ctx.counters.second_code;
         // Per-(satellite, signal): how many present stations support the column at
         // all, and how many of those support it ONLY through a companion row.  The
@@ -1828,7 +1828,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     //
     // OFF => the whole block is skipped, every set stays empty and nothing is
     // emitted, so the epoch is byte-identical.
-    if (config_.networkSecondPhaseChannel()) {
+    if (config_.networkSecondPhaseRowsActive()) {
         auto& C = ctx.counters.second_phase;
         const auto& allow = config_.networkSecondPhaseSignals();
         const long long now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
@@ -1859,11 +1859,47 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                     // `raw_observed` is the untouched raw key set, which is what the
                     // selection screened.
                     const std::string cons = PppUtils::getSystemString(ob.satellite);
+                    // Card SID phase 6b: the band scope.  Under the phase-6a knob the
+                    // card's own allow-list is band 1 by construction; under the
+                    // all-channel widening there is no allow-list and every selected
+                    // band has a latched phase and possibly several others, so both the
+                    // fallback count and the witness walk every band digit the latch
+                    // knows.  The per-band candidate set is then "every raw phase of
+                    // this band besides the latched one", which is what the widening
+                    // admits, and the two branches meet on a band-1-only posture.
+                    const bool chan_all = config_.networkChannelModeAll();
+                    std::vector<char> bands6b;
+                    if (chan_all) {
+                        for (const auto& [sig, val] : ob.observed) {
+                            (void)val;
+                            if (sig.size() < 2 || sig[0] != 'L') continue;
+                            if (std::find(bands6b.begin(), bands6b.end(), sig[1])
+                                == bands6b.end())
+                                bands6b.push_back(sig[1]);
+                        }
+                        std::sort(bands6b.begin(), bands6b.end());
+                    } else {
+                        bands6b.push_back('1');
+                    }
+                    for (const char bd : bands6b) {
                     const std::string latched =
-                        st.model ? st.model->latchedCanonicalPhaseOnBandDigit(cons, '1')
+                        st.model ? st.model->latchedCanonicalPhaseOnBandDigit(cons, bd)
                                  : std::string{};
+                    // The per-band candidate list: the configured allow-list under the
+                    // phase-6a knob, every OTHER raw phase of this band under the
+                    // widening (which is the set the widening itself admits).
+                    std::vector<std::string> cand;
+                    if (chan_all) {
+                        for (const auto& [sig, val] : ob.raw_observed) {
+                            (void)val;
+                            if (sig.size() < 3 || sig[0] != 'L' || sig[1] != bd) continue;
+                            cand.push_back(sig);
+                        }
+                    } else {
+                        cand = allow;
+                    }
                     if (!latched.empty() && !ob.raw_observed.count(latched))
-                        for (const std::string& sig : allow)
+                        for (const std::string& sig : cand)
                             if (sig != latched && ob.raw_observed.count(sig))
                                 ++C.fallback_rows;
                     // (4) THE WITNESS (R8), observatory only: at a station carrying
@@ -1876,7 +1912,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                     if (latched.empty()) continue;
                     const auto lit = ob.raw_observed.find(latched);
                     if (lit == ob.raw_observed.end()) continue;
-                    for (const std::string& sig : allow) {
+                    for (const std::string& sig : cand) {
                         if (sig == latched) continue;
                         const auto sit = ob.raw_observed.find(sig);
                         if (sit == ob.raw_observed.end()) continue;
@@ -1898,6 +1934,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                         }
                         st.spc_witness[wkey] = { d, now_ep };
                     }
+                    }   // band digit (card SID phase 6b)
                 }
             }
             // The two edges (standing invariant #7).  A cell OPENS when a station

@@ -2439,7 +2439,40 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             gapReentryPresentSignals(gapReentryFindRow(raw, i, g.satellite));
         const std::set<std::string>* present_ptr =
             present_sigs.empty() ? nullptr : &present_sigs;
-        for (const std::string& sig : {g.sig1, g.sig2}) {
+        // --- Card SID phase 6b (R3): the EXTRA CHANNELS of the same two bands ------
+        // This tier keys on the satellite and frees the TRACKER's one phase per band.
+        // That is the whole modelled set on a one-channel-per-band posture, and under
+        // `processing.channel_mode: all` it is not: the station also carries every
+        // other admitted phase attribute of those bands, each an ordinary float arc
+        // with its own carried level, and a whole-row gap took all of them down
+        // together.  The per-signal tier cannot pick them up either, because it skips
+        // by construction every satellite this tier already owns (`row_resumed`), so
+        // without this the extra arcs fold their level across the break with no
+        // response at all — standing invariant #1.
+        //
+        // The set is the station's own republished second-phase CELLS, which is the
+        // selection's own output, restricted to this satellite and to the two bands
+        // that actually broke (band scoping, as the rest of the tier).  It is EMPTY on
+        // every posture with no extra family, so the loop below is then exactly
+        // `{sig1, sig2}` and the behaviour is unchanged.
+        std::vector<std::string> sigs6b{ g.sig1, g.sig2 };
+        {
+            const NetStation& stx = stations[static_cast<std::size_t>(i)];
+            for (const std::string& cell : stx.spc_cells) {
+                const auto parts = StateKeys::parseSatPhaseBiasKey(cell);
+                if (!parts || parts->satellite != g.satellite) continue;
+                const std::string& s = parts->signal;
+                if (s.size() < 2) continue;
+                const bool on_band =
+                    (!g.sig1.empty() && g.sig1.size() >= 2 && s[1] == g.sig1[1])
+                    || (!g.sig2.empty() && g.sig2.size() >= 2 && s[1] == g.sig2[1]);
+                if (!on_band) continue;
+                if (std::find(sigs6b.begin(), sigs6b.end(), s) != sigs6b.end()) continue;
+                sigs6b.push_back(s);
+                ++qc_cnt.gap_reentry_extra_channel;
+            }
+        }
+        for (const std::string& sig : sigs6b) {
             if (sig.empty()) continue;
             const GapArcOutcome out =
                 gapReentryRespondArc(i, g.satellite, sig, sm, carry_invariant,

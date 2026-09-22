@@ -690,6 +690,16 @@ struct SlipQcCounters {
     /// same band, inside the window), which is the honest fallback rather than a
     /// silent zero.
     long long gap_reentry_unreachable{0};
+    /// Card SID phase 6b (R3): EXTRA-CHANNEL arcs the ROW-LEVEL gap re-entry tier
+    /// responded to beyond the tracker's one phase per band, summed over the run.
+    /// The tier keys on the satellite and frees the tracker's two signals; under
+    /// `processing.channel_mode: all` the station also carries every other admitted
+    /// phase attribute of those bands, and a whole-row gap took them down too.  The
+    /// per-signal tier cannot reach them either (it skips by construction every
+    /// satellite this tier already owns), so a zero here with an all-channel run is
+    /// a response that never fired.  Structurally 0 on every one-channel-per-band
+    /// posture, where the extra set is empty.
+    long long gap_reentry_extra_channel{0};
     /// Card GRK, the DECOUPLING half: (station, satellite, epoch, band) cells at
     /// which the arc-level tracker's chosen signal differs from the phase this
     /// station LATCHED on that band, counted only where the latch names a signal

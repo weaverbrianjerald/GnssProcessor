@@ -1399,7 +1399,18 @@ std::vector<std::string> activeFrequencyBands(
         // only widen the channel dimension, not the band dimension.
         // No-op for channel_mode "single"; the canonical priority-best
         // selection is what that mode asks for.
-        if (config_.getChannelMode() == ChannelMode::All) {
+        const bool channel_all = (config_.getChannelMode() == ChannelMode::All);
+        // Card SID phase 6b (R1): the widening is the ONE entry on the network path,
+        // and it SUBSUMES cards SCC and SID phase 6a.  Every extra channel it adds is
+        // reported through the same two sets those cards fill, so that everything
+        // downstream — the receiver inter-signal code state, the two sigma scales, the
+        // Melbourne-Wubbena guard, the cell telemetry and both of invariant 7's edges —
+        // keeps working unchanged and one predicate answers for both mechanisms.
+        // A channel is NON-CANONICAL exactly when the band map did not select it for
+        // its band, which is the same test card SCC's receiver side applies.
+        const bool subsume =
+            channel_all && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
+        if (channel_all) {
             std::set<std::string> already;
             for (const auto& sp : selected_signals) {
                 if (!sp.first.empty())  already.insert(sp.first);
@@ -1421,6 +1432,25 @@ std::vector<std::string> activeFrequencyBands(
                             == freq_bands.end()) continue;
                         selected_signals.emplace_back(sig, "");
                         already.insert(sig);
+                        if (subsume) {
+                            // The band's CANONICAL row must be present this epoch for
+                            // the added one to be a SECOND: with it absent this is the
+                            // fallback case, which the per-epoch sweep counts and which
+                            // the receiver side routes by the same signal-against-latch
+                            // test, so the two cannot disagree about which state a row
+                            // belongs to.
+                            auto bit = freq_band_to_signal.find(band);
+                            std::string canon;
+                            if (bit != freq_band_to_signal.end())
+                                canon = (prefix == 'C') ? bit->second.first
+                                                        : bit->second.second;
+                            const bool canon_here =
+                                !canon.empty() && obs.measurements.count(canon) != 0;
+                            if (canon_here && prefix == 'C' && companion_out)
+                                companion_out->insert(sig);
+                            if (canon_here && prefix == 'L' && second_phase_out)
+                                second_phase_out->insert(sig);
+                        }
                         log_manager_.getLogger("ppp_model")->trace(
                             "Uncombined band {} for {} {}: extra channel {} added (channel_mode=All)",
                             band, obs.satellite, system_str, sig);
@@ -1457,7 +1487,13 @@ std::vector<std::string> activeFrequencyBands(
         //
         // NETWORK ONLY, and ARMED ONLY: off the network path or with the knob down
         // the block is skipped whole, so the selection is byte-identical.
-        if (config_.networkSecondCodeChannel()
+        //
+        // SUBSUMED under `channel_mode: all` (card SID phase 6b, R1): the widening
+        // above has already added every admitted code of every selected band and
+        // reported it through @p companion_out, so running this block too would append
+        // a DUPLICATE row for each allow-listed one.  The allow-list is ignored there
+        // by design; only the sigma scale still reads.
+        if (config_.networkSecondCodeChannel() && !subsume
             && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
             for (const auto& band : freq_bands) {
                 const auto band_it = freq_band_to_signal.find(band);
@@ -1533,7 +1569,11 @@ std::vector<std::string> activeFrequencyBands(
         //
         // NETWORK ONLY, and ARMED ONLY: off the network path or with the knob down the
         // block is skipped whole, so the selection is byte-identical.
-        if (config_.networkSecondPhaseChannel()
+        //
+        // SUBSUMED under `channel_mode: all` (card SID phase 6b, R1), for the same
+        // reason as the block above: the widening has already added every admitted
+        // phase of every selected band and reported it through @p second_phase_out.
+        if (config_.networkSecondPhaseChannel() && !subsume
             && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
             for (const auto& band : freq_bands) {
                 const auto band_it = freq_band_to_signal.find(band);
