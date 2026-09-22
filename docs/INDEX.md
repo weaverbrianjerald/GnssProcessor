@@ -136,8 +136,8 @@ record the program is re-founding **on**.
   regime 51 to 57 (the six float-vehicle rows enter the regime armed); certified by 2 h arms
   byte-identical to the confirmation pair `runs/_rf0hv9_{field,sim}6`. Owed: ledger rows for the
   vehicle pair, `tracker_modeled_first` and `emit_pb_hold`.
-- [SID](refound/SID_signal_identity_2026-09-22.md): open (AUDIT and DESIGN 2026-09-22; phase 1
-  pre-registered), signal identity and arc lifecycle: the estimator is per signal and stays; the
+- [SID](refound/SID_signal_identity_2026-09-22.md): open (phase 1 BUILT 2026-09-22 as an observatory,
+  byte-identical armed, reproducing the audit exactly), signal identity and arc lifecycle: the estimator is per signal and stays; the
   layer deciding which signal stands for a band is decided in 128 sites with six independent
   rules, and 31 arc-lifecycle holders have both edges silent. Field baseline: the tracker's
   signal differs from the carried one at 46 cells of 44 of 58 stations, 0 of 31 band-1
