@@ -359,6 +359,17 @@ regenerated nor verified.  Do not base new work on them.  The float vehicle
 (`ambiguity_vehicle: float_kf` + `phase_datum_held_basis`) is built, default OFF, and FAILED on
 this posture (RF-3-prep) — not armed.
 
+**Re-based again 2026-09-22** (`docs/refound/GRB_golden_rebase_2026-09-22.md`): the goldens are
+now the RF-0hv FLOAT-VEHICLE posture as armed that day (`ambiguity_vehicle: float_kf` +
+`phase_datum_held_basis`, the 58-station field roster reduced to the antenna reference
+point, and the knobs of cards GRS, CSL, EV7, UPO, SCC, GRK), from the frozen bases
+`config/refound/{field,sim}_gps_dual_rf0hv_golden_2026-09-22.json` (27 pins, the same 7
+exceptions; `--verify` 57 armed in regime).  The paragraph above describes the 2026-09-15
+state and stays as history; the float vehicle IS the posture now.  Field 6 h consumer 0.560
+0.059 0.028 0.030 0.036 0.045 m by hour, sim 0.598 0.103 0.096 0.056 0.055 0.049 m
+(`runs/_rf0hv9_{field,sim}6`).  Development checks run on 2 h arms (rapid mode, the author's
+directive of 2026-09-22); 6 h is for adoption, the census and the baselines.
+
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base
 lineage, pins the manifest's knobs, and FAILS if any ledger RECOMMEND_ON/SCOPED knob that is

@@ -129,6 +129,13 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
+- [GRB](refound/GRB_golden_rebase_2026-09-22.md): closed (2026-09-22, the author's instruction), the
+  goldens re-based from the RF-0g leveling posture onto the RF-0hv float-vehicle posture as armed
+  today (frozen bases `config/refound/{field,sim}_gps_dual_rf0hv_golden_2026-09-22.json`, 27
+  pins, the same 7 exceptions); `make_golden_config.py --verify` PASS on the first pass, armed in
+  regime 51 to 57 (the six float-vehicle rows enter the regime armed); certified by 2 h arms
+  byte-identical to the confirmation pair `runs/_rf0hv9_{field,sim}6`. Owed: ledger rows for the
+  vehicle pair, `tracker_modeled_first` and `emit_pb_hold`.
 - [SID](refound/SID_signal_identity_2026-09-22.md): open (AUDIT and DESIGN 2026-09-22; phase 1
   pre-registered), signal identity and arc lifecycle: the estimator is per signal and stays; the
   layer deciding which signal stands for a band is decided in 128 sites with six independent
