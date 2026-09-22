@@ -162,6 +162,11 @@ namespace GnssProcessor {
         /// the birth stash keeps reading @ref amb_birth_var_floor alone.  0.0 (default)
         /// is today's behaviour.
         double amb_drop_var_floor{};
+        /// RF-3c: network.amb_float_drop_floor_after_ep — the processed epoch
+        /// (@c n_loop_epochs) from which @ref amb_drop_var_floor is in force.  0 = no
+        /// gate.  Resolved to 0 when the floor itself is unarmed, so every site reads one
+        /// pair of numbers and a miswired arm cannot half-act.
+        int amb_drop_floor_after_ep{};
         /// RF-1 §3.5: network.amb_float_q_m2s — process noise on the ambiguity block
         /// under float_kf.  The card's posture is 0.0; carried here so the run manifest
         /// and the run-end telemetry can state it.  ⚠ INERT in step 1.
@@ -2834,6 +2839,7 @@ namespace GnssProcessor {
         //     floor's own telemetry, maintained in BOTH knob states so an OFF run reports
         //     the walk it suffers (standing invariant #4).
         long long n_amb_drop_floored      = 0;  ///< drops whose restored variance CAME FROM network.amb_float_drop_var_m2 — that is, the drop floor at this LOS exceeded max(var_birth, var_first, birth floor).  0 by construction with the knob at 0.
+        long long n_amb_drop_pre_gate     = 0;  ///< RF-3c: drops taken BEFORE network.amb_float_drop_floor_after_ep opened, with an armed drop floor — the population the gate withheld the floor from.  0 with no gate, and 0 with no floor.
         /// RF-3a A2: |value change| (m) the FIRST fold after a drop absorbed, one entry per
         /// drop that restarted the age clock.  Measured at the harvest from the carry's
         /// value before and after that fold, so it is the size of the correction the drop's

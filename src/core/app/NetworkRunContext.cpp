@@ -86,6 +86,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // reads ONE number and a miswired arm (a floor without float_kf) cannot half-act.
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
+    // RF-3c: the warm-up gate is meaningless without the floor it guards, so it is
+    // resolved to 0 there — a site then reads "floor, from epoch N" as one statement.
+    k.amb_drop_floor_after_ep =
+        (k.amb_drop_var_floor > 0.0)
+            ? config_.getNetworkConfig().amb_float_drop_floor_after_ep : 0;
     k.amb_float_q_m2s = config_.getNetworkConfig().amb_float_q_m2s;
     k.amb_float_declared_handover = config_.getNetworkConfig().amb_float_declared_handover;
     // RF-2 item 1: the held S-BASIS, already interlocked at load against float_kf and

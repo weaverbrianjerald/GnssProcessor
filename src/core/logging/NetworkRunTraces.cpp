@@ -1692,6 +1692,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? fmt::format("\"amb_float_drop_var_m2\":{},",
                                      nc.amb_float_drop_var_m2)
                        : std::string())
+               // RF-3c: the warm-up gate changes an armed floor's REACH, so it is
+               // provenance too.  Emitted only when armed.
+               << ((nc.amb_float_drop_floor_after_ep > 0)
+                       ? fmt::format("\"amb_float_drop_floor_after_ep\":{},",
+                                     nc.amb_float_drop_floor_after_ep)
+                       : std::string())
                // RF-3b: the four sub-rules of the gross-LOS screen, same rule.
                << ((nc.gross_los_min_rows_rule != NetworkGrossLosMinRowsRule::Fixed
                     || nc.gross_los_bound || nc.gross_los_emit_exclude

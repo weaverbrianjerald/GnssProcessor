@@ -1896,6 +1896,27 @@ namespace GnssProcessor {
         /// fingerprinted, for the same reason RF-1's drop is not: it is a forward-only
         /// variance at a response, and it changes no carried state's MEANING.
         double amb_float_drop_var_m2{ 0.0 };
+        /// RF-3c: WARM-UP GATE on @ref amb_float_drop_var_m2 — the floor applies only to a
+        /// drop taken at processed epoch >= this value; before it a drop restores today's
+        /// @c max(var_birth, var_first, amb_float_birth_var_m2).  0 (default) = no gate,
+        /// which is RF-3a's behaviour.
+        ///
+        /// ⚠ MEASURED motivation (RF-3a's own G1, `runs/_rap_rf3b_a4` / `_rap_rf3b_a100`
+        /// against `runs/_rf0hv9_field6`): the card's premise that a DROP-only floor leaves
+        /// hour 1 alone does not hold, because drops happen during convergence too.  The
+        /// floor took the settled hours where it was aimed (WTZZ00DEU hours 3 to 6
+        /// 0.028 0.030 0.036 0.045 -> 0.015 0.015 0.027 0.037 m at 100 m², post-fit code
+        /// rows above 3 m at full weight 394 -> 80) and cost hour 1 (0.560 -> 0.651 m at
+        /// WTZZ00DEU, census hour 1 median +0.034 m).  The gate separates the two
+        /// populations by AGE: an arc dropped while the network is still finding its
+        /// clocks is a convergence event, and the floor's statement about what a
+        /// re-determined level is worth is a statement about a SETTLED network.
+        ///
+        /// The clock is the producer's processed-epoch counter (@c n_loop_epochs), the same
+        /// abscissa @c network.gross_los_warmup_epochs and the phase-leveling warmup read,
+        /// so 120 is one hour at 30 s.  SOLVE-AFFECTING when it changes an armed floor's
+        /// reach; inert when @ref amb_float_drop_var_m2 is 0.
+        int amb_float_drop_floor_after_ep{ 0 };
         /// RF-1 §3.5: process noise (m²/s) on the ambiguity block under @c FloatKf.
         /// **The card's posture is 0.0 and any nonzero value is a separate,
         /// evidence-bearing arm.**  An ambiguity is a random constant punctuated by

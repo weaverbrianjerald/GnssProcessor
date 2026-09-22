@@ -840,6 +840,42 @@ TEST(AmbFloatVehicleTest, DropFloorUsesTheSameElevationMappingAsTheBirthFloor) {
     EXPECT_GT(lo.var, hi.var);
 }
 
+// RF-3c: the WARM-UP GATE.  RF-3a's own G1 measured that a drop-only floor still costs
+// hour 1 (WTZZ00DEU 0.560 -> 0.651 m at 100 m2, census hour 1 median +0.034 m), because
+// drops happen during convergence too.  The gate separates the convergence population
+// from the settled one the floor is a statement about, and it must be read identically
+// at every drop site — hence the one shared resolver.
+TEST(AmbFloatVehicleTest, DropFloorWarmUpGateWithholdsTheFloorUntilItOpens) {
+    using GnssProcessor::ambFloatDropFloorNow;
+    // No gate is RF-3a's behaviour at every epoch, including epoch 0.
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 0, 0), 100.0);
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 5000, 0), 100.0);
+    // Armed: closed strictly BEFORE the gate epoch, open from it onwards.
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 0, 120), 0.0);
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 119, 120), 0.0);
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 120, 120), 100.0);
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 121, 120), 100.0);
+    // A gate over an UNARMED floor is inert, never a floor of its own.
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(0.0, 5000, 120), 0.0);
+    // A negative gate cannot arrive from the loader (it clamps), but the resolver is
+    // the shared one, so it must not invent a floor from a nonsense value either.
+    EXPECT_DOUBLE_EQ(ambFloatDropFloorNow(100.0, 3, -7), 100.0);
+
+    // End to end at the operator: a drop BEFORE the gate restores today's quantity, the
+    // same drop AFTER it restores the floor.  Same arc, same epoch clock, one difference.
+    LocalCarry before{0.0, 1e-6, 0.0}; before.var_first = 0.01; before.var_birth = 0.01;
+    LocalCarry after = before;
+    GnssProcessor::ambFloatDropFloored(
+        before, /*birth=*/0.0, ambFloatDropFloorNow(100.0, /*now_ep=*/10, 120), 1.0, 10);
+    const auto o_after = GnssProcessor::ambFloatDropFloored(
+        after, /*birth=*/0.0, ambFloatDropFloorNow(100.0, /*now_ep=*/200, 120), 1.0, 200);
+    EXPECT_DOUBLE_EQ(before.var, 0.01) << "before the gate the drop must restore exactly "
+                                          "max(var_birth, var_first), which is what an "
+                                          "un-floored drop restores today";
+    EXPECT_DOUBLE_EQ(after.var, 100.0);
+    EXPECT_TRUE(o_after.from_drop_floor);
+}
+
 TEST(AmbFloatVehicleTest, EveryDropArmsTheWalkMetricIncludingAnIdempotentOne) {
     // RF-3a A2: the WALK metric's population is "every drop that doubted the level",
     // which is what lets an OFF run report the walk it suffers.  The phase is armed on

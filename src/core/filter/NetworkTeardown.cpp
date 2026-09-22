@@ -5262,6 +5262,18 @@ int networkTeardown(
         };
         const auto w1 = stat(C.amb_walk_fold1_m);
         const auto w2 = stat(C.amb_walk_fold2_m);
+        // RF-3c: the WARM-UP GATE's own two populations, printed in both knob states so a
+        // run with no gate says so rather than leaving the reader to infer it.
+        log->info("Network (RF-3c drop-floor warm-up gate): "
+                  "network.amb_float_drop_floor_after_ep = {} ({}).  {} drop(s) were taken "
+                  "BEFORE the gate opened and restored max(var_birth, var_first, birth "
+                  "floor) — the convergence population the floor is deliberately NOT a "
+                  "statement about.  {} drop(s) took the floor.",
+                  ctx.knobs.amb_drop_floor_after_ep,
+                  ctx.knobs.amb_drop_floor_after_ep > 0
+                      ? "ARMED — processed epochs, the gross-LOS warmup's abscissa"
+                      : "OFF (no gate: the floor applies from epoch 1)",
+                  C.n_amb_drop_pre_gate, C.n_amb_drop_floored);
         log->info("Network (RF-3a drop-only floor): network.amb_float_drop_var_m2 = {} m^2 "
                   "at zenith ({}), elevation-mapped at the code weights' power beside the "
                   "birth floor {} m^2.  {} of {} drop(s) had their restored variance come "

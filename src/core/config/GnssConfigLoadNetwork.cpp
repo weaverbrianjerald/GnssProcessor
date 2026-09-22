@@ -4244,9 +4244,40 @@ namespace GnssProcessor {
             log->info("Network (RF-3a drop-only floor): ON — every DROP that restores the "
                       "birth prior restores max(var_birth, var_first, {:g}, {:g}) m^2, "
                       "elevation-mapped at the code weights' power.  The BIRTH stash is "
-                      "untouched, so hour 1 is untouched.  SOLVE-AFFECTING.",
+                      "untouched.  SOLVE-AFFECTING.  ⚠ MEASURED: the birth stash being "
+                      "untouched does NOT leave hour 1 untouched — drops happen during "
+                      "convergence too, and the floor cost 0.09 to 0.16 m of hour 1 at the "
+                      "held-out consumer on the 6 h field bed.  See "
+                      "network.amb_float_drop_floor_after_ep.",
                       network_config_.amb_float_birth_var_m2,
                       network_config_.amb_float_drop_var_m2);
+        // RF-3c: the WARM-UP GATE on the drop floor.  Separates the convergence
+        // population (a drop while the network is still finding its clocks) from the
+        // settled one the floor is a statement about.
+        network_config_.amb_float_drop_floor_after_ep =
+            jval<int>(json, "network.amb_float_drop_floor_after_ep",
+                      "amb_float_drop_floor_after_ep", 0);
+        if (network_config_.amb_float_drop_floor_after_ep < 0) {
+            log->warn("Network (RF-3c): network.amb_float_drop_floor_after_ep = {} is "
+                      "negative — clamped to 0 (no gate, RF-3a's behaviour).",
+                      network_config_.amb_float_drop_floor_after_ep);
+            network_config_.amb_float_drop_floor_after_ep = 0;
+        }
+        if (network_config_.amb_float_drop_floor_after_ep > 0
+            && !(network_config_.amb_float_drop_var_m2 > 0.0))
+            log->warn("Network (RF-3c): network.amb_float_drop_floor_after_ep = {} is set "
+                      "while network.amb_float_drop_var_m2 is 0 — the gate guards a floor "
+                      "that is not armed, so it is INERT.  Read this as a miswired arm, "
+                      "not as a null result.",
+                      network_config_.amb_float_drop_floor_after_ep);
+        else if (network_config_.amb_float_drop_floor_after_ep > 0)
+            log->info("Network (RF-3c drop-floor warm-up gate): the {:g} m^2 drop floor "
+                      "applies only to drops taken at processed epoch >= {}; before that a "
+                      "drop restores max(var_birth, var_first, {:g}) — today's RF-3a-free "
+                      "quantity.  Both populations are counted at run end.",
+                      network_config_.amb_float_drop_var_m2,
+                      network_config_.amb_float_drop_floor_after_ep,
+                      network_config_.amb_float_birth_var_m2);
         network_config_.amb_float_q_m2s =
             jval<double>(json, "network.amb_float_q_m2s", "amb_float_q_m2s", 0.0);
         if (network_config_.amb_float_q_m2s < 0.0)

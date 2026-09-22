@@ -147,6 +147,27 @@ namespace GnssProcessor {
                                        long long now_ep);
 
     /**
+     * @brief RF-3c — the DROP FLOOR IN FORCE at this epoch (the warm-up gate).
+     *
+     * The one site the three drop call sites share, so the gate cannot be read one way
+     * at the free-epoch latch and another at the RAIM refloats.  Returns 0 — that is,
+     * today's @c max(var_birth, var_first, birth floor) — for a drop taken before the
+     * gate opens, and the floor itself from @p after_ep onwards.
+     *
+     * The abscissa is the producer's processed-epoch counter, the same one
+     * @c network.gross_los_warmup_epochs and the phase-leveling warmup read, because the
+     * distinction the gate draws is the same one they draw: an arc dropped while the
+     * network is still finding its clocks is a CONVERGENCE event, and what a
+     * re-determined level is worth is a statement about a SETTLED network.
+     *
+     * @param drop_floor_m2 @c network.amb_float_drop_var_m2 at this line of sight (m²).
+     * @param now_ep        This epoch's @c n_loop_epochs.
+     * @param after_ep      @c network.amb_float_drop_floor_after_ep; 0 = no gate.
+     * @return the floor to use at this drop (m²).
+     */
+    double ambFloatDropFloorNow(double drop_floor_m2, long long now_ep, int after_ep);
+
+    /**
      * @brief The SERIAL pre-assembly drop pass — the free-epoch latch and the gap cliff.
      *
      * Runs after PASS A's slip scans (which fill @c ctx.carry.relevel.free_ambs) and

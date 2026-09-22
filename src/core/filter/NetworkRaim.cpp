@@ -140,6 +140,16 @@ void networkPostFitRaim(NetworkRunContext& ctx,
     // RF-3a A1: the code weights' elevation power, the one mapping both ambiguity
     // variance floors are stated in (ambFloatBirthFloor).  Read once per pass.
     const double amb_elev_power_ = config_.getCodeElevationPower();
+    // RF-3c: the drop floor IN FORCE this epoch (0 while the warm-up gate is closed),
+    // and the flag that says the gate is what withheld it.  Resolved once per pass
+    // beside the elevation power, so the T4 and T3 sites below cannot read it
+    // differently from each other or from the free-epoch latch.
+    const double amb_drop_floor_now_ = ambFloatDropFloorNow(
+        ctx.knobs.amb_drop_var_floor,
+        static_cast<long long>(ctx.counters.n_loop_epochs),
+        ctx.knobs.amb_drop_floor_after_ep);
+    const bool   amb_drop_pre_gate_ =
+        (ctx.knobs.amb_drop_var_floor > 0.0) && !(amb_drop_floor_now_ > 0.0);
     auto& raim_refloat_pending = ctx.carry.raim_refloat_pending;
     // QUEUE item 4 R2/R4 (SPEC_t3_null_derivation §6): both measure-only, both
     // loader-guaranteed to require network.raim.  R2 additionally needs per-row
@@ -1065,13 +1075,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                         lane_lit->second,
                                         ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
                                                            e_pa, amb_elev_power_),
-                                        ambFloatBirthFloor(ctx.knobs.amb_drop_var_floor,
+                                        ambFloatBirthFloor(amb_drop_floor_now_,
                                                            e_pa, amb_elev_power_),
                                         se.time.week * 604800.0 + se.time.tow,
                                         static_cast<long long>(
                                             ctx.counters.n_loop_epochs));
                                     if (o_t4.from_drop_floor)
                                         ++ctx.counters.n_amb_drop_floored;
+                                    if (amb_drop_pre_gate_)
+                                        ++ctx.counters.n_amb_drop_pre_gate;
                                     ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                      stations[i].name, pa.sat, pa.signal,
                                                      lane_lit->second,
@@ -1275,13 +1287,15 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                                     lane_lit->second,
                                     ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
                                                        e_pa, amb_elev_power_),
-                                    ambFloatBirthFloor(ctx.knobs.amb_drop_var_floor,
+                                    ambFloatBirthFloor(amb_drop_floor_now_,
                                                        e_pa, amb_elev_power_),
                                     se.time.week * 604800.0 + se.time.tow,
                                     static_cast<long long>(
                                         ctx.counters.n_loop_epochs));
                                 if (o_t3.from_drop_floor)
                                     ++ctx.counters.n_amb_drop_floored;
+                                if (amb_drop_pre_gate_)
+                                    ++ctx.counters.n_amb_drop_pre_gate;
                                 ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                  stations[i].name, pa.sat, pa.signal,
                                                  lane_lit->second,

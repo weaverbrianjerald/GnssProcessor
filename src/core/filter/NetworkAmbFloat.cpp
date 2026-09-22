@@ -73,6 +73,12 @@ bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_e
     return true;
 }
 
+double ambFloatDropFloorNow(double drop_floor_m2, long long now_ep, int after_ep) {
+    if (!(drop_floor_m2 > 0.0)) return 0.0;      // nothing to gate
+    if (after_ep <= 0)          return drop_floor_m2;   // no gate: RF-3a's behaviour
+    return (now_ep >= static_cast<long long>(after_ep)) ? drop_floor_m2 : 0.0;
+}
+
 AmbDropOutcome ambFloatDropFloored(LocalCarry& lc, double birth_floor_m2,
                                    double drop_floor_m2, double now_s,
                                    long long now_ep) {
@@ -103,7 +109,7 @@ void networkAmbFloatApplyDrops(
     const double floor_base = ctx.knobs.amb_birth_var_floor;
     // RF-3a A1: the DROP-only floor, elevation-mapped with exactly the same mapping the
     // birth floor uses (@ref ambFloatBirthFloor is the mapping, not the knob).
-    const double drop_base  = ctx.knobs.amb_drop_var_floor;
+    const double drop_base_knob = ctx.knobs.amb_drop_var_floor;
     const double elev_power = config_.getCodeElevationPower();
     const double max_gap_s  = ctx.knobs.pl_max_gap_s;
     const long long now_ep  = static_cast<long long>(counters.n_loop_epochs);
@@ -123,7 +129,13 @@ void networkAmbFloatApplyDrops(
                          std::get<1>(key), std::get<2>(key), lc, cause);
     };
 
-    long long n_free = 0, n_stale = 0, n_idem = 0, n_dropfloor = 0;
+    long long n_free = 0, n_stale = 0, n_idem = 0, n_dropfloor = 0, n_pregate = 0;
+    // RF-3c: the drop floor IN FORCE this epoch — 0 while the warm-up gate is closed,
+    // which is today's RF-3a-free quantity.  Resolved once per pass because the gate's
+    // abscissa is the epoch, not the line of sight.
+    const double drop_base = ambFloatDropFloorNow(drop_base_knob, now_ep,
+                                                  ctx.knobs.amb_drop_floor_after_ep);
+    const bool   pre_gate  = (drop_base_knob > 0.0) && !(drop_base > 0.0);
     // RF-3a A1: one lambda so the two populations below cannot take the drop at
     // different floors.  Both floors are mapped at THIS line of sight's elevation.
     const auto dropAt = [&](LocalCarry& lc, int sta, const std::string& sat) {
@@ -132,6 +144,7 @@ void networkAmbFloatApplyDrops(
             lc, ambFloatBirthFloor(floor_base, e, elev_power),
             ambFloatBirthFloor(drop_base,  e, elev_power), pl_now_s, now_ep);
         if (o.from_drop_floor) ++n_dropfloor;
+        if (pre_gate)          ++n_pregate;
         return o.acted;
     };
     // (1) THE LATCHED FREE-EPOCH SET.  The set itself is NOT consumed — §4.1: the lane
@@ -178,6 +191,7 @@ void networkAmbFloatApplyDrops(
     counters.n_amb_drop_stale_gap    += n_stale;
     counters.n_amb_drop_idempotent   += n_idem;
     counters.n_amb_drop_floored      += n_dropfloor;
+    counters.n_amb_drop_pre_gate     += n_pregate;
     if (log && n > 0)
         log->debug("Network (RF-1 step 4): TOW {:.1f} — dropped {} carried prior(s) back to "
                    "their birth variance ({} free-epoch latch, {} stale gap; {} already at "
