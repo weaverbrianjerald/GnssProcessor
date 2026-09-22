@@ -2082,13 +2082,41 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // the live ambiguity map and was inert on every re-entry: 396 verdicts, 0
     // freed, byte-identical 12 h field A/B.)
     // No-op unless network.cycle_slip.gap_reentry_relevel.
+    //
+    // CARD SID PHASE 3 (network.ledger_reentry).  The POPULATION of both drains
+    // below becomes the arc ledger's ADMITTED Gap-to-Reentered set, built HERE
+    // because this is the first point at which the epoch's MODELLED rows exist
+    // (networkPassAHead_ ran computeModels above) and the last before the
+    // response needs them.  It is a QUERY on the ledger's admitted timestamps,
+    // not a step: the admitted machine is advanced once per epoch in the roster's
+    // audit pass, far downstream, and advancing it twice would make every arc
+    // look continuous.  Disarmed, `sid` stays empty and both drains take their
+    // historical raw-driven path byte for byte.
+    ArcReentryEpoch sid;
+    sid.armed = qc.params.ledger_reentry && ctx.roster.armed;
+    sid.refloat_no_verdict = qc.params.ledger_reentry_refloat;
+    if (sid.armed) {
+        std::set<ArcLedger::Key> admitted;
+        signalRosterModelledArcs(ctx.roster, modeled, present, admitted,
+                                 &sid.not_modelled);
+        arcLedgerReentryPopulation(ctx.arc_ledger, admitted,
+                                   ctx.arc_ledger.epochIndex(), pl_now_s,
+                                   ctx.knobs.pl_max_gap_s, sid);
+    }
+    // The per-arc outcome sink of the unified "answered" census (R4) is written
+    // in BOTH knob states wherever the observatory is armed, so the four-way
+    // split is comparable across the flip.
+    ArcReentryOutcomeMap* sid_out =
+        ctx.roster.armed ? &ctx.carry.sid_reentry_outcome : nullptr;
     networkSlipDrainGapReentry(stations, present, i_lo, n_sta_total,
                                carry_invariant, carry_warm, carry_slipped_ambs,
                                qc.epoch, qc.params,
                                local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
                                qc.counters, se, traces, log,
                                relevel_ptr,
-                               relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
+                               relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                               sid.armed ? &sid : nullptr, sid_out,
+                               ctx.roster.armed ? &ctx.arc_ledger : nullptr);
 
     // ---- Card GRS: the same response, keyed on the SIGNAL -------------------
     // (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md.)  The drain above
@@ -2106,7 +2134,8 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                                         local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
                                         qc.counters, se, traces, log,
                                         relevel_ptr,
-                                        relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
+                                        relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                                        sid.armed ? &sid : nullptr, sid_out);
 
     // ---- EVENT HARNESS Study 1: the injected free_epoch arc response -------
     // (docs/SPEC_event_harness.md §9.)  An `arc_erase` event carrying

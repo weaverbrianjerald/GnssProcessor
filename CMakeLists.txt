@@ -369,6 +369,7 @@ add_executable(gnss_tests
     tests/test_tracker_modeled_first.cpp
     tests/test_signal_roster.cpp
     tests/test_arc_ledger.cpp
+    tests/test_ledger_reentry.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
     tests/test_if_td_pair_width.cpp

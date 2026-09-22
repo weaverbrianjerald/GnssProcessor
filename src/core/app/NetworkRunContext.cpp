@@ -51,6 +51,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.q_clock = config_.getProcessNoise().sat_clock;
     k.q_pb = config_.getProcessNoise().sat_phase_bias;
     k.q_cb = config_.getProcessNoise().sat_code_bias;
+    k.ledger_reentry = config_.networkLedgerReentry();
     k.pl_on = config_.networkPhaseLeveling();
     k.pl_q_amb = config_.networkPhaseLevelingQAmb();
     k.pl_warmup = config_.networkPhaseLevelingWarmupEpochs();
@@ -814,6 +815,19 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add("scc:2ndcode");
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
+        }
+        // Card SID phase 3 (R6): the gap re-entry RESPONSE keys on the arc ledger's
+        // admitted lifecycle, which decides WHICH carried levels survive a break.
+        // A resume across the flip would restore levels the other side of the flip
+        // would have refloated, and the ledger itself is deliberately not
+        // snapshotted, so the two sides cannot be reconciled after the fact.
+        // Armed-only append, on the card SCC precedent, so every pre-card snapshot
+        // fingerprint is byte-identical.  The no-verdict policy joins it: it
+        // decides the disposition of the population the raw tiers never saw.
+        if (config_.networkLedgerReentry()) {
+            add("sid:ledger_reentry");
+            add(config_.networkLedgerReentryNoVerdict()
+                    == LedgerReentryNoVerdict::Refloat ? "refloat" : "bridge");
         }
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
@@ -5124,6 +5138,15 @@ void networkHarvestLocalCarries(NetworkRunContext& ctx, const GnssConfig& config
                             std::get<1>(it->first), std::get<2>(it->first),
                             it->second, "gap_prune");
                     }
+                    // Card SID phase 3 (R3a): the DECOUPLING edge of the carry
+                    // itself.  This retirement emitted nothing at all until now
+                    // (the audit's "31 lifecycle holders with both edges silent"),
+                    // so the key is buffered for the roster's audit pass, which
+                    // owns the trace bundle and the epoch time and writes the
+                    // `ARC arc_death reason=horizon` row.  Untouched without the
+                    // observatory: the vector stays empty and nothing reads it.
+                    if (ctx.roster.armed)
+                        ctx.carry.sid_carry_prune_deaths.push_back(it->first);
                     it = local_carry.erase(it);
                     ++n_pruned;
                 } else {

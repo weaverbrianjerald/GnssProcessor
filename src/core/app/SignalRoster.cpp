@@ -8,6 +8,7 @@
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
+#include "filter/StateKeySchema.hpp"         // Card SID phase 3: parseAmbiguityKey (the prune's keys)
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
@@ -201,6 +202,53 @@ namespace GnssProcessor {
         return bit->second.modelled_phase;
     }
 
+    void signalRosterAdmittedArcs(
+            const std::vector<std::vector<PppObservation>>& modeled,
+            const std::vector<bool>& present,
+            std::set<ArcLedger::Key>& out) {
+        out.clear();
+        for (std::size_t i = 0; i < modeled.size(); ++i) {
+            if (i < present.size() && !present[i]) continue;
+            for (const PppObservation& o : modeled[i]) {
+                if (o.satellite.empty()) continue;
+                for (const auto& [key, val] : o.observed) {
+                    (void)val;
+                    if (key.size() < 3 || key[0] != 'L') continue;
+                    out.emplace(static_cast<int>(i), o.satellite, key);
+                }
+            }
+        }
+    }
+
+    void signalRosterModelledArcs(
+            const SignalRoster& rs,
+            const std::vector<std::vector<PppObservation>>& modeled,
+            const std::vector<bool>& present,
+            std::set<ArcLedger::Key>& out,
+            long long* n_not_modelled) {
+        out.clear();
+        for (std::size_t i = 0; i < modeled.size(); ++i) {
+            if (i < present.size() && !present[i]) continue;
+            for (const PppObservation& o : modeled[i]) {
+                if (o.satellite.empty()) continue;
+                const std::string cons = PppUtils::getSystemString(o.system);
+                for (const auto& [key, val] : o.observed) {
+                    (void)val;
+                    if (key.size() < 3 || key[0] != 'L') continue;
+                    // The ROLE decides, not the fact that a row exists: an arc the
+                    // roster does not call Modelled on this band has no carried
+                    // level for the response to protect.
+                    if (signalRosterModelledPhase(rs, static_cast<int>(i), cons, key[1])
+                        != key) {
+                        if (n_not_modelled != nullptr) ++(*n_not_modelled);
+                        continue;
+                    }
+                    out.emplace(static_cast<int>(i), o.satellite, key);
+                }
+            }
+        }
+    }
+
     std::map<std::string, std::string> signalRosterDatumPicks(
             const std::map<std::string, std::pair<std::string, std::string>>& if_pin_real,
             std::map<std::string, std::map<std::string, long long>>* votes_out,
@@ -330,6 +378,13 @@ namespace GnssProcessor {
 
         ctx.arc_ledger.configure(rs.horizon_s, kArcLedgerForgetEp);
 
+        // PHASE 3 (R3b): arm the ambiguity prune's key recorder on every station,
+        // so the audit pass can mark the arcs whose column the prune destroyed
+        // inside a gap.  The prune itself is untouched and the recorder is a
+        // per-epoch vector of strings; without the observatory it is never armed.
+        for (const auto& st : stations)
+            if (st.sm) st.sm->setRecordPrunedAmbiguities(true);
+
         log->info("Network (card SID phase 1 / SIGNAL ROSTER + ARC LEDGER): ARMED "
                   "(network.signal_roster).  OBSERVATORY only: the roster and the "
                   "ledger are built once per epoch and read by NOTHING but the "
@@ -363,6 +418,10 @@ namespace GnssProcessor {
         ++ctr.epochs;
         const double t_s = TimeUtils::continuousGpsSeconds(se.time);
         ctx.arc_ledger.beginEpoch(epoch_idx, t_s);
+        // PHASE 3 (R4): the response's per-arc record is EPOCH-scoped.  Cleared at
+        // the first seam of the epoch so it can never describe a previous one,
+        // which is the failure mode the two earlier "answered" approximations had.
+        ctx.carry.sid_reentry_outcome.clear();
 
         const auto& nc = config_.getNetworkConfig();
         const bool companions_armed = config_.networkSecondCodeChannel();
@@ -629,6 +688,8 @@ namespace GnssProcessor {
         auto& ctr = ctx.counters.sid;
         Stopwatch watch(ctr.audit_ms);
         (void)log;
+        // The epoch's continuous-GPS seconds, the unit every carry horizon is in.
+        const double now_s = TimeUtils::continuousGpsSeconds(se.time);
 
         // The ANSWERED test, hoisted above the admitted pass because that pass's own
         // census uses it.  The gap re-entry response fires in PASS A, upstream of
@@ -647,6 +708,41 @@ namespace GnssProcessor {
                    || (cit->second & RelevelEpochState::kCauseGap) != 0;
         };
 
+        // --- PHASE 3 (R3a): the carry's gap prune as an ARC DEATH ---------------
+        // The prune runs in the harvest seam, which has neither the trace bundle
+        // nor the epoch time, so it buffers its keys in the context and they are
+        // evented here.  Today that edge emits NOTHING at all (the audit's "31
+        // lifecycle holders with both edges silent"); this is the DECOUPLING edge
+        // of standing invariant 7 for the carry itself.
+        for (const ArcLedger::Key& key : ctx.carry.sid_carry_prune_deaths) {
+            ++ctr.carry_prune_deaths;
+            const int sta = std::get<0>(key);
+            const std::string& sat = std::get<1>(key);
+            const std::string& sig = std::get<2>(key);
+            const std::string& name =
+                (sta >= 0 && sta < static_cast<int>(rs.station_names.size()))
+                    ? rs.station_names[static_cast<std::size_t>(sta)] : sat;
+            const ArcRecord* a = ctx.arc_ledger.find(key);
+            ++ctr.adm_trace_rows;
+            traces.writeArcLedgerRow(se.time, name, sat, sig,
+                                     a ? arcStateName(a->adm_state) : "absent",
+                                     "dead", a ? a->adm_generation : 0,
+                                     a ? a->adm_gap_len_ep : 0, "horizon", "carry",
+                                     "carry", a ? arcStateName(a->adm_state) : "absent",
+                                     a ? a->admittedGapEp(ctx.arc_ledger.epochIndex()) : -1);
+            if (ctx.arc_ledger.eventAllowed(sta, ArcTransition::Death)) {
+                ++ctr.carry_prune_events;
+                traces.emitEvent(se.time, "ARC", "arc_death", sat, name,
+                                 static_cast<double>(a ? a->adm_gap_len_ep : 0),
+                                 std::nullopt, "carry_prune",
+                                 fmt::format("signal={};reason=horizon;src=local_carry;"
+                                             "max_gap_s={:.0f};adm_state={}",
+                                             sig, rs.horizon_pl_s,
+                                             a ? arcStateName(a->adm_state) : "absent"));
+            }
+        }
+        ctx.carry.sid_carry_prune_deaths.clear();
+
         // --- PHASE 2: the ADMITTED lifecycle, before every class that reads it ---
         // The feed is the station's MODELLED phase rows.  `modeled[i]` exists only
         // for satellites that survived the elevation mask, and `observed` holds only
@@ -657,17 +753,7 @@ namespace GnssProcessor {
         // are reported side by side and never added.
         {
             std::set<ArcLedger::Key> admitted;
-            for (std::size_t i = 0; i < modeled.size() && i < stations.size(); ++i) {
-                if (i < present.size() && !present[i]) continue;
-                for (const PppObservation& o : modeled[i]) {
-                    if (o.satellite.empty()) continue;
-                    for (const auto& [key, val] : o.observed) {
-                        (void)val;
-                        if (key.size() < 3 || key[0] != 'L') continue;
-                        admitted.emplace(static_cast<int>(i), o.satellite, key);
-                    }
-                }
-            }
+            signalRosterAdmittedArcs(modeled, present, admitted);
             ctr.adm_rows += static_cast<long long>(admitted.size());
             std::vector<std::pair<ArcLedger::Key, ArcStep>> adm_edges;
             ctx.arc_ledger.admitEpoch(admitted, adm_edges);
@@ -686,14 +772,43 @@ namespace GnssProcessor {
                 // whose leveling carry is still live is the population the card's
                 // 195 / 68 (and phase 1's 51 / 16) were measured on, now read off the
                 // admitted arc's own edge instead of the carry's re-stash stamp.
-                if (step.transition == ArcTransition::Reentry
-                    && ctx.carry.local_carry.count(std::make_tuple(sta, sat, sig))) {
+                const bool carried =
+                    ctx.carry.local_carry.count(std::make_tuple(sta, sat, sig)) > 0;
+                if (step.transition == ArcTransition::Reentry && carried) {
                     ++ctr.carry_adm_gap_any;
                     if (step.gap_len_ep >= 2 && step.gap_len_ep <= 30) {
                         ++ctr.carry_adm_gap_2_30;
                         if (answered(sta, sat, sig)) ++ctr.carry_adm_gap_2_30_answered;
                     }
                 }
+                // PHASE 3 (R4): the UNIFIED answered definition.  The two
+                // approximations above and in phase 1 inferred the outcome (a read
+                // of `relevel.free_ambs`, a match on `reentry_relevel` events) and
+                // disagreed by 5 of 51.  The response now RECORDS what it did per
+                // arc, in both knob states, and the census reads that.  The split
+                // is four-way and exhaustive: an arc with no record was never
+                // looked at by any tier, which is the honest fourth bucket.
+                if (step.transition == ArcTransition::Reentry
+                    && step.gap_len_ep >= 2 && step.gap_len_ep <= 30) {
+                    ++ctr.ans_total;
+                    if (!carried) {
+                        ++ctr.ans_no_carry_entry;
+                    } else {
+                        const auto oit = ctx.carry.sid_reentry_outcome.find(key);
+                        const ArcReentryOutcome o =
+                            (oit == ctx.carry.sid_reentry_outcome.end())
+                                ? ArcReentryOutcome::None : oit->second;
+                        switch (o) {
+                        case ArcReentryOutcome::Freed:            ++ctr.ans_freed;      break;
+                        case ArcReentryOutcome::BridgedVerdict:   ++ctr.ans_bridged_v;  break;
+                        case ArcReentryOutcome::NoCarry:          ++ctr.ans_no_carry;   break;
+                        case ArcReentryOutcome::BridgedNoVerdict:
+                        case ArcReentryOutcome::None:             ++ctr.ans_bridged_nv; break;
+                        }
+                    }
+                }
+                if (step.transition == ArcTransition::Reentry && step.state_recreated)
+                    ++ctr.adm_state_recreated;
                 const std::string& name =
                     (sta >= 0 && sta < static_cast<int>(rs.station_names.size()))
                         ? rs.station_names[static_cast<std::size_t>(sta)] : sat;
@@ -710,6 +825,40 @@ namespace GnssProcessor {
                 ctr.adm_live_max,
                 static_cast<long long>(ctx.arc_ledger.admittedLiveCount()));
         }
+
+        // --- PHASE 3 (R3b): the state-vector prune as a ledger MARK -------------
+        // Drained AFTER the admitted pass, and the ordering is load-bearing: the
+        // prune ran in PASS B of THIS epoch and destroys exactly the columns this
+        // epoch did not model, so the arc it belongs to only enters its admitted
+        // GAP when `admitEpoch` above closes this epoch.  Drained before that
+        // advance the test `adm_state == Gap` is evaluated one epoch early and
+        // never fires (measured: 507 pruned columns, 0 marked, on the first
+        // field arm of this phase).  NO behaviour change: the prune is untouched
+        // and nothing here writes to the solve.
+        for (std::size_t i = 0; i < stations.size(); ++i) {
+            if (!stations[i].sm) continue;
+            for (const std::string& key : stations[i].sm->takePrunedAmbiguities()) {
+                ++ctr.state_prune_keys;
+                const auto parts = StateKeys::parseAmbiguityKey(key);
+                if (!parts) continue;
+                const ArcLedger::Key ak{ static_cast<int>(i), parts->satellite,
+                                         parts->signal };
+                const ArcRecord* a = ctx.arc_ledger.find(ak);
+                // Only a column destroyed while its ADMITTED arc is in a Gap
+                // INSIDE the horizon is the silent death path the card names: past
+                // the horizon the arc is dead anyway, and an arc the ledger never
+                // admitted is a key it can say nothing about.
+                if (a == nullptr || a->ep_last_admitted < 0) {
+                    ++ctr.state_prune_unknown;
+                    continue;
+                }
+                if (a->adm_state != ArcState::Gap) continue;
+                if (rs.horizon_pl_s > 0.0
+                    && (now_s - a->t_last_admitted_s) > rs.horizon_pl_s) continue;
+                if (ctx.arc_ledger.markStatePruned(ak)) ++ctr.state_pruned_marks;
+            }
+        }
+
 
         // --- (a) the arc-level tracker's band signal against modelled_phase ----
         // Per ROW here; the (station, band) CELL census is the run-end mode of the
@@ -1200,6 +1349,57 @@ namespace GnssProcessor {
                 ? "  ⚠ ARMED AND INERT: ZERO admitted rows were ever fed, so the "
                   "admitted lifecycle never advanced.  This is dead wiring, not a "
                   "quiet run."
+                : "");
+
+        // ---------------------------------------------------------------
+        // PHASE 3: the prune and expiry edges, and the UNIFIED answered split
+        // ---------------------------------------------------------------
+        log->info(
+            "Network (card SID phase 3 / PRUNE AND EXPIRY EDGES): "
+            "(R3a) the leveling carry's gap prune retired {} entr(y|ies) at "
+            "phase_leveling_max_gap_s = {:.0f} s, each now an ARC arc_death with "
+            "reason=horizon ({} evented, holdoff {} epoch(s) per station and "
+            "transition); that edge emitted NOTHING before this phase.  "
+            "(R3b) the state-vector prune destroyed {} ambiguity column(s) over the "
+            "run, of which {} were MARKED state_pruned because their ADMITTED arc "
+            "was in a GAP inside the carry horizon (the silent death path of the "
+            "audit, now on the record) and {} belonged to an arc the ledger has "
+            "never admitted; {} admitted re-entry(ies) then landed on a RE-CREATED "
+            "column.  The prune itself is unchanged: no behaviour moved here.{}",
+            c.carry_prune_deaths, rs.horizon_pl_s, c.carry_prune_events,
+            kArcLedgerEventHoldoffEp,
+            c.state_prune_keys, c.state_pruned_marks, c.state_prune_unknown,
+            c.adm_state_recreated,
+            (c.state_prune_keys > 0 && c.state_pruned_marks == 0)
+                ? "  ⚠ Every pruned column belonged to an arc that was NOT in an "
+                  "admitted gap inside the horizon: read the two denominators "
+                  "before concluding the path is quiet."
+                : "");
+
+        const auto pct = [](long long n, long long d) {
+            return d > 0 ? 100.0 * static_cast<double>(n) / static_cast<double>(d) : 0.0;
+        };
+        log->info(
+            "Network (card SID phase 3 / THE UNIFIED ANSWERED SPLIT, R4): over "
+            "ADMITTED re-entries after 2 to 30 missed epochs, read off the "
+            "RESPONSE's OWN record per arc rather than inferred: {} in the "
+            "population, {} FREED ({:.1f} per cent), {} BRIDGED BY VERDICT (a raw "
+            "tier saw the return and called it clean, {:.1f} per cent), {} BRIDGED "
+            "WITH NO VERDICT (nothing looked at the return at all, {:.1f} per "
+            "cent), {} reached with NO CARRY to protect, {} with no local_carry "
+            "entry at all.  This REPLACES the two approximations of phases 1 and 2 "
+            "(the relevel.free_ambs read and the reentry_relevel event match), "
+            "which disagreed by 5 of 51; both are still printed above for "
+            "comparison.  LEDGER-DRIVEN RESPONSE (network.ledger_reentry) is {}.{}",
+            c.ans_total, c.ans_freed, pct(c.ans_freed, c.ans_total),
+            c.ans_bridged_v, pct(c.ans_bridged_v, c.ans_total),
+            c.ans_bridged_nv, pct(c.ans_bridged_nv, c.ans_total),
+            c.ans_no_carry, c.ans_no_carry_entry,
+            ctx.knobs.ledger_reentry ? "ON" : "OFF",
+            c.ans_total == 0
+                ? "  ⚠ EMPTY POPULATION: no admitted arc returned after 2 to 30 "
+                  "missed epochs in this run, so the split says nothing about the "
+                  "response.  Read it as a denominator, not as a clean result."
                 : "");
     }
 

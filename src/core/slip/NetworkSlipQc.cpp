@@ -2271,6 +2271,86 @@ void gapReentryVoidPends(int i, const std::string& satellite,
         } else ++pit;
 }
 
+// ---------------------------------------------------------------------------
+// Card SID phase 3: the shared lookup helpers
+// ---------------------------------------------------------------------------
+
+/// Record one arc's response outcome for the unified census (R4).  Null sink ⇒
+/// the observatory is not armed and nothing is recorded.
+void sidRecordOutcome(ArcReentryOutcomeMap* sink, int i, const std::string& sat,
+                      const std::string& sig, ArcReentryOutcome o) {
+    if (sink == nullptr) return;
+    (*sink)[ArcLedger::Key{ i, sat, sig }] = o;
+}
+
+/// (station, satellite) -> this epoch's ROW-level resumption, for the per-arc
+/// verdict lookup.  A satellite produces at most one row resumption per epoch
+/// (the raw pass keys its history on the satellite), so the map is injective.
+std::map<std::pair<int, std::string>, const GapResumption*>
+sidIndexRowResumptions(const RawSlipEpoch& raw) {
+    std::map<std::pair<int, std::string>, const GapResumption*> out;
+    for (const auto& g : raw.resumptions)
+        out.emplace(std::make_pair(g.station, g.satellite), &g);
+    return out;
+}
+
+/// (station, satellite, signal) -> this epoch's PER-SIGNAL resumption.
+std::map<std::tuple<int, std::string, std::string>, const SigResumption*>
+sidIndexSigResumptions(const RawSlipEpoch& raw) {
+    std::map<std::tuple<int, std::string, std::string>, const SigResumption*> out;
+    for (const auto& g : raw.sig_resumptions)
+        out.emplace(std::make_tuple(g.station, g.satellite, g.signal), &g);
+    return out;
+}
+
+/// The row-level tier's verdict for ONE arc of that satellite's return.
+///
+/// The LLI read is band-scoped: the row carries one flag per band of its primary
+/// pair, so the arc's own signal picks the flag.  A modelled signal that is not
+/// in the primary pair (a third band) gets no LLI of its own rather than the
+/// other band's, which would attribute a receiver verdict to the wrong signal.
+struct SidVerdict {
+    bool has{false};        ///< a raw tier saw this arc's return this epoch.
+    bool clean{true};       ///< it saw it and called it clean (bridge by design).
+    bool shifted{false};
+    bool lli{false};
+    bool unmeas{false};
+    bool from_signal{false};///< the verdict came from the PER-SIGNAL tier.
+    GapCause primary{GapCause::Unmeas};
+    std::string cause_txt;
+};
+
+SidVerdict sidRowVerdict(const GapResumption& g, const std::string& sig,
+                         const SlipQcParams& qc) {
+    SidVerdict v;
+    v.has     = true;
+    const int lli_of_sig = (sig == g.sig1) ? g.lli1 : ((sig == g.sig2) ? g.lli2 : 0);
+    v.shifted = g.shifted;
+    v.lli     = qc.gap_reentry_lli && lli_of_sig != 0;
+    v.unmeas  = qc.gap_reentry_unmeasurable && !g.measurable;
+    v.clean   = !(v.shifted || v.lli || v.unmeas);
+    v.primary = v.shifted ? GapCause::Shifted : (v.lli ? GapCause::Lli : GapCause::Unmeas);
+    if (v.shifted) v.cause_txt = "shifted";
+    if (v.lli)     v.cause_txt += v.cause_txt.empty() ? "lli" : "|lli";
+    if (v.unmeas)  v.cause_txt += v.cause_txt.empty() ? "unmeas" : "|unmeas";
+    return v;
+}
+
+SidVerdict sidSigVerdict(const SigResumption& g, const SlipQcParams& qc) {
+    SidVerdict v;
+    v.has         = true;
+    v.from_signal = true;
+    v.shifted     = g.shifted;
+    v.lli         = qc.gap_reentry_lli && g.lli != 0;
+    v.unmeas      = qc.gap_reentry_per_signal_unmeasurable && !g.measurable;
+    v.clean       = !(v.shifted || v.lli || v.unmeas);
+    v.primary = v.shifted ? GapCause::Shifted : (v.lli ? GapCause::Lli : GapCause::Unmeas);
+    if (v.shifted) v.cause_txt = "shifted";
+    if (v.lli)     v.cause_txt += v.cause_txt.empty() ? "lli" : "|lli";
+    if (v.unmeas)  v.cause_txt += v.cause_txt.empty() ? "unmeas" : "|unmeas";
+    return v;
+}
+
 }  // namespace
 
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
@@ -2287,9 +2367,15 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 const std::shared_ptr<spdlog::logger>& log,
                                 RelevelEpochState* relevel,
                                 std::map<std::tuple<int, std::string, std::string>,
-                                         RelevelPend>* relevel_pend) {
+                                         RelevelPend>* relevel_pend,
+                                const ArcReentryEpoch* sid,
+                                ArcReentryOutcomeMap* sid_out,
+                                ArcLedger* arc_ledger) {
     if (!qc.gap_reentry) return;
-    if (raw.resumptions.empty()) return;
+    // Card SID phase 3: armed, the POPULATION is the ledger's and the raw list is
+    // only the verdict source, so an epoch with no raw resumption still has work.
+    const bool ledger_driven = (sid != nullptr && sid->armed);
+    if (raw.resumptions.empty() && !ledger_driven) return;
     int n_resp = 0;
     std::string detail_log;
     // This tier's counters are accumulated here and folded into the historical
@@ -2310,7 +2396,17 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         // population exactly while the event's `cause` field keeps all of them.
         const bool lli_set  = qc.gap_reentry_lli && (g.lli1 != 0 || g.lli2 != 0);
         const bool unmeas   = qc.gap_reentry_unmeasurable && !g.measurable;
-        if (!g.shifted && !lli_set && !unmeas) continue;   // clean re-entry: bridge it, as designed
+        if (!g.shifted && !lli_set && !unmeas) {
+            // A clean re-entry is bridged BY DESIGN.  Recorded so the unified
+            // census (R4) can tell "bridged because a tier looked and found
+            // nothing" from "bridged because nothing looked", which is the
+            // distinction phases 1 and 2 could not make.
+            for (const std::string& s : { g.sig1, g.sig2 })
+                if (!s.empty())
+                    sidRecordOutcome(sid_out, i, g.satellite, s,
+                                     ArcReentryOutcome::BridgedVerdict);
+            continue;
+        }
         ++led.verdicts;
         // The legacy pivot's ambiguities are GAUGE-PINNED: refloating one would
         // move the frame every emitted phase bias references, which is the
@@ -2330,6 +2426,10 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         }
         const GapCause primary = g.shifted ? GapCause::Shifted
                                            : (lli_set ? GapCause::Lli : GapCause::Unmeas);
+        // Card SID phase 3: armed, this tier's DETECTIONS, VERDICTS and TRACES are
+        // everything above — unchanged, so an A/B can still read what the raw tier
+        // saw — and the RESPONSE moves to the ledger loop below.
+        if (ledger_driven) continue;
         StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
         // Card GRK: the signals this (station, satellite) actually tracks this
@@ -2346,6 +2446,9 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                      carry_warm, carry_slipped_ambs, local_carry,
                                      pl_now_s, pl_max_gap_s, cause_bits, primary,
                                      led, qc_cnt, relevel, present_ptr);
+            sidRecordOutcome(sid_out, i, g.satellite, sig,
+                             out.reached ? ArcReentryOutcome::Freed
+                                         : ArcReentryOutcome::NoCarry);
             if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
             // One event per ARC reached (invariant #7's re-coupling edge needs
             // an identity, not just a count).  `statistic` is the raw ΔMW in
@@ -2380,6 +2483,146 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                           detail_log.empty() ? "" : ", ",
                                           stations[static_cast<std::size_t>(i)].name,
                                           g.satellite, sig, gapCauseName(primary));
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // Card SID phase 3: the RESPONSE, over the LEDGER's admitted population
+    // ----------------------------------------------------------------------
+    //
+    // This loop owns the whole population's CENSUS, including the arcs it hands
+    // to the per-signal tier, so `ledger_reentry_arcs` is a denominator counted
+    // exactly once and the three dispositions below partition it.  The response
+    // itself is the same shared responder the raw tiers call, keyed by the SAME
+    // (station, satellite, signal) as the ledger arc — so a key mismatch cannot
+    // occur and `gap_reentry_unreachable` is never fed from here.
+    if (ledger_driven) {
+        qc_cnt.ledger_reentry_outside_horizon += sid->outside_horizon;
+        qc_cnt.ledger_reentry_not_modelled    += sid->not_modelled;
+        const auto row_index = sidIndexRowResumptions(raw);
+        const auto sig_index = sidIndexSigResumptions(raw);
+        for (const ArcReentryArc& a : sid->arcs) {
+            const int i = a.station;
+            if (i < 0 || i >= n_sta_total || i >= static_cast<int>(stations.size())) continue;
+            if (i < static_cast<int>(present.size()) && !present[i]) continue;
+            ++qc_cnt.ledger_reentry_arcs;
+            if (a.state_recreated) ++qc_cnt.ledger_reentry_state_recreated;
+
+            // Verdict lookup, keyed by the ARC IDENTITY.  The per-signal tier's
+            // verdict wins where it exists: its key IS the returning signal, so it
+            // is the sharper statement, and the raw pass already de-duplicates the
+            // two populations by satellite.
+            const auto sit = sig_index.find(std::make_tuple(i, a.satellite, a.signal));
+            const auto rit = row_index.find(std::make_pair(i, a.satellite));
+            SidVerdict v;
+            if (sit != sig_index.end())      v = sidSigVerdict(*sit->second, qc);
+            else if (rit != row_index.end()) v = sidRowVerdict(*rit->second, a.signal, qc);
+
+            if (v.has) {
+                ++qc_cnt.ledger_reentry_with_verdict;
+                if (v.from_signal) ++qc_cnt.ledger_reentry_sig_tier;
+                else               ++qc_cnt.ledger_reentry_row_tier;
+                if (v.clean) {
+                    ++qc_cnt.ledger_reentry_v_clean;
+                    ++qc_cnt.ledger_reentry_bridged;
+                    sidRecordOutcome(sid_out, i, a.satellite, a.signal,
+                                     ArcReentryOutcome::BridgedVerdict);
+                    continue;
+                }
+                if (v.primary == GapCause::Shifted)   ++qc_cnt.ledger_reentry_v_shifted;
+                else if (v.primary == GapCause::Lli)  ++qc_cnt.ledger_reentry_v_lli;
+                else                                  ++qc_cnt.ledger_reentry_v_unmeas;
+            } else {
+                ++qc_cnt.ledger_reentry_no_verdict;
+            }
+
+            // The gauge-pinned legacy pivot: its ambiguities are pinned, so a
+            // local refloat is meaningless there.  Counted, not silently dropped.
+            // Tested BEFORE the tier routing so the four dispositions partition
+            // the population exactly: arcs = freed + bridged + no_carry +
+            // pivot_skipped, whichever tier made the response.
+            if (i < i_lo) { ++qc_cnt.ledger_reentry_pivot_skipped; continue; }
+            // The per-signal tier owns the response for its own arcs, exactly as
+            // it does unarmed: its band scoping, its counters, its event.
+            if (v.has && v.from_signal) continue;
+
+            // R2: the NO-VERDICT policy.  `bridge` is today's behaviour made
+            // visible; `refloat` routes the arc down the UNMEASURABLE path, which
+            // network.cycle_slip.gap_reentry_relevel_unmeasurable then decides —
+            // so with that sub-knob off `refloat` is counted and inert, and the
+            // loader says so.
+            const bool respond = v.has || (sid->refloat_no_verdict
+                                           && qc.gap_reentry_unmeasurable);
+            const char* nv_action = "bridge";
+            GapArcOutcome out;
+            if (respond) {
+                const GapCause primary = v.has ? v.primary : GapCause::Unmeas;
+                out = gapReentryRespondArc(i, a.satellite, a.signal,
+                                           *stations[static_cast<std::size_t>(i)].sm,
+                                           carry_invariant, carry_warm,
+                                           carry_slipped_ambs, local_carry,
+                                           pl_now_s, pl_max_gap_s,
+                                           RelevelEpochState::kCauseGap, primary,
+                                           led, qc_cnt, relevel,
+                                           /*present_sigs=*/nullptr,
+                                           /*count_unreachable=*/false);
+                nv_action = out.action;
+                if (out.reached) ++qc_cnt.ledger_reentry_freed;
+                else             ++qc_cnt.ledger_reentry_no_carry;
+                sidRecordOutcome(sid_out, i, a.satellite, a.signal,
+                                 out.reached ? ArcReentryOutcome::Freed
+                                             : ArcReentryOutcome::NoCarry);
+            } else {
+                ++qc_cnt.ledger_reentry_bridged;
+                nv_action = sid->refloat_no_verdict ? "declined" : "bridge";
+                sidRecordOutcome(sid_out, i, a.satellite, a.signal,
+                                 ArcReentryOutcome::BridgedNoVerdict);
+            }
+
+            const std::string& sta_name = stations[static_cast<std::size_t>(i)].name;
+            if (!v.has) {
+                // THE EDGE INVARIANT 7 ASKS FOR on the no-verdict half: the
+                // population no instrument could see before now has an identity,
+                // a gap length and an action, in both policies.  Throttled on the
+                // ledger's own per (station, transition) holdoff so the stream
+                // stays bounded at 305 stations.
+                if (arc_ledger == nullptr
+                    || arc_ledger->eventAllowed(i, ArcTransition::Reentry)) {
+                    ++qc_cnt.ledger_reentry_events;
+                    traces.emitEvent(se.time, "ARC", "arc_reentry", a.satellite,
+                                     sta_name, static_cast<double>(a.gap_ep),
+                                     std::nullopt, nv_action,
+                                     fmt::format("signal={};verdict=none;src=ledger;"
+                                                 "gap_ep={};gap_s={:.0f};policy={};"
+                                                 "state_recreated={};carry={}",
+                                                 a.signal, a.gap_ep, a.gap_s,
+                                                 sid->refloat_no_verdict ? "refloat"
+                                                                         : "bridge",
+                                                 a.state_recreated ? 1 : 0,
+                                                 out.pl_bridged ? "pl" : "dd"));
+                }
+            }
+            if (!out.reached) continue;
+            // The RE-COUPLING edge, in the tier's own vocabulary so the existing
+            // refloat instruments count it: `src=ledger` separates these rows from
+            // the raw-driven ones without re-deriving the population.
+            traces.emitEvent(se.time, "T0_gap", "reentry_relevel", a.satellite,
+                             sta_name, std::nullopt, std::nullopt, out.action,
+                             fmt::format("{};src=ledger;gap_ep={};cause={};carry={};"
+                                         "state={};tier={};state_recreated={}",
+                                         a.signal, a.gap_ep,
+                                         v.has ? v.cause_txt : std::string("none"),
+                                         out.pl_bridged ? "pl" : "dd",
+                                         out.state_live ? "live" : "absent",
+                                         v.has ? "row" : "no_verdict",
+                                         a.state_recreated ? 1 : 0));
+            if (carry_warm)
+                gapReentryVoidPends(i, a.satellite, relevel_pend, qc_cnt);
+            if (++n_resp <= 12)
+                detail_log += fmt::format("{}{}/{}/{} [{}]",
+                                          detail_log.empty() ? "" : ", ",
+                                          sta_name, a.satellite, a.signal,
+                                          v.has ? gapCauseName(v.primary) : "no_verdict");
         }
     }
     // Fold this tier's ledger into the historical flat fields.  They are the
@@ -2421,9 +2664,18 @@ void networkSlipDrainGapReentryPerSignal(
     double pl_now_s, double pl_max_gap_s, SlipQcCounters& qc_cnt,
     const SyncedEpoch& se, NetworkRunTraces& traces,
     const std::shared_ptr<spdlog::logger>& log, RelevelEpochState* relevel,
-    std::map<std::tuple<int, std::string, std::string>, RelevelPend>* relevel_pend) {
+    std::map<std::tuple<int, std::string, std::string>, RelevelPend>* relevel_pend,
+    const ArcReentryEpoch* sid, ArcReentryOutcomeMap* sid_out) {
     if (!qc.gap_reentry || !qc.gap_reentry_per_signal) return;
     if (raw.sig_resumptions.empty()) return;
+    // Card SID phase 3: the decoupling-edge trace below is unchanged in both
+    // states; armed, the RESPONSE runs over the ledger arcs that carry one of
+    // this tier's verdicts, and the row-level drain owns the census.
+    const bool ledger_driven = (sid != nullptr && sid->armed);
+    std::set<std::tuple<int, std::string, std::string>> sid_pop;
+    if (ledger_driven)
+        for (const ArcReentryArc& a : sid->arcs)
+            sid_pop.emplace(a.station, a.satellite, a.signal);
     int n_resp = 0;
     std::string detail_log;
     GapReentryLedger& led = qc_cnt.gap_sig;   // this tier owns its own ledger
@@ -2461,9 +2713,21 @@ void networkSlipDrainGapReentryPerSignal(
                                      g.partner.empty() ? std::string("none") : g.partner,
                                      g.partner_through ? 1 : 0, g.lli,
                                      pl_bridged ? "bridged" : "fresh"));
-        if (!g.shifted && !lli_set && !unmeas) continue;   // clean re-entry: bridge it, as designed
+        if (!g.shifted && !lli_set && !unmeas) {
+            // Clean: bridged BY DESIGN, and recorded so the unified census (R4)
+            // can separate that from an arc nothing looked at.
+            sidRecordOutcome(sid_out, i, g.satellite, g.signal,
+                             ArcReentryOutcome::BridgedVerdict);
+            continue;
+        }
         ++led.verdicts;
         if (i < i_lo) { ++led.pivot_skipped; continue; }   // gauge-pinned legacy pivot
+        // Card SID phase 3: the population is the ledger's.  A raw per-signal
+        // resumption whose arc is NOT in the admitted population (the estimator
+        // never lost the row, or the gap outran the carry horizon) is detected,
+        // verdicted and traced exactly as before, and not responded to.
+        if (ledger_driven
+            && !sid_pop.count(std::make_tuple(i, g.satellite, g.signal))) continue;
         std::string cause_txt;
         {
             const auto add = [&cause_txt](const char* t) {
@@ -2497,6 +2761,13 @@ void networkSlipDrainGapReentryPerSignal(
                                  led, qc_cnt, relevel,
                                  /*present_sigs=*/nullptr,
                                  /*count_unreachable=*/false);
+        sidRecordOutcome(sid_out, i, g.satellite, g.signal,
+                         out.reached ? ArcReentryOutcome::Freed
+                                     : ArcReentryOutcome::NoCarry);
+        if (ledger_driven) {
+            if (out.reached) ++qc_cnt.ledger_reentry_freed;
+            else             ++qc_cnt.ledger_reentry_no_carry;
+        }
         if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
         // THE RE-COUPLING EDGE: `scope=signal` is what separates these rows from
         // the row-level tier's in network_events.csv, so a grader can count the

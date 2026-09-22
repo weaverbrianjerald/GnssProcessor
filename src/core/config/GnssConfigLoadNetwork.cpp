@@ -6181,6 +6181,33 @@ namespace GnssProcessor {
         // knobs parse well below this line).
         network_roster_tracker_ =
             jval<bool>(json, "network.roster_tracker", "network_roster_tracker", false);
+        // Card SID phase 3 (section 7 of the same card): the gap RE-ENTRY RESPONSE
+        // keys on the ledger's ADMITTED lifecycle instead of on the raw tiers'
+        // resumptions.  Default OFF; ARMED IS SOLVE-AFFECTING (it changes which
+        // carried levels survive a break), so it is graded as a behaviour change.
+        // The interlock against a missing observatory or a missing roster read is
+        // raised in the posture block at the end of this section.
+        network_ledger_reentry_ =
+            jval<bool>(json, "network.ledger_reentry", "network_ledger_reentry", false);
+        {
+            // The policy for an arc no raw tier saw this epoch.  Parsed as a string
+            // so a typo is a loud fallback to the default rather than a silent
+            // integer; the same shape network.trace_dd_fractional_ref uses.
+            const std::string nv = jval<std::string>(
+                json, "network.ledger_reentry_no_verdict",
+                "network_ledger_reentry_no_verdict", std::string("bridge"));
+            if (nv == "refloat") {
+                network_ledger_reentry_no_verdict_ = LedgerReentryNoVerdict::Refloat;
+            } else {
+                network_ledger_reentry_no_verdict_ = LedgerReentryNoVerdict::Bridge;
+                if (nv != "bridge" && !nv.empty())
+                    log->warn("Network producer (card SID phase 3): "
+                              "network.ledger_reentry_no_verdict = '{}' is not one of "
+                              "'bridge' or 'refloat'.  Falling back to 'bridge' (the "
+                              "default: a no-verdict re-entry is left to the PASS-B "
+                              "inject and only counted).", nv);
+            }
+        }
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
@@ -10299,6 +10326,53 @@ namespace GnssProcessor {
                       "The result is identical either way (the roster's modelled role IS that "
                       "latch, phase 1's roster_latch_disagree counter at its bar of 0), so this "
                       "is a notice and not a conflict.");
+        // Card SID phase 3: the response keys on the ledger.  REFUSED without BOTH
+        // predecessors — without the observatory there is no admitted lifecycle to
+        // read, and without the roster read the tracker's rows would still name a
+        // band by a different rule than the population does, which is card GRK's
+        // defect re-introduced one layer up.
+        if (network_ledger_reentry_
+            && (!network_signal_roster_ || !network_roster_tracker_)) {
+            log->error("Network producer (card SID phase 3): network.ledger_reentry is armed "
+                       "WITHOUT network.signal_roster{}, so there is {}.  DISARMED.  Arm the "
+                       "phase-1 observatory and the phase-2 roster read alongside it.",
+                       network_roster_tracker_ ? "" : " and network.roster_tracker",
+                       network_signal_roster_
+                           ? "no roster read behind the tracker's band names"
+                           : "no arc ledger to take the population from");
+            network_ledger_reentry_ = false;
+        }
+        if (network_ledger_reentry_ && !network_config_.slip_qc.gap_reentry) {
+            log->error("Network producer (card SID phase 3): network.ledger_reentry is armed "
+                       "WITHOUT network.cycle_slip.gap_reentry_relevel, so there is no gap "
+                       "re-entry RESPONSE for the ledger to drive.  DISARMED.  Arm the "
+                       "row-level response (the card G drain) alongside it.");
+            network_ledger_reentry_ = false;
+        }
+        if (network_ledger_reentry_)
+            log->info("Network producer (card SID phase 3): network.ledger_reentry is ON — the "
+                      "gap RE-ENTRY RESPONSE takes its population from the arc ledger's ADMITTED "
+                      "lifecycle (every arc whose admitted state goes Gap to Reentered at this "
+                      "epoch, whose signal the roster calls Modelled, and whose gap is inside "
+                      "network.phase_leveling_max_gap_s), and looks the raw tiers' verdict up per "
+                      "arc: the row-level tier's resumption verdict for the arc's satellite, the "
+                      "per-signal tier's for the arc's signal.  The raw tiers keep running and "
+                      "their detections, verdicts and traces are unchanged; they no longer DRIVE "
+                      "the response.  An arc no raw tier saw this epoch has NO verdict and is "
+                      "handled by network.ledger_reentry_no_verdict = {}.  ⚠ SOLVE-AFFECTING: "
+                      "this changes which carried levels survive a break, so it is graded as a "
+                      "behaviour change and it is FINGERPRINTED (fresh convergence only).",
+                      network_ledger_reentry_no_verdict_ == LedgerReentryNoVerdict::Refloat
+                          ? "refloat (a no-verdict re-entry is treated as UNMEASURABLE, which "
+                            "network.cycle_slip.gap_reentry_relevel_unmeasurable then decides)"
+                          : "bridge (a no-verdict re-entry is left to the PASS-B inject, as "
+                            "today, but COUNTED and EVENTED as ARC arc_reentry verdict=none)");
+        if (!network_ledger_reentry_
+            && network_ledger_reentry_no_verdict_ == LedgerReentryNoVerdict::Refloat)
+            log->warn("Network producer (card SID phase 3): "
+                      "network.ledger_reentry_no_verdict = refloat is INERT without "
+                      "network.ledger_reentry — the no-verdict population only exists when the "
+                      "ledger drives the response.");
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.

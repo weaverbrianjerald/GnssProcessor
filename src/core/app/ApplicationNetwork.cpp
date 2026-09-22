@@ -330,6 +330,14 @@ int Application::runNetwork() {
         // so the tracker, the carried ambiguity key and the gap re-entry
         // response's lookup name the same signal.  Read at the compute pass only.
         sp.tracker_modeled_first   = sq.tracker_modeled_first;
+        // Card SID phase 3: the RESPONSE's population moves to the arc ledger's
+        // ADMITTED lifecycle, and the raw tiers become the VERDICT source that is
+        // looked up per arc.  The loader has already refused the knob without the
+        // roster, the roster read and the row-level response, so no interlock is
+        // re-tested here.  Unarmed leaves both drains on their raw-driven path.
+        sp.ledger_reentry          = config_.networkLedgerReentry();
+        sp.ledger_reentry_refloat  =
+            config_.networkLedgerReentryNoVerdict() == LedgerReentryNoVerdict::Refloat;
         // Bridge v3 E4: the GF-row capture needs the qualified raw verdicts.
         sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
         // CS-GF authority (iono_carry_source = smoothed_gf): same need.  The

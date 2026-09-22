@@ -146,6 +146,19 @@ namespace GnssProcessor {
         int       adm_generation{ 0 };              ///< increments at every admitted birth.
         unsigned  adm_reason_mask{ kArcReasonNone };///< why the admitted side last left.
 
+        // --- card SID phase 3: the state-vector prune as a ledger MARK --------
+        //
+        // @c StateManager::pruneAmbiguitiesExcept destroys an ambiguity column
+        // after one missed epoch, with no window and no event: the largest silent
+        // death path the audit found.  Phase 3 does NOT change the prune (the
+        // state vector must shrink); it records that it happened, so the arc's
+        // next admitted re-entry can state that the column it returns to was
+        // RE-CREATED rather than carried.  Observatory: nothing in the solve
+        // reads either field.
+        bool      state_pruned{ false };            ///< the column was pruned while this arc was in an admitted Gap inside the horizon.
+        long long ep_state_pruned{ -1 };            ///< epoch of that prune.
+        long long n_state_pruned{ 0 };              ///< how often it has happened to this arc.
+
         /**
          * @brief Epochs the ADMITTED side has missed as of @p ep.
          *
@@ -181,6 +194,40 @@ namespace GnssProcessor {
         /// never been admitted at all.
         long long adm_gap_len_ep{ -1 };
         int       adm_generation{ 0 };        ///< the admitted generation after the step.
+        /// Card SID phase 3: the ambiguity column of this arc was pruned during the
+        /// gap this step closes, so the column a re-entry returns to is a fresh one.
+        bool      state_recreated{ false };
+    };
+
+    /**
+     * @brief Card SID phase 3: one arc of the ledger-driven re-entry population.
+     *
+     * The unit of the response is the same (station, satellite, signal) the
+     * response itself is keyed by, so a key mismatch between the population and
+     * the action cannot occur by construction (card GRK's defect).
+     */
+    struct ArcReentryArc {
+        int         station{ -1 };
+        std::string satellite;
+        std::string signal;
+        int         gap_ep{ 0 };            ///< ADMITTED epochs missed.
+        double      gap_s{ 0.0 };           ///< seconds since the last admitted row.
+        bool        state_recreated{ false };///< the column was pruned inside the gap.
+    };
+
+    /**
+     * @brief Card SID phase 3: this epoch's ledger-driven re-entry population.
+     *
+     * Built once per epoch at the PASS-A slip site and handed to both re-entry
+     * drains.  @ref armed false leaves every drain on its historical raw-driven
+     * path, byte for byte.
+     */
+    struct ArcReentryEpoch {
+        bool armed{ false };                    ///< network.ledger_reentry.
+        bool refloat_no_verdict{ false };       ///< network.ledger_reentry_no_verdict == refloat.
+        std::vector<ArcReentryArc> arcs;        ///< the population, in key order.
+        long long outside_horizon{ 0 };         ///< admitted returns past phase_leveling_max_gap_s (not in @ref arcs).
+        long long not_modelled{ 0 };            ///< admitted returns whose signal the roster does not call Modelled.
     };
 
     /**
@@ -288,6 +335,20 @@ namespace GnssProcessor {
         void admitEpoch(const std::set<Key>& admitted,
                         std::vector<std::pair<Key, ArcStep>>& out);
 
+        /**
+         * @brief Card SID phase 3: record that this arc's ambiguity column was pruned.
+         *
+         * A MARK, never a transition: the prune is not an arc event (the receiver
+         * is still reporting, or not, quite independently of the state vector), it
+         * is the fact that the column a later re-entry returns to will be a fresh
+         * one.  No record is created for an arc the ledger has never seen, because
+         * a key the ledger does not know is not an arc it can say anything about.
+         *
+         * @param key The arc.
+         * @return true when a record existed and was marked.
+         */
+        bool markStatePruned(const Key& key);
+
         /// @brief Read-only access to every record the ledger still remembers.
         const std::map<Key, ArcRecord>& arcs() const { return arcs_; }
 
@@ -326,5 +387,55 @@ namespace GnssProcessor {
         std::set<Key> seen_;                              ///< observed at the open epoch.
         std::map<std::pair<int, int>, long long> ev_last_; ///< (station, transition) -> epoch of its last event.
     };
+
+    /**
+     * @brief Card SID phase 3 — the ADMITTED Gap-to-Reentered arcs of this epoch.  PURE.
+     *
+     * A QUERY, not a step: the admitted machine is advanced once per epoch far
+     * downstream (the roster's audit pass), while the re-entry response runs in
+     * PASS A, so the population has to be read off the timestamps the ledger
+     * already holds rather than by advancing the machine twice.  An arc qualifies
+     * when it has been admitted before (@c ep_last_admitted at or above zero), has
+     * missed at least one epoch since, and is admitted again at @p ep.
+     *
+     * @param led        The ledger, READ-ONLY.
+     * @param admitted   The (station, satellite, signal) phase arcs admitted at this epoch.
+     * @param ep         The ledger's own epoch index for this epoch.
+     * @param now_s      Continuous GPS seconds of this epoch.
+     * @param max_gap_s  The CARRY horizon (@c network.phase_leveling_max_gap_s): a
+     *                   return past it is counted in @c outside_horizon and left out.
+     * @param out        Receives the population in @p admitted key order; @c arcs is
+     *                   cleared first, the counters are accumulated.
+     */
+    void arcLedgerReentryPopulation(const ArcLedger& led,
+                                    const std::set<ArcLedger::Key>& admitted,
+                                    long long ep, double now_s, double max_gap_s,
+                                    ArcReentryEpoch& out);
+
+    /**
+     * @brief Card SID phase 3 — what the re-entry response did to ONE arc.
+     *
+     * The unified "answered" definition (R4).  Phases 1 and 2 approximated it two
+     * different ways (a read of @c relevel.free_ambs with the gap cause, and a
+     * match on @c reentry_relevel events) and the two disagreed by 5 of 51.  From
+     * phase 3 the response RECORDS what it did, per arc, and the census reads that
+     * instead of inferring it.  Written in BOTH knob states: unarmed the raw tiers
+     * record their own outcomes, so the four-way split is comparable across the
+     * flip.
+     */
+    enum class ArcReentryOutcome {
+        None,              ///< no record: the response never looked at this arc.
+        Freed,             ///< reached: a carry existed and the refloat mark landed.
+        BridgedVerdict,    ///< a raw tier saw the return and called it CLEAN: bridged by design.
+        BridgedNoVerdict,  ///< no raw tier saw the return: bridged with nothing looked at.
+        NoCarry            ///< a response was due, but there was nothing to protect.
+    };
+
+    /// @brief Human-readable name of an outcome, for the run-end table.
+    const char* arcReentryOutcomeName(ArcReentryOutcome o);
+
+    /// @brief This epoch's per-arc response outcomes (@ref ArcReentryOutcome).
+    using ArcReentryOutcomeMap = std::map<ArcLedger::Key, ArcReentryOutcome>;
+
 
 } // namespace GnssProcessor

@@ -89,6 +89,10 @@ namespace GnssProcessor {
         double q_clock{};
         double q_pb{};
         double q_cb{};
+        /// Card SID phase 3 (network.ledger_reentry): the gap re-entry response's
+        /// population comes from the arc ledger's ADMITTED lifecycle.  Read here by
+        /// the run-end table alone; the drains take it through @c SlipQcParams.
+        bool ledger_reentry{};
         bool pl_on{};
         double pl_q_amb{};
         int pl_warmup{};
@@ -1703,6 +1707,20 @@ namespace GnssProcessor {
         /// snapshotted: a resume drops outstanding pends and those slips keep
         /// their v1 free re-level — the conservative direction.
         std::map<std::tuple<int, std::string, std::string>, RelevelPend> relevel_pend;
+        /// Card SID phase 3 (R4): what the gap re-entry response did to each arc
+        /// AT THIS EPOCH, recorded by the response and read by the roster's audit
+        /// pass, which is where the admitted-side census lives.  Cleared at the
+        /// build seam, so it never describes a previous epoch.  Written in BOTH
+        /// states of network.ledger_reentry (unarmed the raw tiers record their
+        /// own outcomes), and only while network.signal_roster is armed.
+        /// OBSERVATORY: nothing in the solve reads it.
+        ArcReentryOutcomeMap sid_reentry_outcome;
+        /// Card SID phase 3 (R3a): the arcs whose LEVELING CARRY the gap prune
+        /// retired at network.phase_leveling_max_gap_s this epoch.  The prune runs
+        /// in the harvest seam, which has neither the trace bundle nor the epoch
+        /// time, so the keys are buffered here and the audit pass emits their
+        /// `ARC arc_death reason=horizon` rows.  Cleared as it is drained.
+        std::vector<ArcLedger::Key> sid_carry_prune_deaths;
         // RTB-7(b/c): startup quality-ramp state.  The DEGRADED URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon AND σ̂0-EWMA update count,

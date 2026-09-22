@@ -22,6 +22,7 @@
 
 #include "common/Constants.hpp"
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
+#include "filter/ArcLedger.hpp"        // Card SID phase 3: ArcReentryEpoch / ArcReentryOutcomeMap
 #include "filter/NetworkInject.hpp"     // InjectArcErase / NetworkInjectState (EVENT HARNESS Study 1)
 #include "logging/NetworkRunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
 #include "slip/NetworkRawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
@@ -741,6 +742,28 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param relevel_pend         Bridge-v2 pend map, or nullptr — a fresh mark voids
  *                             any outstanding pend on the same (station, satellite),
  *                             exactly as the raw-slip drains do.
+ *
+ * ## Card SID phase 3 (@c SlipQcParams::ledger_reentry): the LEDGER drives it
+ *
+ * Armed, the arc list is no longer this tier's own resumption list but the arc
+ * ledger's ADMITTED Gap-to-Reentered population (@p sid), and the raw verdict is
+ * LOOKED UP per arc: a per-signal resumption for the exact (station, satellite,
+ * signal) if one exists (that tier then owns the response), otherwise the row
+ * resumption for the (station, satellite).  An arc NEITHER tier saw has no
+ * verdict and is handled by @c SlipQcParams::ledger_reentry_refloat.  The raw
+ * loop still runs and its detections, verdicts and traces are unchanged; it no
+ * longer responds.  This drain owns the whole population's CENSUS
+ * (@c ledger_reentry_* in @ref SlipQcCounters), including the arcs it hands to
+ * the per-signal tier, so the denominator is counted exactly once.
+ *
+ * Because the response key IS the ledger arc's key, @c gap_reentry_unreachable
+ * cannot be incremented on this path and reads 0 armed, by construction.
+ *
+ * @param sid     This epoch's ledger-driven population, or nullptr / @c armed
+ *                false for the historical raw-driven path (byte-identical).
+ * @param sid_out Per-arc outcome sink for the unified "answered" census (R4), or
+ *                nullptr when the observatory is not armed.  Written in BOTH
+ *                knob states.
  */
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 const std::vector<bool>& present,
@@ -756,7 +779,10 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 const std::shared_ptr<spdlog::logger>& log,
                                 RelevelEpochState* relevel = nullptr,
                                 std::map<std::tuple<int, std::string, std::string>,
-                                         RelevelPend>* relevel_pend = nullptr);
+                                         RelevelPend>* relevel_pend = nullptr,
+                                const ArcReentryEpoch* sid = nullptr,
+                                ArcReentryOutcomeMap* sid_out = nullptr,
+                                ArcLedger* arc_ledger = nullptr);
 
 /**
  * @brief Card GRS: the same response, keyed on the SIGNAL instead of the row
@@ -810,6 +836,12 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
  * PASS A immediately after the row-level drain, for the same reasons.
  *
  * Parameters are the row-level drain's, with the same contracts.
+ *
+ * Card SID phase 3: armed (@p sid), this tier responds to the LEDGER arcs whose
+ * exact (station, satellite, signal) has a per-signal resumption this epoch, and
+ * to nothing else; the row-level drain owns the census and every other arc.  The
+ * `sig_resume` decoupling-edge event is emitted for every raw per-signal
+ * resumption in both states, unchanged.
  */
 void networkSlipDrainGapReentryPerSignal(
     std::vector<NetStation>& stations, const std::vector<bool>& present,
@@ -822,7 +854,9 @@ void networkSlipDrainGapReentryPerSignal(
     const std::shared_ptr<spdlog::logger>& log,
     RelevelEpochState* relevel = nullptr,
     std::map<std::tuple<int, std::string, std::string>,
-             RelevelPend>* relevel_pend = nullptr);
+             RelevelPend>* relevel_pend = nullptr,
+    const ArcReentryEpoch* sid = nullptr,
+    ArcReentryOutcomeMap* sid_out = nullptr);
 
 /**
  * @brief SPEC_slip_relevel_walk §6 — float 2×2 delta-bridge solve for one

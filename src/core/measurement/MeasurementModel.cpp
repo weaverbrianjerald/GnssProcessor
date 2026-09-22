@@ -781,7 +781,12 @@ namespace GnssProcessor {
             }
         }
 
-        state_manager_.pruneAmbiguitiesExcept(required_ambiguities);
+        // Card SID phase 3 (R3b): the prune is unchanged, but the CALL SITE records
+        // which columns went, so the arc ledger can state that the column a later
+        // re-entry lands on is a fresh one.  The sink is null unless the network
+        // producer armed the recorder, so every other path is untouched.
+        state_manager_.pruneAmbiguitiesExcept(required_ambiguities,
+                                              state_manager_.ambiguityPruneSink());
 
         // Defensive band-count check.  A correctly-functioning band
         // filter should produce at most N distinct phase bands per

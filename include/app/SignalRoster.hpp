@@ -392,6 +392,36 @@ namespace GnssProcessor {
         long long carry_adm_gap_2_30{ 0 };        ///< of those, after 2 to 30 missed epochs.
         long long carry_adm_gap_2_30_answered{ 0 };///< of those, answered by the gap re-entry tier at the return epoch.
 
+        // =================================================================
+        // PHASE 3 (network.ledger_reentry): the prune and expiry edges, and the
+        // UNIFIED answered split.  The first three are OBSERVATORY and ride the
+        // phase-1 knob; the split is reported in BOTH states of the phase-3 knob.
+        // =================================================================
+
+        /// (R3a) `local_carry` entries the gap prune retired at
+        /// `phase_leveling_max_gap_s`, each now an `ARC arc_death reason=horizon`.
+        long long carry_prune_deaths{ 0 };
+        long long carry_prune_events{ 0 };    ///< of those, evented (holdoff-throttled).
+        /// (R3b) ambiguity columns the state-vector prune destroyed while their
+        /// ADMITTED arc was in a Gap INSIDE the horizon: the silent death path,
+        /// now a ledger mark.  The prune itself is unchanged.
+        long long state_pruned_marks{ 0 };
+        long long state_prune_keys{ 0 };      ///< columns the prune destroyed, all causes (denominator).
+        long long state_prune_unknown{ 0 };   ///< of those, on an arc the ledger has never admitted.
+        /// ADMITTED re-entries that landed on a RE-CREATED column (the arc carried
+        /// a `state_pruned` mark through its gap).
+        long long adm_state_recreated{ 0 };
+
+        // --- (R4) the unified four-way answered split -------------------------
+        // Population: ADMITTED re-entries after 2 to 30 missed epochs.  Read off
+        // the response's OWN record per arc, not inferred, and exhaustive.
+        long long ans_total{ 0 };             ///< the population (denominator).
+        long long ans_freed{ 0 };             ///< the response reached the arc and the mark landed.
+        long long ans_bridged_v{ 0 };         ///< a raw tier saw the return, called it CLEAN, and bridged it by design.
+        long long ans_bridged_nv{ 0 };        ///< nothing looked at the return: bridged with no verdict.
+        long long ans_no_carry{ 0 };          ///< a response was due but there was nothing to protect.
+        long long ans_no_carry_entry{ 0 };    ///< the arc has no `local_carry` entry at all (outside the response's reach).
+
         double    build_ms{ 0.0 };            ///< wall time inside the build seam, summed.
         double    audit_ms{ 0.0 };            ///< wall time inside the audit seam, summed.
     };
@@ -448,6 +478,49 @@ namespace GnssProcessor {
      */
     std::string signalRosterModelledPhase(const SignalRoster& rs, int station,
                                           const std::string& cons, char band);
+
+    /**
+     * @brief The ADMITTED phase arcs of this epoch.  PURE.
+     *
+     * @c modeled[i] exists only for satellites that survived the elevation mask,
+     * and @c PppObservation::observed holds only the signals the model built (the
+     * canonical latch, its card SCC companions and whatever the allow list
+     * admitted), which is exactly the set @c local_carry and the ambiguity states
+     * are keyed from.  ONE definition, shared by the roster's admitted lifecycle
+     * and by card SID phase 3's re-entry population, so the two cannot drift.
+     *
+     * @param modeled Per-station MODELLED observations of this epoch.
+     * @param present Per-station PASS-A presence.
+     * @param out     Receives the (station, satellite, signal) phase arcs.  Cleared first.
+     */
+    void signalRosterAdmittedArcs(
+        const std::vector<std::vector<PppObservation>>& modeled,
+        const std::vector<bool>& present,
+        std::set<ArcLedger::Key>& out);
+
+    /**
+     * @brief Card SID phase 3 — the admitted arcs whose signal the roster calls
+     *        Modelled.  PURE.
+     *
+     * @ref signalRosterAdmittedArcs restricted by the ROSTER's role, which is the
+     * population the re-entry response is defined on: the response frees a carried
+     * LEVEL, and only a modelled signal has one.  A cell the roster cannot answer
+     * for (a constellation with no priority list, or the FIRST epoch of a
+     * constellation, whose latch is decided inside @c computeModels downstream of
+     * the build seam) rejects the arc and is COUNTED, never silently admitted.
+     *
+     * @param rs             The run's roster.
+     * @param modeled        Per-station MODELLED observations of this epoch.
+     * @param present        Per-station PASS-A presence.
+     * @param out            Receives the arcs.  Cleared first.
+     * @param n_not_modelled Optional: incremented once per rejected arc.
+     */
+    void signalRosterModelledArcs(
+        const SignalRoster& rs,
+        const std::vector<std::vector<PppObservation>>& modeled,
+        const std::vector<bool>& present,
+        std::set<ArcLedger::Key>& out,
+        long long* n_not_modelled = nullptr);
 
     /// @brief What one station's datum write did (@ref signalRosterApplyDatum).
     struct SignalRosterDatumWrite {

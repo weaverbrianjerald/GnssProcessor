@@ -6069,6 +6069,49 @@ namespace GnssProcessor {
         bool networkRosterTracker() const { return network_roster_tracker_; }
 
         /**
+         * @brief Card SID phase 3 — the gap RE-ENTRY RESPONSE is driven by the arc
+         *        ledger's ADMITTED lifecycle (@c network.ledger_reentry).
+         *
+         * Phases 1 and 2 built the ledger and gave it a reader. Armed, this makes
+         * the ledger the POPULATION of the response: every arc whose admitted state
+         * goes Gap to Reentered at this epoch, whose signal the roster calls
+         * Modelled, and whose gap is inside @c network.phase_leveling_max_gap_s
+         * (the window the PASS-B inject folds a level across). The raw tiers keep
+         * running unchanged, and their verdicts are LOOKED UP per arc: the
+         * row-level tier's resumption verdict for the arc's satellite, the
+         * per-signal tier's for the arc's signal. An arc neither tier saw has no
+         * verdict and is handled by @ref networkLedgerReentryNoVerdict.
+         *
+         * SOLVE-AFFECTING when armed: it changes which carried levels survive a
+         * break. Graded as a behaviour change, never as a refactor.
+         *
+         * REFUSED (error and disarm) without @c network.signal_roster and
+         * @c network.roster_tracker: without the observatory there is no ledger to
+         * read, and without the roster read the tracker's rows would still name
+         * bands by a different rule than the population does.
+         *
+         * FINGERPRINTED (armed-only append, on the card SCC precedent): a warm
+         * resume across the flip would restore carried levels that the other side
+         * of the flip would have refloated. Network mode only. Default false.
+         */
+        bool networkLedgerReentry() const { return network_ledger_reentry_; }
+
+        /**
+         * @brief Card SID phase 3 — what the response does with an arc that has NO
+         *        raw verdict (@c network.ledger_reentry_no_verdict).
+         *
+         * @c Bridge (default) is today's behaviour, made visible: the arc is left
+         * to the PASS-B inject and is COUNTED and EVENTED as @c ARC @c arc_reentry
+         * with @c verdict=none. @c Refloat is the conservative response: the arc is
+         * treated as UNMEASURABLE, which the existing
+         * @c network.cycle_slip.gap_reentry_relevel_unmeasurable sub-knob then
+         * decides. Inert without @ref networkLedgerReentry.
+         */
+        LedgerReentryNoVerdict networkLedgerReentryNoVerdict() const {
+            return network_ledger_reentry_no_verdict_;
+        }
+
+        /**
          * @brief Whether RAIM refloats are driven by prominence attribution
          *        (@c network.raim_attribution) instead of the per-satellite consensus.
          *
@@ -8321,6 +8364,8 @@ namespace GnssProcessor {
         bool   network_station_marker_to_arp_{false};              ///< Card UPO (network.station_marker_to_arp): reduce every roster station's configured position_ecef from the MONUMENT to the antenna reference point at setup, via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N` — the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. OFF = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
         bool   network_signal_roster_{false};                      ///< Card SID phase 1 (network.signal_roster): build the per-station SIGNAL ROSTER (tracked / modelled / companion / excluded per station, constellation and band digit, reproduced from the canonical latch) and the ARC LEDGER (Absent / Tracking / Gap / Reentered / Dead per (station, satellite, signal)) once per epoch, and count every disagreement between them and the site that decides the same question today. OBSERVATORY: nothing but the counters and the trace reads either object, so the solve is byte-identical ARMED and disarmed. Outputs: the run-end table, the ARC event tier, logs/network_arc_ledger.csv. Not fingerprinted. Network mode only.
         bool   network_roster_tracker_{false};                     ///< Card SID phase 2 (network.roster_tracker): the arc-level slip tracker (networkComputeRawObservables) names each band by the ROSTER's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none. The first READER of the phase-1 observatory; supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role IS that knob's latch), and both may be armed. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
+        bool   network_ledger_reentry_{false};                     ///< Card SID phase 3 (network.ledger_reentry): the gap RE-ENTRY RESPONSE takes its population from the arc ledger's ADMITTED lifecycle (every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, whose gap is inside phase_leveling_max_gap_s) and looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has NO verdict and is handled by network.ledger_reentry_no_verdict. SOLVE-AFFECTING when armed (it changes which carried levels survive a break). REFUSED (error + disarm) without network.signal_roster and network.roster_tracker. FINGERPRINTED (armed-only append). Network mode only.
+        LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Card SID phase 3 (network.ledger_reentry_no_verdict): `bridge` (default) leaves a no-verdict re-entry to the PASS-B inject and merely counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as UNMEASURABLE, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
         bool   network_raim_carry_invariant_{false};         ///< POOL RE-HOST (measure-only): run the post-fit RAIM screen on the Card-4 invariant-carry lineage by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Post-fit RAIM is otherwise structurally inert under carry_invariant — the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). ⚠ NOT emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. OFF = byte-identical.

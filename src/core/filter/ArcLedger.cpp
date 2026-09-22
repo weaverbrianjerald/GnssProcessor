@@ -30,6 +30,17 @@ namespace GnssProcessor {
         return "?";
     }
 
+    const char* arcReentryOutcomeName(ArcReentryOutcome o) {
+        switch (o) {
+        case ArcReentryOutcome::None:             return "none";
+        case ArcReentryOutcome::Freed:            return "freed";
+        case ArcReentryOutcome::BridgedVerdict:   return "bridged_verdict";
+        case ArcReentryOutcome::BridgedNoVerdict: return "bridged_no_verdict";
+        case ArcReentryOutcome::NoCarry:          return "no_carry";
+        }
+        return "?";
+    }
+
     void ArcLedger::configure(double horizon_s, long long forget_ep) {
         horizon_s_ = horizon_s;
         forget_ep_ = std::max<long long>(0, forget_ep);
@@ -201,6 +212,8 @@ namespace GnssProcessor {
                 s.gap_len_ep      = (a.ep_last_admitted < 0)
                                       ? 0
                                       : static_cast<int>(epoch_idx_ - a.ep_last_admitted - 1);
+                s.state_recreated = a.state_pruned;
+                a.state_pruned    = false;
                 ++a.adm_generation;
                 if (a.ep_first_admitted < 0) a.ep_first_admitted = epoch_idx_;
                 a.adm_state            = ArcState::Tracking;
@@ -214,6 +227,12 @@ namespace GnssProcessor {
                 a.adm_gap_len_ep       = s.gap_len_ep;
                 a.adm_state            = ArcState::Reentered;
                 a.ep_adm_state_changed = epoch_idx_;
+                // Card SID phase 3: the column this return lands on is a fresh one
+                // when the prune destroyed it inside the gap.  Reported on the edge
+                // and then cleared, so the mark describes ONE gap and never leaks
+                // into the next.
+                s.state_recreated      = a.state_pruned;
+                a.state_pruned         = false;
                 break;
             case ArcState::Reentered:
                 a.adm_state            = ArcState::Tracking;
@@ -267,6 +286,46 @@ namespace GnssProcessor {
             s.adm_gap_len_ep = a.adm_gap_len_ep;
             s.adm_generation = a.adm_generation;
             out.emplace_back(key, s);
+        }
+    }
+
+    bool ArcLedger::markStatePruned(const Key& key) {
+        const auto it = arcs_.find(key);
+        if (it == arcs_.end()) return false;
+        ArcRecord& a = it->second;
+        a.state_pruned    = true;
+        a.ep_state_pruned = epoch_idx_;
+        ++a.n_state_pruned;
+        return true;
+    }
+
+    void arcLedgerReentryPopulation(const ArcLedger& led,
+                                    const std::set<ArcLedger::Key>& admitted,
+                                    long long ep, double now_s, double max_gap_s,
+                                    ArcReentryEpoch& out) {
+        out.arcs.clear();
+        for (const ArcLedger::Key& key : admitted) {
+            const ArcRecord* a = led.find(key);
+            if (a == nullptr) continue;              // first sighting: not a return
+            if (a->ep_last_admitted < 0) continue;   // never admitted: not a return
+            const long long gap = ep - a->ep_last_admitted - 1;
+            if (gap < 1) continue;                   // admitted last epoch: no gap
+            const double gap_s = now_s - a->t_last_admitted_s;
+            // The horizon is the CARRY's, not the ledger's: past it the PASS-B
+            // inject would not fold the level across the break either, so there is
+            // nothing for the response to protect and nothing to report as missing.
+            if (max_gap_s > 0.0 && (gap_s < 0.0 || gap_s > max_gap_s)) {
+                ++out.outside_horizon;
+                continue;
+            }
+            ArcReentryArc r;
+            r.station         = std::get<0>(key);
+            r.satellite       = std::get<1>(key);
+            r.signal          = std::get<2>(key);
+            r.gap_ep          = static_cast<int>(gap);
+            r.gap_s           = gap_s;
+            r.state_recreated = a->state_pruned;
+            out.arcs.push_back(std::move(r));
         }
     }
 

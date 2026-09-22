@@ -3496,6 +3496,61 @@ int networkTeardown(
             else
                 log->info("{}", grk_line);
         }
+        // ---- Card SID phase 3: the LEDGER-DRIVEN population ------------------
+        // Printed only when the knob is armed: unarmed every counter here is zero
+        // by construction and a line of zeros would read as a measurement.
+        if (slip_qc.params.ledger_reentry) {
+            const long long disp = qcc.ledger_reentry_freed + qcc.ledger_reentry_bridged
+                                 + qcc.ledger_reentry_no_carry
+                                 + qcc.ledger_reentry_pivot_skipped;
+            log->info(
+                "Network (card SID phase 3 / LEDGER-DRIVEN GAP RE-ENTRY): {} arc(s) "
+                "[unit: (station, satellite, signal)] in the ledger's ADMITTED "
+                "Gap-to-Reentered population inside phase_leveling_max_gap_s; {} more "
+                "admitted return(s) were OUTSIDE that horizon, and {} admitted phase "
+                "ROW(s) over the run carried a signal the roster does not call Modelled "
+                "(the roster is built upstream of computeModels, so the FIRST epoch of "
+                "a constellation has no modelled role and contributes about one epoch's "
+                "worth of these); both populations are left out.  "
+                "VERDICT LOOKUP: {} arc(s) had one ({} from the ROW-level tier, {} from "
+                "the PER-SIGNAL tier) — {} shifted, {} LLI, {} unmeasurable, {} CLEAN — "
+                "and {} had NONE (the raw tiers did not see the return at all: raw "
+                "Tracking while the admitted side gapped, which is the population phase "
+                "1 named).  DISPOSITION ({} of {}): {} FREED, {} BRIDGED, {} reached "
+                "with no carry to protect, {} skipped at the gauge-pinned pivot.  {} "
+                "arc(s) returned to a RE-CREATED ambiguity column.  {} ARC arc_reentry "
+                "event(s) written for the no-verdict half (holdoff-throttled).  "
+                "NO-VERDICT POLICY: {}.  Card GRK's gap_reentry_unreachable reads {} — "
+                "it CANNOT be fed on this path, because the response key IS the ledger "
+                "arc's key.{}",
+                qcc.ledger_reentry_arcs, qcc.ledger_reentry_outside_horizon,
+                qcc.ledger_reentry_not_modelled,
+                qcc.ledger_reentry_with_verdict, qcc.ledger_reentry_row_tier,
+                qcc.ledger_reentry_sig_tier, qcc.ledger_reentry_v_shifted,
+                qcc.ledger_reentry_v_lli, qcc.ledger_reentry_v_unmeas,
+                qcc.ledger_reentry_v_clean, qcc.ledger_reentry_no_verdict,
+                disp, qcc.ledger_reentry_arcs,
+                qcc.ledger_reentry_freed, qcc.ledger_reentry_bridged,
+                qcc.ledger_reentry_no_carry, qcc.ledger_reentry_pivot_skipped,
+                qcc.ledger_reentry_state_recreated, qcc.ledger_reentry_events,
+                slip_qc.params.ledger_reentry_refloat
+                    ? (slip_qc.params.gap_reentry_unmeasurable
+                           ? "refloat (a no-verdict re-entry is treated as UNMEASURABLE "
+                             "and network.cycle_slip.gap_reentry_relevel_unmeasurable is "
+                             "ON, so it is acted on)"
+                           : "refloat, BUT INERT: "
+                             "network.cycle_slip.gap_reentry_relevel_unmeasurable is OFF, "
+                             "so every no-verdict arc is counted and bridged exactly as "
+                             "under 'bridge'")
+                    : "bridge (a no-verdict re-entry is left to the PASS-B inject and "
+                      "only counted and evented)",
+                qcc.gap_reentry_unreachable,
+                qcc.ledger_reentry_arcs == 0
+                    ? "  ⚠ ARMED AND INERT: the admitted population was EMPTY for the "
+                      "whole run, so the ledger drove nothing.  Dead wiring, not a "
+                      "quiet run."
+                    : "");
+        }
         // ---- Card GRS: the PER-SIGNAL tier ------------------------------
         // Reported only when the rider is armed, so an unarmed run's Card-G
         // line is unchanged.  Its populations are DISJOINT from the row-level

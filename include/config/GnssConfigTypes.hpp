@@ -3545,6 +3545,21 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Card SID phase 3 — what the ledger-driven gap re-entry response does
+     *        with an arc the RAW slip tiers did not see this epoch
+     *        (@c network.ledger_reentry_no_verdict).
+     *
+     * The population of the response is the ledger's ADMITTED lifecycle, which is
+     * a different set from the raw tiers' resumptions: an arc can be raw-Tracking
+     * and admitted-Gap at the same epoch (the estimator stopped carrying a signal
+     * the receiver kept reporting), and no raw tier then has a verdict for it.
+     */
+    enum class LedgerReentryNoVerdict {
+        Bridge,  ///< today's behaviour: leave it to the PASS-B inject, but count and event it.
+        Refloat  ///< treat it as UNMEASURABLE, which @c gap_reentry_relevel_unmeasurable then decides.
+    };
+
+    /**
      * @brief MW slip detector frequency-band scope.
      *
      * Independent of the KF's @c FrequencyMode so the detector can be

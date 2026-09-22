@@ -443,6 +443,23 @@ struct SlipQcParams {
     /// The Card GRS per-signal tier is untouched (it keys on the signal).
     bool   tracker_modeled_first{false};
 
+    // --- Card SID phase 3 (network.ledger_reentry) --------------------------
+    /// The gap re-entry RESPONSE takes its population from the arc ledger's
+    /// ADMITTED lifecycle instead of from this tier's own resumption list, and
+    /// looks THIS tier's verdict up per arc.  Default OFF ⇒ both drains keep
+    /// their historical raw-driven path byte for byte.  Armed is SOLVE-AFFECTING:
+    /// the population is a different set (an arc can be raw-Tracking and
+    /// admitted-Gap at the same epoch), so which carried levels survive a break
+    /// changes.  Refused by the loader without @c network.signal_roster,
+    /// @c network.roster_tracker and @c gap_reentry.
+    bool   ledger_reentry{false};
+    /// @c network.ledger_reentry_no_verdict == refloat: an arc in the ledger's
+    /// population that NO raw tier saw this epoch is treated as UNMEASURABLE,
+    /// which @ref gap_reentry_unmeasurable then decides.  Default false =
+    /// `bridge`: the arc is left to the PASS-B inject and only counted and
+    /// evented.  Inert without @ref ledger_reentry.
+    bool   ledger_reentry_refloat{false};
+
     // --- Bridge v3 E4 (network.cycle_slip.relevel_bridge_gf) ---
     /// The GF-row capture consumes the qualified verdicts (d_gf + the empirical
     /// gf_step_scale), so it arms BOTH the compute and the qualify pass.
@@ -733,6 +750,30 @@ struct SlipQcCounters {
     /// The RE-COUPLING edge: what the response did to the state the break was
     /// about to be bridged into (see @ref GapReentryLedger for the closure).
     GapReentryLedger gap_sig;
+
+    // --- Card SID phase 3: the LEDGER-DRIVEN population ---------------------
+    //
+    // Every counter here is zero unless @c SlipQcParams::ledger_reentry is armed,
+    // and each is stated against a denominator so a zero can be read (standing
+    // invariant 4): @ref ledger_reentry_arcs is the population, and the three
+    // dispositions below partition it exactly.
+    long long ledger_reentry_arcs{0};         ///< ARCS in the ledger's admitted Gap-to-Reentered population, inside the carry horizon (the denominator).
+    long long ledger_reentry_with_verdict{0}; ///< …for which a raw tier had a verdict this epoch.
+    long long ledger_reentry_v_shifted{0};    ///< …of those, primary verdict = raw MW/GF level shift.
+    long long ledger_reentry_v_lli{0};        ///< …of those, primary verdict = RINEX LLI at the return epoch.
+    long long ledger_reentry_v_unmeas{0};     ///< …of those, primary verdict = UNMEASURABLE under the tier's sub-knob.
+    long long ledger_reentry_v_clean{0};      ///< …of those, the tier saw the return and called it CLEAN (bridged by verdict).
+    long long ledger_reentry_no_verdict{0};   ///< …that NO raw tier saw this epoch (raw Tracking while the admitted side gapped).
+    long long ledger_reentry_freed{0};        ///< ARCS the response actually reached (a carry existed and the mark landed).
+    long long ledger_reentry_bridged{0};      ///< ARCS deliberately left to the PASS-B inject (clean verdict, or no verdict under `bridge`).
+    long long ledger_reentry_no_carry{0};     ///< ARCS with a verdict and a response, but nothing to protect.
+    long long ledger_reentry_outside_horizon{0}; ///< ADMITTED returns past phase_leveling_max_gap_s, outside the population.
+    long long ledger_reentry_not_modelled{0}; ///< ADMITTED phase ROWS whose signal the roster does not call Modelled (dominated by the first epoch of each constellation, whose latch is decided downstream of the roster build); never offered to the population.
+    long long ledger_reentry_row_tier{0};     ///< …of @ref ledger_reentry_with_verdict, answered from the ROW-level tier.
+    long long ledger_reentry_sig_tier{0};     ///< …of @ref ledger_reentry_with_verdict, answered from the PER-SIGNAL tier.
+    long long ledger_reentry_pivot_skipped{0};///< ARCS at a gauge-pinned station index below i_lo (never refloated locally).
+    long long ledger_reentry_state_recreated{0}; ///< ARCS whose ambiguity column had been PRUNED inside the gap they return from.
+    long long ledger_reentry_events{0};       ///< ARC arc_reentry rows written for the no-verdict population (holdoff-throttled).
     /// D5 innovation FLAG ROWS seen at the attribution site, one per RESOLVED
     /// flag.  Two things make this NOT a chord count, both deliberate:
     ///   * under the WL-3 joint pair block the gate runs per band ROW (rows i and
