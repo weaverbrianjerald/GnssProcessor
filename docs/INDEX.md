@@ -151,7 +151,8 @@ record the program is re-founding **on**.
   the tracker reader, the ledger-driven re-entry response, the reason-mask writers, the anchor
   re-entry and the roster declared on the wire, all byte-identical armed; the consumer's declared
   latch a trade, OFF; the second phase channel KEEP OFF, the L1W hole a receiver-tracking limit;
-  phase 6b's band-level phase-bias family the author's question), signal identity and arc lifecycle: the estimator is per signal and stays; the
+  channel_mode all correct and KEEP OFF: a family with no canonical station freezes its satellite
+  level at ignition, the next read), signal identity and arc lifecycle: the estimator is per signal and stays; the
   layer deciding which signal stands for a band is decided in 128 sites with six independent
   rules, and 31 arc-lifecycle holders have both edges silent. Field baseline: the tracker's
   signal differs from the carried one at 46 cells of 44 of 58 stations, 0 of 31 band-1
