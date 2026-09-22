@@ -5,9 +5,9 @@
 - **id:** RF-3
 - **topic:** raim-qc
 - **status:** open
-- **summary:** READ 2026-09-22 (Opus read worker, config-only arms; every number re-graded by the manager from `runs/`), plus a birth-floor ladder run by the manager. The field baseline `runs/_rf0hv9_field6` folds 101 post-fit code rows above 10 m (404 above 3 m) at full weight, in 70 line-of-sight episodes. Five of the six largest have CLEAN code data: they are the RE-COUPLING edge of the slip and gap re-entry response, not code faults. At a refloat the float ambiguity is re-born with the arc's FIRST-STASH variance (STHL00GBR G11: 0.036 m2 from two hours earlier, `network.amb_float_birth_var_m2` being 0 in the posture), so a level wrong by 40 m is folded at 0.19 m and walks down geometrically for 24 epochs while the code rows carry the misfit with the ionospheric band ratio. The gross-LOS screen (card GL) cures what it declares because its response ERASES the carry: four of six episodes die within one epoch of the fold; with a one-row declaration full-weight gross rows fall 101 to 33 and 13 of 16 census sites improve; the prefit fuse is blind by construction (the fault is created by the solve). A birth floor of 4 or 100 m2 removes the walk (rows above 3 m 404 to 101 / 86; WTZZ00DEU hours 3 to 6 0.028 0.030 0.036 0.045 to 0.015 0.016 0.029 0.038 m) but slows every BIRTH (hour 1 0.56 to 0.66 m; census hour 1 +0.03 to +0.04 m, count median 342 to 301). Build pre-registered in section 4: a DROP-only floor (RF-3a), the gross-LOS screen's one-row rule, bounded decoupling, same-epoch emission and station tier (RF-3b), the wire's discontinuity tokens on this path (RF-3c). Nothing built.
+- **summary:** BUILT 2026-09-22 (main `0436002`, RF-3a `network.amb_float_drop_var_m2` and RF-3b's four screen rules, default OFF). The drop floor removes the walk (rows above 3 m 394 to 80 at 100 m2, T4_attrib 81 to 19, WTZZ00DEU hours 3 to 6 to 0.015 0.015 0.027 0.037 m, census absolute Up smaller at 10 of 16) but costs hour 1 (0.560 to 0.651 m; census +0.034 m): drops happen in hour 1 too; a warm-up gate is the next arm. The screen's one-row rule and same-epoch emission work (rows above 10 m 100 to 32, census 13 of 16 better on hours 4 to 6, none worse, first changed emission at the declaring epoch); the hold (`gross_los_bound`) is FALSIFIED (the erase is the bounded response); the station tier needs the `fixed` rule to have a population. Earlier summary: READ 2026-09-22 (Opus read worker, config-only arms; every number re-graded by the manager from `runs/`), plus a birth-floor ladder run by the manager. The field baseline `runs/_rf0hv9_field6` folds 101 post-fit code rows above 10 m (404 above 3 m) at full weight, in 70 line-of-sight episodes. Five of the six largest have CLEAN code data: they are the RE-COUPLING edge of the slip and gap re-entry response, not code faults. At a refloat the float ambiguity is re-born with the arc's FIRST-STASH variance (STHL00GBR G11: 0.036 m2 from two hours earlier, `network.amb_float_birth_var_m2` being 0 in the posture), so a level wrong by 40 m is folded at 0.19 m and walks down geometrically for 24 epochs while the code rows carry the misfit with the ionospheric band ratio. The gross-LOS screen (card GL) cures what it declares because its response ERASES the carry: four of six episodes die within one epoch of the fold; with a one-row declaration full-weight gross rows fall 101 to 33 and 13 of 16 census sites improve; the prefit fuse is blind by construction (the fault is created by the solve). A birth floor of 4 or 100 m2 removes the walk (rows above 3 m 404 to 101 / 86; WTZZ00DEU hours 3 to 6 0.028 0.030 0.036 0.045 to 0.015 0.016 0.029 0.038 m) but slows every BIRTH (hour 1 0.56 to 0.66 m; census hour 1 +0.03 to +0.04 m, count median 342 to 301). Build pre-registered in section 4: a DROP-only floor (RF-3a), the gross-LOS screen's one-row rule, bounded decoupling, same-epoch emission and station tier (RF-3b), the wire's discontinuity tokens on this path (RF-3c). Nothing built.
 - **source:** the re-founding plan (RF-3: "QC that acts on CODE rows ... and the wire contract on every channel"); [RF-1](RF-1_float_ambiguities_design.md) sections 3.3 and 3.4 (the birth floor and the drop); [SCU](SCU_station_coordinates_unknowns_2026-09-22.md) and [GRK](GRK_gap_reentry_key_mismatch_2026-09-22.md) (the gross rows named there); card GL (`include/filter/NetworkGrossLos.hpp`)
-- **knobs / posture:** existing: `network.gross_los_screen` (+ `gross_los_k` 8, `gross_los_min_rows` 2, `gross_los_epochs`, `gross_los_deweight`, `gross_los_clear_*`, `gross_los_max_gap_s`, `gross_los_max_station_frac`), `network.prefit_fuse_sigma`, `network.amb_float_birth_var_m2` (0 in the posture). Proposed: `network.amb_float_drop_var_m2`, the GL rules of section 4. Posture: the RF-0hv working bases (baseline `runs/_rf0hv9_{field,sim}6`)
+- **knobs / posture:** built 2026-09-22: `network.amb_float_drop_var_m2`, `network.gross_los_min_rows_rule`, `network.gross_los_bound` (KEEP OFF), `network.gross_los_emit_exclude`, `network.gross_los_station_tier`; existing: `network.gross_los_screen` (+ `gross_los_k` 8, `gross_los_min_rows` 2, `gross_los_epochs`, `gross_los_deweight`, `gross_los_clear_*`, `gross_los_max_gap_s`, `gross_los_max_station_frac`), `network.prefit_fuse_sigma`, `network.amb_float_birth_var_m2` (0 in the posture). Proposed: `network.amb_float_drop_var_m2`, the GL rules of section 4. Posture: the RF-0hv working bases (baseline `runs/_rf0hv9_{field,sim}6`)
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** `runs/_rf0hv9_field6`; arms `runs/_rap_rf3_gl`, `_rf3_gl1`, `_rf3_fuse`, `_rf3_bv025`, `_rf3_bv4`, `_rf3_bv100`; census keys `rf3gl`, `rf3gl1`, `rf3fuse`, `bv4`, `bv100` (against `grk`); exe `gnss_processor_sid3.exe` (`41C04F7F...`); the read report `runs/_msc/rf3_read_report_2026-09-22.md`
 
@@ -148,3 +148,93 @@ Invariants pre-flight: 1 (RF-3a IS the re-coupling rule for the drop; RF-3b boun
 decoupling edge), 3 (the satellite stand-down is a deliberate non-build, with data), 4 (all
 counters in both knob states), 6 (byte identity), 7 (both edges of the screen are events; RF-3c
 declares the step on the wire).
+
+## 5. Build result (2026-09-22; Opus build worker, every number re-graded by the manager from `runs/`; 6 h arms)
+
+Main `0436002`. RF-3a `network.amb_float_drop_var_m2` and RF-3b's four sub-knobs
+(`gross_los_min_rows_rule`, `gross_los_bound`, `gross_los_emit_exclude`, `gross_los_station_tier`)
+plus telemetry, all default OFF, byte-identical OFF on both beds (G0 PASS, and again on the final
+exe). Every drop site routes through the drop floor (the five slip latches and the gap cliff, T4 and
+T3; cards GRK's and SID's refloats use the same latch); the erases (the gap prune, the anchor
+re-reference, the within-epoch drop, the gross-LOS erase) have no restored variance to floor. A
+pre-existing inconsistency closed on the way: the RAIM sites passed the zenith birth floor where the
+birth stash elevation-maps it (exact today at floor 0). The emission exclusion is the contributor-set
+form: the emitted clock and code bias are joint-solve states with no per-contributor decomposition,
+so the screen's DECISION runs ahead of the emission and the declared LOS leaves the satellite's
+contributor set for the epoch (withheld below `gross_los_sat_min_stations`, else emitted with the
+producer's discontinuity mark through the `ura_retro_sats` drain, whose predicate gained the knob:
+a mark that would otherwise never land on a posture without the datum knobs). `AmbFloatVehicleTest`
++5, `NetworkGrossLosRf3b` 5 cases; `gnss_tests` 2505 ran, 2504 passed, 1 known skip; exe
+`gnss_processor_rf3.exe` (`6486D125...`).
+
+### 5.1 RF-3a, the drop-only floor
+
+| | base | 4 m2 (`runs/_rap_rf3b_a4`) | 100 m2 (`_rap_rf3b_a100`) |
+| --- | --- | --- | --- |
+| rows above 3 m / above 10 m at full weight | 394 / 100 | 155 / 42 | 80 / 35 |
+| `T4_attrib` | 81 | 23 | 19 |
+| drops / floored | 1900 / 0 | 1827 / 1060 | 1827 / 1811 |
+| WTZZ00DEU 3D p50 by hour (m) | 0.560 0.059 0.028 0.030 0.036 0.045 | 0.723 0.066 0.020 0.019 0.030 0.040 | 0.651 0.051 0.015 0.015 0.027 0.037 |
+| below 0.1 m | 611 | 584 | 585 |
+| clock wire (m) | 0.0045 / 0.0028 | 0.0044 / 0.0031 | 0.0043 / 0.0030 |
+| census against `grk`: hour 1 median | | +0.045 m (5 better, 7 worse) | +0.034 m (3 / 6) |
+| census hours 2 to 6 better / worse | | 4 / 2 (median -0.002 m) | 3 / 4 (-0.002 m) |
+| absolute Up smaller | | 11 of 16 (median 0.0273 to 0.0228 m) | 10 of 16 (0.0249 m) |
+| sim (`_rap_rf3b_a4_sim`) | | within 0.0002 m per hour of the sim base | |
+| slipped sim bed, ON against OFF (hours 1 to 6, m) | | -0.025 +0.035 +0.060 +0.006 -0.046 -0.010; drops 12 858 to 12 831 | |
+
+The floor removes the walk in proportion to its size and takes the settled consumer to 0.015 m,
+and it costs hour 1: the statement of section 4 that the birth stash alone decides hour 1 was
+wrong, since drops happen in hour 1 as well (332 `relevel_free` drops there on every arm; the
+count does not change, the cost of each does, on a network that is still converging). The walk
+metric as defined (the |value change| at the first fold after a drop) is LARGER with the floor
+(a looser prior lets more correction through per fold: slipped bed medians 0.306 to 0.373 m at
+the first fold, 0.107 to 0.159 m at the second); it measures the correction, not the residual walk,
+and is kept as reported. Frozen G1 FAILS on the hour-1 bars at both values; a warm-up gate on the
+floor is the next arm (section 5.4).
+
+### 5.2 RF-3b, the screen's rules
+
+| | base | `_rap_rf3b_gl` (available + bound + emit_exclude + station tier) | `_rap_rf3b_gl_nobound` (no bound) |
+| --- | --- | --- | --- |
+| rows above 3 m / above 10 m at full weight | 394 / 100 | 219 / 38 | 213 / 32 |
+| declarations / releases / expiries | | 8 / 3 / 4 | 7 / 5 / 2 |
+| largest folded residual (m) | | 2 352 | 445 |
+| first changed emission | | the declaring epoch (TOW 269340) | the declaring epoch |
+| station-tier declarations / guard firings | | 0 / 0 | 0 / 0 |
+| WTZZ00DEU 3D p50 by hour (m) | 0.560 0.059 0.028 0.030 0.036 0.045 | 0.560 0.059 0.028 0.030 0.039 0.048 | 0.560 0.059 0.028 0.030 0.039 0.048 |
+| clock wire (m) | 0.0045 / 0.0028 | 0.0042 / 0.0028 | 0.0041 / 0.0028 |
+| census against `grk` | | counts 5 better 0 worse; hours 4 to 6 p50 better at 13 of 16; absolute Up smaller at 10 | the same |
+
+- The one-row rule and the same-epoch emission work: the first changed emission lands at the
+  declaring epoch (two epochs earlier than the pre-split screen), rows above 10 m at full weight
+  100 to 32, the census better at 13 of 16 sites on hours 4 to 6 with none worse.
+- `gross_los_bound` as built (the freed states held with zero process noise) is FALSIFIED: the
+  largest folded residual grows 445 to 2 352 m, expiries 2 to 4, and the two episodes the erase
+  repairs (STHL00GBR G11, CPVG00CPV G13) stop releasing. The erase IS the bounded response on this
+  vehicle (the arc re-births uninformative and the code rows determine it within an epoch); the
+  hold keeps the wrong value. KEEP OFF.
+- The station tier's population is empty under the `available` rule: the bar becomes
+  `min(2, rows)`, so BSHM00ISR's 5 of 7 lines of sight no longer clear `gross_los_max_station_frac`
+  and the guard never fires; the tier is covered by its unit case only. The two expiries and the
+  445 m folded row are BSHM00ISR, the faulty station, where the LOS's whole determination is the
+  folded rows: the station tier under the `fixed` rule is the next arm.
+- Frozen G2 fails on the expiry and the largest-residual bars (both BSHM00ISR) and passes the
+  other four.
+
+### 5.3 RF-3c, read only
+
+`code_disc` is written from the emitter's per-(satellite, signal) counter (`NetworkProductEmitter.cpp`
+about line 483), bumped by a constellation-wide datum change, a per-satellite mark, a
+sum-to-zero channel change, the satellite's IF-pin band change or the opt-in jump test;
+`clock_disc` from the per-satellite counter (about line 427), gated on `network.emit_clock_disc`,
+datum components only. The screen's emission exclusion already reaches the mark through the
+`ura_retro_sats` drain, at the UNION scope (`kDiscChanAll`, detail `union`): the tokens are written
+today under `gross_los_emit_exclude`, without the channel the response moved or the tier's name. A
+dedicated writer needs no format change: carry the channel, name the tier in the `R` record.
+
+### 5.4 Next arms (in flight at the time of writing)
+
+A warm-up gate on the drop floor (`network.amb_float_drop_floor_after_ep`), the floor at 100 m2
+from epoch 120; the same with the screen (one-row rule and emission exclusion, no bound); and the
+station tier under the `fixed` rule.
