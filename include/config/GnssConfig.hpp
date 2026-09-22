@@ -6041,6 +6041,34 @@ namespace GnssProcessor {
         bool networkSignalRoster() const { return network_signal_roster_; }
 
         /**
+         * @brief Card SID phase 2 — the arc-level slip tracker READS the roster
+         *        (@c network.roster_tracker).
+         *
+         * Phase 1 built the roster as an observatory.  Armed, this makes the first
+         * reader of it: @c networkComputeRawObservables names each band by the
+         * roster's @c modelled_phase for that (station, constellation, band) when
+         * that phase is reported with its matching code this epoch, and falls back
+         * to the lexical rule only on a band the roster names none for.  The
+         * per-signal tier of card GRS is untouched (it keys on the signal).
+         *
+         * It replaces card GRK's @c network.cycle_slip.tracker_modeled_first by
+         * construction: the roster's modelled role IS the canonical latch that knob
+         * reads (phase 1's @c roster_latch_disagree, bar 0), so the two name the same
+         * signal at every cell and a run with both armed is byte-identical to a run
+         * with either.  Both may be armed; the roster read supersedes the latch
+         * lookup and the loader says so.
+         *
+         * REFUSED without @c network.signal_roster: there is no roster to read, and
+         * a silent fallback to the latch would make an armed run look like it had
+         * exercised the reader.
+         *
+         * Not fingerprinted: the tracker's own history is exempt from the state
+         * snapshot (card GRK's precedent) and no carried quantity changes meaning
+         * across the flip.  Network mode only.  Default false.
+         */
+        bool networkRosterTracker() const { return network_roster_tracker_; }
+
+        /**
          * @brief Whether RAIM refloats are driven by prominence attribution
          *        (@c network.raim_attribution) instead of the per-satellite consensus.
          *
@@ -8292,6 +8320,7 @@ namespace GnssProcessor {
         bool   network_phase_bias_exclude_unmatched_antenna_{false}; ///< Exclude a station whose receiver antenna has NO ATX model match (zero receiver PCO/PCV → uncalibrated carrier phase) from every satellite phase-bias state — its arc is absorbed by the local float ambiguity (like phase_bias_min_station_fraction, but per-station and all-signals) while it still feeds the satellite clock/code-bias/iono/position. The clock-datum pivot is never excluded (warned instead). OFF = every station contributes (byte-identical). Network mode only.
         bool   network_station_marker_to_arp_{false};              ///< Card UPO (network.station_marker_to_arp): reduce every roster station's configured position_ecef from the MONUMENT to the antenna reference point at setup, via Coordinates::markerToArp with that station's RINEX `ANTENNA: DELTA H/E/N` — the helper and frame the held-out consumer's truth already uses. The roster is held fixed at a published (monument) coordinate while the observations refer to the antenna and the ATX model is ARP-relative, so the station misfits every range by H·sin(elev); its zenith wet delay absorbs about a quarter of H and the rest leaks into the satellite clocks regionally. A station whose header has no eccentricity record is left unchanged and warned; a zero eccentricity is an exact no-op. OFF = byte-identical (eccentricities are read and reported only). Fingerprinted (armed-only append). Network mode only.
         bool   network_signal_roster_{false};                      ///< Card SID phase 1 (network.signal_roster): build the per-station SIGNAL ROSTER (tracked / modelled / companion / excluded per station, constellation and band digit, reproduced from the canonical latch) and the ARC LEDGER (Absent / Tracking / Gap / Reentered / Dead per (station, satellite, signal)) once per epoch, and count every disagreement between them and the site that decides the same question today. OBSERVATORY: nothing but the counters and the trace reads either object, so the solve is byte-identical ARMED and disarmed. Outputs: the run-end table, the ARC event tier, logs/network_arc_ledger.csv. Not fingerprinted. Network mode only.
+        bool   network_roster_tracker_{false};                     ///< Card SID phase 2 (network.roster_tracker): the arc-level slip tracker (networkComputeRawObservables) names each band by the ROSTER's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none. The first READER of the phase-1 observatory; supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role IS that knob's latch), and both may be armed. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.
         bool   network_raim_carry_invariant_{false};         ///< POOL RE-HOST (measure-only): run the post-fit RAIM screen on the Card-4 invariant-carry lineage by building the carry-neutral `qc_amb` census and widening the seam's call-site gate. Post-fit RAIM is otherwise structurally inert under carry_invariant — the seam is not called (carry_warm needs phase_leveling) and its pool `pl_amb` is never filled (its fill site is under `!carry_invariant`). ⚠ NOT emission-neutral: filling the pool makes σ̂0 real, which feeds the A4 withhold and the URA EWMA. Requires network_carry_invariant_ + network_raim_. OFF = byte-identical.

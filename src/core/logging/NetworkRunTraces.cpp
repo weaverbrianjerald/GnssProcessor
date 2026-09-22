@@ -565,7 +565,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                    "Gap->Dead is a death past it, and Dead->Tracking is a birth whose "
                    "generation says the arc had been here before. An arc whose STATION "
                    "reported nothing at an epoch is frozen, never gapped. Not "
-                   "holdoff-throttled (the ARC tier of network_events.csv is).\n"
+                   "holdoff-throttled (the ARC tier of network_events.csv is). Card SID "
+                   "phase 2: `side` says which lifecycle from/to/generation/gap_ep "
+                   "describe - raw (the receiver's record, upstream of the elevation "
+                   "mask, the allow list and every admission screen) or adm (the "
+                   "station's MODELLED rows, the population local_carry and the "
+                   "ambiguity states are keyed from); adm_state and adm_gap_ep report "
+                   "the admitted side on every row, and adm_gap_ep is -1 when the arc "
+                   "has never been admitted at all.\n"
                 << kArcLedgerHeader;
         else
             log->warn("Network: failed to open arc-ledger trace {}",
@@ -1186,12 +1193,15 @@ void NetworkRunTraces::emitEvent(const GnssTime& t, const char* tier, const char
 void NetworkRunTraces::writeArcLedgerRow(const GnssTime& t, const std::string& station,
                                          const std::string& sat, const std::string& signal,
                                          const char* from, const char* to, int generation,
-                                         int gap_ep, const char* reason, const char* role) {
+                                         int gap_ep, const char* reason, const char* role,
+                                         const char* side, const char* adm_state,
+                                         long long adm_gap_ep) {
     if (!arc_ledger_trace.is_open()) return;
     arc_ledger_trace << t.week << ',' << fmt::format("{:.3f}", t.tow) << ','
                      << station << ',' << sat << ',' << signal << ','
                      << from << ',' << to << ',' << generation << ',' << gap_ep << ','
-                     << reason << ',' << role << '\n';
+                     << reason << ',' << role << ','
+                     << side << ',' << adm_state << ',' << adm_gap_ep << '\n';
 }
 
 void NetworkRunTraces::writeCarryVceApplyRows(const GnssTime& t,
@@ -1999,7 +2009,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      "\"readmit_seed_horizon_s\":{},"
                                      "\"forget_ep\":{},\"event_holdoff_ep\":{},"
                                      "\"trace\":\"network_arc_ledger.csv\","
-                                     "\"event_tier\":\"ARC\"}},",
+                                     "\"event_tier\":\"ARC\","
+                                     // Card SID phase 2: the reader's own state, and
+                                     // the two observatory extensions that are on
+                                     // whenever the roster is (the IF pin writes the
+                                     // datum designation, the admitted lifecycle runs
+                                     // beside the raw one).
+                                     "\"roster_tracker\":{},"
+                                     "\"admitted_lifecycle\":true,"
+                                     "\"if_pin_writes_datum\":true}},",
                                      std::max(std::max(config_.networkPhaseLevelingMaxGapS(),
                                                        config_.networkIonoCarryMaxGapS()),
                                               std::max(nc.emit_pb_hold_max_gap_s,
@@ -2008,7 +2026,8 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkIonoCarryMaxGapS(),
                                      nc.emit_pb_hold_max_gap_s,
                                      config_.networkReadmitSeedHorizonS(),
-                                     kArcLedgerForgetEp, kArcLedgerEventHoldoffEp)
+                                     kArcLedgerForgetEp, kArcLedgerEventHoldoffEp,
+                                     config_.networkRosterTracker() ? "true" : "false")
                        : std::string())
                // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp).
                // SOLVE-AFFECTING and truth-fed, so an archived logs/ folder MUST be
@@ -2179,6 +2198,43 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"stations_no_record\":" << counters.n_marker_arp_no_record << ','
                << fmt::format("\"max_h_m\":{:.4f},", counters.marker_arp_max_h)
                << "\"max_h_station\":\"" << counters.marker_arp_max_h_station << "\"},"
+               // Card SID phase 2: the observatory's own end-of-run census, so an
+               // archived logs/ folder carries the new classes without the run-end
+               // log text.  Emitted in BOTH knob states; every field is 0 when the
+               // roster was never armed, which is what an unarmed run should read.
+               << "\"signal_roster\":{"
+               << "\"epochs\":" << counters.sid.epochs << ','
+               << "\"trk_roster_hits\":" << counters.sid.trk_roster_hits << ','
+               << "\"trk_roster_fallback\":" << counters.sid.trk_roster_fallback << ','
+               << "\"trk_roster_none\":" << counters.sid.trk_roster_none << ','
+               << "\"datum_epochs\":" << counters.sid.datum_epochs << ','
+               << "\"datum_sat_pins\":" << counters.sid.datum_sat_pins << ','
+               << "\"datum_cells\":" << counters.sid.datum_cells << ','
+               << "\"datum_cells_phase\":" << counters.sid.datum_cells_phase << ','
+               << "\"datum_cells_off_model\":" << counters.sid.datum_cells_off_model << ','
+               << "\"datum_cells_ambiguous\":" << counters.sid.datum_cells_ambiguous << ','
+               << "\"adm_rows\":" << counters.sid.adm_rows << ','
+               << "\"adm_birth\":" << counters.sid.adm_birth << ','
+               << "\"adm_gap\":" << counters.sid.adm_gap << ','
+               << "\"adm_reentry\":" << counters.sid.adm_reentry << ','
+               << "\"adm_death\":" << counters.sid.adm_death << ','
+               << "\"adm_live_max\":" << counters.sid.adm_live_max << ','
+               << "\"lc_adm_arc_dead\":" << counters.sid.lc_adm_arc_dead << ','
+               << "\"lc_adm_arc_unknown\":" << counters.sid.lc_adm_arc_unknown << ','
+               << "\"lc_adm_tracking_no_entry\":" << counters.sid.lc_adm_tracking_no_entry << ','
+               << "\"lc_arc_dead\":" << counters.sid.lc_arc_dead << ','
+               << "\"lc_tracking_no_entry\":" << counters.sid.lc_tracking_no_entry << ','
+               << "\"amb_adm_arc_gapped\":" << counters.sid.amb_adm_arc_gapped << ','
+               << "\"amb_adm_destroyed_in_gap\":" << counters.sid.amb_adm_destroyed_in_gap << ','
+               << "\"amb_arc_gapped\":" << counters.sid.amb_arc_gapped << ','
+               << "\"amb_destroyed_in_gap\":" << counters.sid.amb_destroyed_in_gap << ','
+               << "\"carry_adm_gap_any\":" << counters.sid.carry_adm_gap_any << ','
+               << "\"carry_adm_gap_2_30\":" << counters.sid.carry_adm_gap_2_30 << ','
+               << "\"carry_adm_gap_2_30_answered\":"
+               << counters.sid.carry_adm_gap_2_30_answered << ','
+               << "\"carry_gap_2_30\":" << counters.sid.carry_gap_2_30 << ','
+               << "\"carry_gap_2_30_answered\":" << counters.sid.carry_gap_2_30_answered
+               << "},"
                << fmt::format("\"loop_ms\":{:.1f}", loop_ms)
                << "}\n";
     }

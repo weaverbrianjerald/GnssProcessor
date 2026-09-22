@@ -404,6 +404,13 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
         ctx.carry.this_epoch_family_gf_pin_real,
         this_epoch_cb_ifpin, this_epoch_cb_reseed,
         basis_relatch_disc_pending, emitEvent);
+    // Card SID phase 2: the IF pin pair election becomes a roster WRITER.  HERE,
+    // because this is the only site that knows which signals the S-basis actually
+    // pinned this epoch (the realized pair, after the basis hold and any re-latch).
+    // OBSERVATORY: it fills BandRoster::datum_code / datum_phase and a census, and
+    // nothing reads either field, so the solve is untouched.  No-op when the roster
+    // is disarmed.
+    networkSignalRosterDatumPin(ctx, this_epoch_if_pin_real);
     if (cbd.H.rows() > 0) {
         est.attribTag("w6_cb_gauge");
         est.addSharedConstraintRows(cbd.H, cbd.z, NetworkSbasis::kCodeBiasGaugeWeight);

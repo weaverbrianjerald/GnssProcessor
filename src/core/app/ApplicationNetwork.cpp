@@ -2754,7 +2754,10 @@ int Application::runNetwork() {
         // this epoch's slip responses, and `sol` is the solution the wire received.
         // Reads only; every class is a counter.  DISARMED: returns on its first line.
         subBegin(SB_ROSTER);
-        networkSignalRosterAudit(ctx, log, se, stations,
+        // PHASE 2 adds `modeled` and `present`: the ADMITTED row set the second
+        // lifecycle is fed from.  It is the same scope as every other input of the
+        // pass, which is why the pass runs here and not at the build seam.
+        networkSignalRosterAudit(ctx, log, traces, se, stations, modeled, present,
                                  slip_qc.epoch.computed ? &slip_qc.epoch : nullptr,
                                  carry_slipped_ambs, sol,
                                  ctx.counters.n_emitted != fc_n_emitted_before);

@@ -25,6 +25,11 @@
 #include <gtest/gtest.h>
 
 #include "app/SignalRoster.hpp"
+#include "common/Constants.hpp"
+#include "common/PppObservation.hpp"
+#include "common/PppUtils.hpp"
+#include "logging/LogManager.hpp"
+#include "slip/NetworkRawObservables.hpp"
 
 #include <algorithm>
 #include <map>
@@ -235,6 +240,200 @@ TEST(SignalRosterTest, TrackerPicksTheLexicallyLowestPhaseWithAMatchingCode) {
     const auto cells = signalRosterBuildCells(
         kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" } }), {}, false, nullptr);
     EXPECT_NE(picks.at('1'), cells.at('1').modelled_phase);
+}
+
+// ---------------------------------------------------------------------------
+// Card SID phase 2: the IF pin as a roster WRITER
+// ---------------------------------------------------------------------------
+
+TEST(SignalRosterTest, TheIfPinDesignationIsPerConstellationAndBand) {
+    // The pin is elected PER SATELLITE over the network's registered code keys and
+    // it names two CODE signals, while a roster cell is per (station, constellation,
+    // band).  The resolution is therefore a vote, and a band whose satellites did
+    // not agree has to be REPORTED as such rather than collapsed silently.
+    //
+    // The key is the ROSTER's constellation string, not the satellite id's first
+    // character: the datum seam keys its own maps by the letter, and tallying under
+    // the letter produced picks that matched no cell at all (measured 0 designated
+    // cells on the first armed field run).
+    std::map<std::string, std::pair<std::string, std::string>> pins{
+        { "G01", { "C1W", "C2W" } },
+        { "G02", { "C1W", "C2W" } },
+        { "G03", { "C1C", "C2W" } },   // this satellite's C1W is not registered
+        { "E01", { "C1C", "C5Q" } },
+    };
+    std::set<std::string> ambiguous;
+    std::map<std::string, std::map<std::string, long long>> votes;
+    const auto picks = signalRosterDatumPicks(pins, &votes, &ambiguous);
+
+    EXPECT_EQ(picks.at("GPS|1"), "C1W");            // 2 votes against 1
+    EXPECT_EQ(picks.at("GPS|2"), "C2W");
+    EXPECT_EQ(picks.at("Galileo|1"), "C1C");
+    EXPECT_EQ(picks.at("Galileo|5"), "C5Q");
+    EXPECT_EQ(picks.count("G|1"), 0u) << "the RINEX letter is not the roster's key";
+    EXPECT_EQ(ambiguous, (std::set<std::string>{ "GPS|1" }));
+    EXPECT_EQ(votes.at("GPS|1").at("C1W"), 2);
+    EXPECT_EQ(votes.at("GPS|1").at("C1C"), 1);
+}
+
+TEST(SignalRosterTest, TheDatumFieldsAreWrittenAndThePhaseIsNeverDerived) {
+    StationRoster sr;
+    sr["GPS"] = signalRosterBuildCells(
+        kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" },
+                                { 'L', "L2W" }, { 'C', "C2W" } }),
+        {}, false, nullptr);
+
+    const std::map<std::string, std::string> picks{ { "GPS|1", "C1W" }, { "GPS|2", "C2W" } };
+    const auto w = signalRosterApplyDatum(sr, picks, nullptr);
+
+    EXPECT_EQ(w.cells, 2);
+    EXPECT_EQ(w.with_phase, 2);
+    EXPECT_EQ(w.off_model, 0);
+    EXPECT_EQ(sr.at("GPS").at('1').datum_code, "C1W");
+    EXPECT_EQ(sr.at("GPS").at('1').datum_phase, "L1W");
+    EXPECT_EQ(sr.at("GPS").at('2').datum_code, "C2W");
+    EXPECT_EQ(sr.at("GPS").at('2').datum_phase, "L2W");
+
+    // A station whose latch chose the OTHER band-1 channel gets the designation but
+    // no datum phase: the pinned code is not what this station models, so naming a
+    // phase would derive a signal the estimator does not carry.
+    StationRoster other;
+    other["GPS"] = signalRosterBuildCells(
+        kTrackedL1cL1w, latch({ { 'L', "L1C" }, { 'C', "C1C" },
+                                { 'L', "L2W" }, { 'C', "C2W" } }),
+        {}, false, nullptr);
+    const std::set<std::string> amb{ "GPS|1" };
+    const auto w2 = signalRosterApplyDatum(other, picks, &amb);
+    EXPECT_EQ(w2.cells, 2);
+    EXPECT_EQ(w2.with_phase, 1);          // band 2 only
+    EXPECT_EQ(w2.off_model, 1);
+    EXPECT_EQ(w2.ambiguous, 1);
+    EXPECT_EQ(other.at("GPS").at('1').datum_code, "C1W");
+    EXPECT_TRUE(other.at("GPS").at('1').datum_phase.empty());
+
+    // A band nothing pinned keeps both fields empty.
+    StationRoster b5;
+    b5["GPS"] = signalRosterBuildCells({ "C5Q", "L5Q" }, {}, {}, false, nullptr);
+    const auto w3 = signalRosterApplyDatum(b5, picks, nullptr);
+    EXPECT_EQ(w3.cells, 0);
+    EXPECT_TRUE(b5.at("GPS").at('5').datum_code.empty());
+    EXPECT_TRUE(b5.at("GPS").at('5').datum_phase.empty());
+}
+
+// ---------------------------------------------------------------------------
+// Card SID phase 2: the tracker's lookup bound to the ROSTER
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// One station's roster, as the run context holds it.
+SignalRoster oneStationRoster(const std::vector<std::string>& tracked,
+                              const std::vector<RosterLatchRow>& rows) {
+    SignalRoster rs;
+    rs.armed = true;
+    rs.by_station.assign(1, {});
+    rs.by_station[0]["GPS"] = signalRosterBuildCells(tracked, rows, {}, false, nullptr);
+    return rs;
+}
+
+const double kL1m = Constants::SPEED_OF_LIGHT / Constants::GPS_L1_FREQ;
+const double kL2m = Constants::SPEED_OF_LIGHT / Constants::GPS_L2_FREQ;
+
+/// A GPS observation reporting the listed phases (with their matching code unless
+/// the name is listed in @p no_code) at a nominal range.
+PppObservation rawObs(const std::string& sat, const std::vector<std::string>& phases,
+                      const std::set<std::string>& no_code = {}) {
+    PppObservation o{};
+    o.satellite = sat;
+    o.system    = System::GPS;
+    o.time      = GnssTime{ 2400, 0.0 };
+    o.elevation = 45.0;
+    for (const auto& p : phases) {
+        const double lam = (p[1] == '1') ? kL1m : kL2m;
+        o.raw_observed[p] = 22'000'000.0 / lam;
+        if (!no_code.count(p)) o.raw_observed["C" + p.substr(1)] = 22'000'000.0;
+    }
+    return o;
+}
+
+}  // namespace
+
+TEST(SignalRosterTest, TheTrackerLookupBoundToTheRosterReturnsTheModelledPhase) {
+    const auto rs = oneStationRoster(kTrackedL1cL1w,
+                                     latch({ { 'L', "L1W" }, { 'C', "C1W" },
+                                             { 'L', "L2W" }, { 'C', "C2W" } }));
+    EXPECT_EQ(signalRosterModelledPhase(rs, 0, "GPS", '1'), "L1W");
+    EXPECT_EQ(signalRosterModelledPhase(rs, 0, "GPS", '2'), "L2W");
+    // Every way the roster can have no answer is EMPTY, never a guess: an unknown
+    // station, an unknown constellation, an unknown band.  The caller decides what
+    // an empty answer means, and the run-loop binding counts it.
+    EXPECT_TRUE(signalRosterModelledPhase(rs, 1, "GPS", '1').empty());
+    EXPECT_TRUE(signalRosterModelledPhase(rs, -1, "GPS", '1').empty());
+    EXPECT_TRUE(signalRosterModelledPhase(rs, 0, "GAL", '1').empty());
+    EXPECT_TRUE(signalRosterModelledPhase(rs, 0, "GPS", '5').empty());
+}
+
+TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWithoutItsCode) {
+    // The whole of card SID phase 2 in one pass: the same selection rule card GRK
+    // built, driven from the ROSTER instead of the station latch.
+    LogManager     lm;
+    PppUtils       utils{ lm };
+    const auto     rs = oneStationRoster(kTrackedL1cL1w,
+                                         latch({ { 'L', "L1W" }, { 'C', "C1W" },
+                                                 { 'L', "L2W" }, { 'C', "C2W" } }));
+    const TrackerLatchLookup lookup =
+        [&rs](int sta, const std::string& system, char band) -> std::string {
+            return signalRosterModelledPhase(rs, sta, system, band);
+        };
+
+    // (1) Both band-1 channels reported with their codes: the roster's modelled
+    //     phase wins, where the lexical rule would have named L1C.
+    {
+        const std::vector<std::vector<PppObservation>> modeled{
+            { rawObs("G01", { "L1C", "L1W", "L2W" }) } };
+        RawSlipEpoch   ep;
+        SlipQcCounters cnt;
+        ep.reset(1);
+        networkComputeRawObservables(modeled, { true }, 1, utils, ep, false,
+                                     /*tracker_modeled_first=*/true, &cnt, &lookup);
+        ASSERT_EQ(ep.rows.at(0).size(), 1u);
+        EXPECT_EQ(ep.rows.at(0)[0].sig1, "L1W");
+        EXPECT_EQ(ep.rows.at(0)[0].sig2, "L2W");
+        EXPECT_EQ(cnt.gap_tracker_key_mismatch, 0)
+            << "armed, the tracker's signal IS the roster's by construction";
+    }
+
+    // (2) The modelled phase is reported WITHOUT its matching code: the observables
+    //     are built from the pair, so that band falls back to the lexical rule and
+    //     the mismatch is what the counter is for.
+    {
+        const std::vector<std::vector<PppObservation>> modeled{
+            { rawObs("G01", { "L1C", "L1W", "L2W" }, /*no_code=*/{ "L1W" }) } };
+        RawSlipEpoch   ep;
+        SlipQcCounters cnt;
+        ep.reset(1);
+        networkComputeRawObservables(modeled, { true }, 1, utils, ep, false, true,
+                                     &cnt, &lookup);
+        ASSERT_EQ(ep.rows.at(0).size(), 1u);
+        EXPECT_EQ(ep.rows.at(0)[0].sig1, "L1C");
+        EXPECT_EQ(ep.rows.at(0)[0].sig2, "L2W");
+    }
+
+    // (3) UNARMED with the same lookup bound: the lexical rule stands untouched and
+    //     the counter states the size of the population instead (the both-states
+    //     telemetry card GRK built and this phase inherits).
+    {
+        const std::vector<std::vector<PppObservation>> modeled{
+            { rawObs("G01", { "L1C", "L1W", "L2W" }) } };
+        RawSlipEpoch   ep;
+        SlipQcCounters cnt;
+        ep.reset(1);
+        networkComputeRawObservables(modeled, { true }, 1, utils, ep, false,
+                                     /*tracker_modeled_first=*/false, &cnt, &lookup);
+        ASSERT_EQ(ep.rows.at(0).size(), 1u);
+        EXPECT_EQ(ep.rows.at(0)[0].sig1, "L1C");
+        EXPECT_EQ(cnt.gap_tracker_key_mismatch, 1);
+    }
 }
 
 TEST(SignalRosterTest, RoleNamesAreStable) {

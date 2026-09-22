@@ -346,8 +346,20 @@ namespace GnssProcessor {
     /// that signal (modelled or tracked).  Unlike the @c ARC event tier in
     /// network_events.csv, this file is NOT holdoff-throttled: a reader that needs
     /// every edge reads it here.
+    /// Card SID phase 2 appends three columns AND a second family of rows: the
+    /// ADMITTED lifecycle's own edges, which is the only place they are recorded per
+    /// edge.  @c side says which lifecycle the
+    /// @c from / @c to / @c generation / @c gap_ep columns describe — "raw" for the
+    /// receiver's own record (the build seam, upstream of the elevation mask, the
+    /// allow list and every admission screen) and "adm" for the station's MODELLED
+    /// rows, which is the population @c local_carry and the ambiguity states are
+    /// keyed from.  @c adm_state and @c adm_gap_ep report the ADMITTED side as it
+    /// stands on every row, so a raw re-entry carries both gap lengths;
+    /// @c adm_gap_ep is -1 when the arc has never been admitted at all, which is a
+    /// different statement from a zero-length gap.
     inline constexpr const char* kArcLedgerHeader =
-        "week,tow,station,sat,signal,from,to,generation,gap_ep,reason,role\n";
+        "week,tow,station,sat,signal,from,to,generation,gap_ep,reason,role,"
+        "side,adm_state,adm_gap_ep\n";
     inline constexpr const char* kNetworkMdbHeader =
         "week,tow,const,class,n_rows,n_inf,n_finite,n_over,"
         "mdb_med_m,mdb_p95_m,mdb_max_m,sigma0_f,sigma0_src,"
@@ -915,11 +927,19 @@ namespace GnssProcessor {
          * @param gap_ep     Epochs missed (meaningful at a reentry and at a death).
          * @param reason     Death cause, or an empty string.
          * @param role       The roster's role for this signal, or an empty string.
+         * @param side       Card SID phase 2: "raw" or "adm" — which lifecycle the
+         *                   @p from / @p to / @p generation / @p gap_ep columns
+         *                   describe.
+         * @param adm_state  The ADMITTED state after this row.
+         * @param adm_gap_ep Epochs the ADMITTED side has missed as of this epoch;
+         *                   -1 when the arc has never been admitted.
          */
         void writeArcLedgerRow(const GnssTime& t, const std::string& station,
                                const std::string& sat, const std::string& signal,
                                const char* from, const char* to, int generation,
-                               int gap_ep, const char* reason, const char* role);
+                               int gap_ep, const char* reason, const char* role,
+                               const char* side, const char* adm_state,
+                               long long adm_gap_ep);
 
         /// L2: one network_events.csv row for a discrete QC action (no-op OFF).
         /// Commas in @p detail are sanitized to semicolons (single CSV field).

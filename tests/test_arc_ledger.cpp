@@ -240,6 +240,169 @@ TEST(ArcLedgerTest, FirstEpochBirthsAreSuppressedAndTheHoldoffRateLimitsTheRest)
     EXPECT_TRUE(led.eventAllowed(0, ArcTransition::Birth));
 }
 
+// ---------------------------------------------------------------------------
+// Card SID phase 2: the ADMITTED lifecycle beside the raw one
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Drive one epoch on BOTH sides: the raw pass (build seam) and then the admitted
+/// pass (audit seam), which is the order the producer runs them in.
+struct BothSides {
+    std::vector<std::pair<ArcLedger::Key, ArcStep>> raw_edges;
+    std::vector<std::pair<ArcLedger::Key, ArcStep>> adm_edges;
+    std::vector<ArcStep> observed;
+};
+
+BothSides runBoth(ArcLedger& led, long long ep,
+                  const std::vector<ArcLedger::Key>& raw,
+                  const std::vector<ArcLedger::Key>& admitted,
+                  const std::set<int>& present) {
+    BothSides out;
+    led.beginEpoch(ep, static_cast<double>(ep) * kDt);
+    for (const auto& k : raw) out.observed.push_back(led.observe(k, /*modelled=*/true));
+    led.endEpoch(present, out.raw_edges);
+    led.admitEpoch(std::set<ArcLedger::Key>(admitted.begin(), admitted.end()),
+                   out.adm_edges);
+    return out;
+}
+
+}  // namespace
+
+TEST(ArcLedgerTest, ARawPresentButUnadmittedEpochIsTrackingAndAdmittedGap) {
+    // THE structural finding of phase 1, as a state: the raw side arrives upstream
+    // of the elevation mask, the allow list and every admission screen, so an arc
+    // can be reported by the receiver and carried by nothing.  A reader that keys on
+    // the carry (phase 3) has to see the ADMITTED state, and it must be Gap here
+    // while the raw state stays Tracking.
+    ArcLedger led;
+    led.configure(/*horizon_s=*/900.0, kArcLedgerForgetEp);
+    const auto a = K(0, "G01", "L1W");
+    const std::set<int> present{ 0 };
+    const auto b = K(0, "G02", "L1W");   // a second arc, admitted throughout, so the
+                                         // station never leaves the admitted present set
+
+    runBoth(led, 0, { a, b }, { a, b }, present);
+    ASSERT_NE(led.find(a), nullptr);
+    EXPECT_EQ(led.find(a)->state, ArcState::Tracking);
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Tracking);
+
+    // The receiver keeps reporting it; the station stops modelling it.
+    auto s = runBoth(led, 1, { a, b }, { b }, present);
+    EXPECT_TRUE(s.raw_edges.empty()) << "the raw side must not gap a reported arc";
+    EXPECT_EQ(led.find(a)->state, ArcState::Tracking);
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
+    ASSERT_EQ(s.adm_edges.size(), 1u);
+    EXPECT_EQ(s.adm_edges[0].first, a);
+    EXPECT_EQ(s.adm_edges[0].second.transition, ArcTransition::Gap);
+    EXPECT_EQ(s.adm_edges[0].second.from, ArcState::Tracking);
+    EXPECT_EQ(s.adm_edges[0].second.to, ArcState::Gap);
+}
+
+TEST(ArcLedgerTest, TheAdmittedGapHasItsOwnLengthAndReentryEdge) {
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    const auto a = K(0, "G01", "L1W");
+    const auto b = K(0, "G02", "L1W");
+    const std::set<int> present{ 0 };
+
+    runBoth(led, 0, { a, b }, { a, b }, present);
+    for (long long ep = 1; ep <= 3; ++ep) runBoth(led, ep, { a, b }, { b }, present);
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
+    EXPECT_EQ(led.find(a)->adm_gap_len_ep, 3);
+    EXPECT_EQ(led.find(a)->admittedGapEp(3), 2);   // epochs MISSED, not epochs since
+
+    const auto s = runBoth(led, 4, { a, b }, { a, b }, present);
+    ASSERT_EQ(s.adm_edges.size(), 1u);
+    EXPECT_EQ(s.adm_edges[0].second.transition, ArcTransition::Reentry);
+    EXPECT_EQ(s.adm_edges[0].second.gap_len_ep, 3);   // epochs 1, 2 and 3
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Reentered);
+    EXPECT_EQ(led.find(a)->state, ArcState::Tracking) << "the raw side never gapped";
+
+    // Reentered is one epoch wide on this side too.
+    runBoth(led, 5, { a, b }, { a, b }, present);
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Tracking);
+}
+
+TEST(ArcLedgerTest, ARawStepCarriesBothGapLengths) {
+    // The `arc_reentry` event has to state the admitted gap as well as the raw one:
+    // the two are different numbers and neither is derivable from the other.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    const auto a = K(0, "G01", "L1W");
+    const auto b = K(0, "G02", "L1W");
+    const std::set<int> present{ 0 };
+
+    // Never admitted at all: the admitted gap is -1, which is a different statement
+    // from a zero-length gap and must stay separable.
+    auto s = runBoth(led, 0, { a, b }, { b }, present);
+    ASSERT_EQ(s.observed.size(), 2u);
+    EXPECT_EQ(s.observed[0].transition, ArcTransition::Birth);
+    EXPECT_EQ(s.observed[0].adm_gap_len_ep, -1);
+    EXPECT_EQ(s.observed[0].adm_state, ArcState::Absent);
+
+    runBoth(led, 1, { a, b }, { a, b }, present);   // admitted from here
+    runBoth(led, 2, { a, b }, { b }, present);      // admitted side gaps
+    runBoth(led, 3, { b }, { b }, present);         // raw side gaps too
+    EXPECT_EQ(led.find(a)->state, ArcState::Gap);
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
+
+    s = runBoth(led, 5, { a, b }, { b }, present);  // the RAW side returns alone
+    ASSERT_EQ(s.observed.size(), 2u);
+    EXPECT_EQ(s.observed[0].transition, ArcTransition::Reentry);
+    EXPECT_EQ(s.observed[0].gap_len_ep, 2);          // raw: epochs 3 and 4
+    EXPECT_EQ(s.observed[0].adm_gap_len_ep, 3);      // admitted: epochs 2, 3 and 4
+    EXPECT_EQ(s.observed[0].adm_state, ArcState::Gap);
+}
+
+TEST(ArcLedgerTest, TheAdmittedSideDiesOnItsOwnHorizonAndAnAbsentStationFreezesIt) {
+    ArcLedger led;
+    led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);
+    const auto a = K(0, "G01", "L1W");
+    const auto b = K(0, "G02", "L1W");
+    const auto c = K(1, "G01", "L1W");
+    const std::set<int> present{ 0, 1 };
+
+    runBoth(led, 0, { a, b, c }, { a, b, c }, present);
+    // Station 0 keeps modelling G02 and stops modelling G01; station 1 models
+    // nothing at all, so its arc must be FROZEN rather than gapped.
+    for (long long ep = 1; ep <= 3; ++ep) runBoth(led, ep, { a, b, c }, { b }, present);
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Dead);
+    EXPECT_EQ(led.find(a)->adm_reason_mask & kArcReasonHorizon, kArcReasonHorizon);
+    EXPECT_EQ(led.find(a)->state, ArcState::Tracking) << "the raw side tracked through";
+    EXPECT_EQ(led.find(c)->adm_state, ArcState::Tracking)
+        << "a station with no admitted row must not gap its arcs";
+
+    // A return after an admitted death is an admitted BIRTH that remembers its
+    // generation, exactly as on the raw side.
+    const auto s = runBoth(led, 4, { a, b, c }, { a, b }, present);
+    bool seen = false;
+    for (const auto& [key, step] : s.adm_edges) {
+        if (key != a) continue;
+        seen = true;
+        EXPECT_EQ(step.transition, ArcTransition::Birth);
+        EXPECT_EQ(step.generation, 2);
+        EXPECT_EQ(step.prev_generation, 1);
+    }
+    EXPECT_TRUE(seen);
+    EXPECT_EQ(led.find(a)->ep_first_admitted, 0);
+}
+
+TEST(ArcLedgerTest, AdmittedLiveCountIsItsOwnPopulation) {
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    const std::set<int> present{ 0 };
+    const auto a = K(0, "G01", "L1W");
+    const auto b = K(0, "G01", "L2W");
+    const auto c = K(0, "G02", "L1W");
+
+    runBoth(led, 0, { a, b, c }, { a, b }, present);
+    EXPECT_EQ(led.liveCount(), 3u);
+    EXPECT_EQ(led.admittedLiveCount(), 2u)
+        << "the admitted population is a strict subset of the raw one";
+    EXPECT_EQ(led.size(), 3u);
+}
+
 TEST(ArcLedgerTest, StateAndTransitionNamesAreStable) {
     // The trace and the ARC event tier are parsed by name offline, so the strings
     // are part of the interface, not log text.

@@ -55,6 +55,15 @@ namespace GnssProcessor {
         return n;
     }
 
+    std::size_t ArcLedger::admittedLiveCount() const {
+        std::size_t n = 0;
+        for (const auto& [k, r] : arcs_) {
+            (void)k;
+            if (r.adm_state == ArcState::Tracking || r.adm_state == ArcState::Reentered) ++n;
+        }
+        return n;
+    }
+
     ArcStep ArcLedger::observe(const Key& key, bool modelled) {
         seen_.insert(key);
         auto it = arcs_.find(key);
@@ -105,6 +114,14 @@ namespace GnssProcessor {
         s.to            = a.state;
         s.generation    = a.generation;
         s.reason_mask   = a.reason_mask;
+        // Card SID phase 2: the admitted side as it stands at this epoch, so a raw
+        // re-entry event states BOTH gap lengths.  The admitted pass of this epoch
+        // has not run yet (it is downstream), so the number is the admitted gap that
+        // is OPEN as the raw arc returns, which is the quantity a reader of the raw
+        // edge wants.
+        s.adm_state      = a.adm_state;
+        s.adm_gap_len_ep = a.admittedGapEp(epoch_idx_);
+        s.adm_generation = a.adm_generation;
         return s;
     }
 
@@ -149,9 +166,108 @@ namespace GnssProcessor {
             s.to          = a.state;
             s.generation  = a.generation;
             s.reason_mask = a.reason_mask;
+            s.adm_state      = a.adm_state;
+            s.adm_gap_len_ep = a.admittedGapEp(epoch_idx_);
+            s.adm_generation = a.adm_generation;
             out.emplace_back(key, s);
         }
         for (const auto& k : forget) arcs_.erase(k);
+    }
+
+    void ArcLedger::admitEpoch(const std::set<Key>& admitted,
+                               std::vector<std::pair<Key, ArcStep>>& out) {
+        out.clear();
+        // The present set is derived from the admitted rows themselves rather than
+        // taken from the caller: the rule that matters is the raw pass's rule (a
+        // station that reported nothing must not gap all of its arcs), and on the
+        // admitted side "reported nothing" means "contributed no modelled row".
+        std::set<int> present;
+        for (const auto& k : admitted) present.insert(std::get<0>(k));
+
+        // (1) The arcs admitted at this epoch.  Inserts happen here, before the
+        //     sweep below walks the map, so the sweep never sees a half-built record.
+        for (const Key& key : admitted) {
+            auto it = arcs_.find(key);
+            if (it == arcs_.end()) it = arcs_.emplace(key, ArcRecord{}).first;
+            ArcRecord& a = it->second;
+
+            ArcStep s;
+            s.from = a.adm_state;
+            switch (a.adm_state) {
+            case ArcState::Absent:
+            case ArcState::Dead:
+                s.transition      = ArcTransition::Birth;
+                s.prev_generation = a.adm_generation;
+                s.gap_len_ep      = (a.ep_last_admitted < 0)
+                                      ? 0
+                                      : static_cast<int>(epoch_idx_ - a.ep_last_admitted - 1);
+                ++a.adm_generation;
+                if (a.ep_first_admitted < 0) a.ep_first_admitted = epoch_idx_;
+                a.adm_state            = ArcState::Tracking;
+                a.ep_adm_state_changed = epoch_idx_;
+                a.adm_gap_len_ep       = 0;
+                a.adm_reason_mask      = kArcReasonNone;
+                break;
+            case ArcState::Gap:
+                s.transition           = ArcTransition::Reentry;
+                s.gap_len_ep           = static_cast<int>(epoch_idx_ - a.ep_last_admitted - 1);
+                a.adm_gap_len_ep       = s.gap_len_ep;
+                a.adm_state            = ArcState::Reentered;
+                a.ep_adm_state_changed = epoch_idx_;
+                break;
+            case ArcState::Reentered:
+                a.adm_state            = ArcState::Tracking;
+                a.ep_adm_state_changed = epoch_idx_;
+                a.adm_gap_len_ep       = 0;
+                break;
+            case ArcState::Tracking:
+                break;
+            }
+            a.ep_last_admitted  = epoch_idx_;
+            a.t_last_admitted_s = t_s_;
+            s.to             = a.adm_state;
+            s.generation     = a.adm_generation;
+            s.reason_mask    = a.adm_reason_mask;
+            s.adm_state      = a.adm_state;
+            s.adm_gap_len_ep = a.adm_gap_len_ep;
+            s.adm_generation = a.adm_generation;
+            if (s.transition != ArcTransition::None) out.emplace_back(key, s);
+        }
+
+        // (2) Gap and kill the admitted arcs the present stations did not model.
+        for (auto& [key, a] : arcs_) {
+            if (a.adm_state == ArcState::Absent || a.adm_state == ArcState::Dead) continue;
+            if (!present.count(std::get<0>(key))) continue;   // station absent: frozen
+            if (admitted.count(key)) continue;                // admitted this epoch
+
+            ArcStep s;
+            s.from = a.adm_state;
+            if (a.adm_state == ArcState::Tracking || a.adm_state == ArcState::Reentered) {
+                s.transition           = ArcTransition::Gap;
+                a.adm_state            = ArcState::Gap;
+                a.ep_adm_state_changed = epoch_idx_;
+                a.adm_gap_len_ep       = static_cast<int>(epoch_idx_ - a.ep_last_admitted);
+                s.gap_len_ep           = a.adm_gap_len_ep;
+            } else {   // already Gap
+                a.adm_gap_len_ep = static_cast<int>(epoch_idx_ - a.ep_last_admitted);
+                if (horizon_s_ > 0.0 && (t_s_ - a.t_last_admitted_s) > horizon_s_) {
+                    s.transition           = ArcTransition::Death;
+                    a.adm_state            = ArcState::Dead;
+                    a.ep_adm_state_changed = epoch_idx_;
+                    a.adm_reason_mask     |= kArcReasonHorizon;
+                    s.gap_len_ep           = a.adm_gap_len_ep;
+                } else {
+                    continue;   // still gapped, no edge
+                }
+            }
+            s.to             = a.adm_state;
+            s.generation     = a.adm_generation;
+            s.reason_mask    = a.adm_reason_mask;
+            s.adm_state      = a.adm_state;
+            s.adm_gap_len_ep = a.adm_gap_len_ep;
+            s.adm_generation = a.adm_generation;
+            out.emplace_back(key, s);
+        }
     }
 
     bool ArcLedger::eventAllowed(int station, ArcTransition t) {

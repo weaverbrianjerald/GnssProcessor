@@ -129,10 +129,44 @@ namespace GnssProcessor {
         int       generation{ 0 };            ///< increments at every birth; 1 at the first sighting.
         bool      modelled{ false };          ///< the roster gave this signal the Modelled role at the last sighting.
         unsigned  reason_mask{ kArcReasonNone }; ///< why the arc last left (see @ref ArcDeathReason).
+
+        // --- card SID phase 2: the ADMITTED lifecycle, beside the raw one -----
+        //
+        // Phase 1 measured that the two populations are not the same population:
+        // the raw side arrives upstream of the elevation mask, the allow list and
+        // every admission screen, while `local_carry` and the ambiguity states are
+        // keyed from the station's MODELLED rows.  Reported separately and never
+        // added; a reader that keys on the ledger (phase 3) reads THIS side.
+        ArcState  adm_state{ ArcState::Absent };    ///< current admitted-side state.
+        long long ep_first_admitted{ -1 };          ///< epoch of the first admitted row ever.
+        long long ep_last_admitted{ -1 };           ///< epoch of the most recent admitted row.
+        long long ep_adm_state_changed{ -1 };       ///< epoch @ref adm_state was entered.
+        double    t_last_admitted_s{ 0.0 };         ///< continuous GPS seconds of the most recent admitted row.
+        int       adm_gap_len_ep{ 0 };              ///< epochs missed by the current or last ADMITTED gap.
+        int       adm_generation{ 0 };              ///< increments at every admitted birth.
+        unsigned  adm_reason_mask{ kArcReasonNone };///< why the admitted side last left.
+
+        /**
+         * @brief Epochs the ADMITTED side has missed as of @p ep.
+         *
+         * Returns -1 when the arc has never been admitted, which is a different
+         * statement from "admitted and gapped for 0 epochs" and has to stay
+         * separable: the raw side sees satellites the estimator never models.
+         */
+        long long admittedGapEp(long long ep) const {
+            return ep_last_admitted < 0 ? -1 : ep - ep_last_admitted - 1;
+        }
     };
 
     /**
      * @brief One step of the machine: the edge crossed and the identity of it.
+     *
+     * A step describes ONE side.  @ref transition, @ref from, @ref to,
+     * @ref gap_len_ep and @ref generation describe the RAW side when the step came
+     * from @c observe or @c endEpoch and the ADMITTED side when it came from
+     * @c admitEpoch; @ref adm_state and @ref adm_gap_len_ep always report the
+     * admitted side as it stands after the step, so a raw re-entry carries both
+     * gap lengths without a second lookup.
      */
     struct ArcStep {
         ArcTransition transition{ ArcTransition::None };
@@ -142,6 +176,11 @@ namespace GnssProcessor {
         int       generation{ 0 };            ///< the generation AFTER the step.
         int       prev_generation{ 0 };       ///< the generation before a Birth (0 = a true first sighting).
         unsigned  reason_mask{ kArcReasonNone };
+        ArcState  adm_state{ ArcState::Absent }; ///< the ADMITTED state after the step.
+        /// Epochs the ADMITTED side has missed as of this epoch; -1 when the arc has
+        /// never been admitted at all.
+        long long adm_gap_len_ep{ -1 };
+        int       adm_generation{ 0 };        ///< the admitted generation after the step.
     };
 
     /**
@@ -227,6 +266,28 @@ namespace GnssProcessor {
         void endEpoch(const std::set<int>& present_stations,
                       std::vector<std::pair<Key, ArcStep>>& out);
 
+        /**
+         * @brief Card SID phase 2: advance the ADMITTED lifecycle of the open epoch.
+         *
+         * Called ONCE per epoch, downstream of the raw pass, with the arcs whose
+         * MODELLED row survived the elevation mask, the allow list and the admission
+         * screens.  The machine is the same one the raw side runs, on its own
+         * timestamps, so an arc can be raw-Tracking and admitted-Gap at the same
+         * epoch, which is exactly the difference phase 1 measured and phase 3 has to
+         * key on.
+         *
+         * The stations considered are those that contributed at least one admitted
+         * row, for the same reason the raw pass takes the present set: a station
+         * outage must not manufacture a gap at every one of its arcs.
+         *
+         * @param admitted The (station, satellite, signal) arcs admitted at this epoch.
+         * @param out      Receives one entry per admitted-side edge, in key order.
+         *                 Cleared first.  @c transition / @c from / @c to describe
+         *                 the ADMITTED side on these steps.
+         */
+        void admitEpoch(const std::set<Key>& admitted,
+                        std::vector<std::pair<Key, ArcStep>>& out);
+
         /// @brief Read-only access to every record the ledger still remembers.
         const std::map<Key, ArcRecord>& arcs() const { return arcs_; }
 
@@ -235,6 +296,9 @@ namespace GnssProcessor {
 
         /// @brief Arcs currently in @c Tracking or @c Reentered.
         std::size_t liveCount() const;
+
+        /// @brief Arcs whose ADMITTED side is in @c Tracking or @c Reentered.
+        std::size_t admittedLiveCount() const;
 
         /// @brief Records retained, live plus gapped plus not-yet-forgotten dead.
         std::size_t size() const { return arcs_.size(); }

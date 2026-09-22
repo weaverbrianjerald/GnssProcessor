@@ -1750,14 +1750,54 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
                 if (!m) return {};
                 return m->latchedCanonicalPhaseOnBandDigit(system, band);
             };
+        // Card SID phase 2 (network.roster_tracker): the tracker's FIRST READ of the
+        // phase-1 roster.  The same lookup shape, bound to the roster's modelled_phase
+        // instead of to the station's latch, so the selection rule below is untouched
+        // and only the SOURCE of the answer moves.  Armed, this lookup is bound and
+        // the latch lookup above is not.
+        //
+        // ⚠ THE ONE FALL-BACK, and why it is not a bypass.  The roster is built at the
+        // top of the epoch body, UPSTREAM of computeModels, and the canonical latch is
+        // decided INSIDE computeModels — so on the FIRST epoch of a constellation the
+        // roster's cells carry no modelled role at all (card SID section 6 states this
+        // as a property of the build site).  Answering "nothing" there would put that
+        // epoch's tracker back on the lexical rule while card GRK's lookup names the
+        // latch, and the two rows would then differ at epoch 0 at every station whose
+        // priority latch is not the lexically lowest channel.  That single epoch is not
+        // free: it seeds `RawSlipHistory::prev`, so epoch 1's MW/GF step would be
+        // formed across a pair change and could fire a detection that is purely an
+        // artefact of the reader.  The lookup therefore falls back to that station's
+        // latch exactly where the roster has no answer, which is the un-decided first
+        // epoch and nothing else, and BOTH outcomes are counted so a run states how
+        // much of the work the roster actually did (standing invariant 4).
+        const bool roster_tracker = config_.networkRosterTracker() && ctx.roster.armed;
+        const TrackerLatchLookup roster_lu =
+            [&ctx, &stations](int sta, const std::string& system, char band) -> std::string {
+                auto& c = ctx.counters.sid;
+                const std::string m = signalRosterModelledPhase(ctx.roster, sta, system, band);
+                if (!m.empty()) { ++c.trk_roster_hits; return m; }
+                if (sta < 0 || sta >= static_cast<int>(stations.size())) {
+                    ++c.trk_roster_none;
+                    return {};
+                }
+                const auto& mdl = stations[static_cast<std::size_t>(sta)].model;
+                if (!mdl) { ++c.trk_roster_none; return {}; }
+                const std::string l = mdl->latchedCanonicalPhaseOnBandDigit(system, band);
+                if (l.empty()) ++c.trk_roster_none;
+                else           ++c.trk_roster_fallback;
+                return l;
+            };
         networkComputeRawObservables(modeled, present, n_sta_total, *qc.utils, qc.epoch,
                                      qc.params.gap_reentry_per_signal,
                                      // Card GRK: the tracker's band signal from the
                                      // latch, plus the mismatch cell counted in BOTH
                                      // knob states (the counters sink is passed
                                      // unconditionally for exactly that reason).
-                                     qc.params.tracker_modeled_first,
-                                     &qc.counters, &latch);
+                                     // Card SID phase 2: the roster read arms the same
+                                     // selection, from the roster's own answer.
+                                     qc.params.tracker_modeled_first || roster_tracker,
+                                     &qc.counters,
+                                     roster_tracker ? &roster_lu : &latch);
         // The qualification pass (empirical step gates, LLI credibility, arc
         // resumptions) runs only for a DECISION card — with just the trace armed
         // the observables are pure output and nothing is adjudicated.

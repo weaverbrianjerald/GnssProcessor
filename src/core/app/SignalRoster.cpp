@@ -186,6 +186,122 @@ namespace GnssProcessor {
     }
 
     // =====================================================================
+    // PHASE 2: the read side, and the IF pin as a writer
+    // =====================================================================
+
+    std::string signalRosterModelledPhase(const SignalRoster& rs, int station,
+                                          const std::string& cons, char band) {
+        if (station < 0 || station >= static_cast<int>(rs.by_station.size()))
+            return std::string{};
+        const StationRoster& sr = rs.by_station[static_cast<std::size_t>(station)];
+        const auto cit = sr.find(cons);
+        if (cit == sr.end()) return std::string{};
+        const auto bit = cit->second.find(band);
+        if (bit == cit->second.end()) return std::string{};
+        return bit->second.modelled_phase;
+    }
+
+    std::map<std::string, std::string> signalRosterDatumPicks(
+            const std::map<std::string, std::pair<std::string, std::string>>& if_pin_real,
+            std::map<std::string, std::map<std::string, long long>>* votes_out,
+            std::set<std::string>* ambiguous) {
+        // Tally the per-SATELLITE pins into (constellation, band) votes.
+        //
+        // ⚠ THE KEY IS THE ROSTER'S, NOT THE S-BASIS'S.  The datum seam keys a
+        // constellation by the satellite id's first CHARACTER ("G"), while the roster
+        // keys it by the system STRING PppUtils::getSystemString gives ("GPS"), which
+        // is also the key of the signal-priority map the latch is decided from.
+        // Tallying under the letter produces picks that match no cell at all and a
+        // census of exactly zero, which is what the first armed run measured.
+        std::map<std::string, std::map<std::string, long long>> votes;
+        for (const auto& [sat, pair] : if_pin_real) {
+            if (sat.empty()) continue;
+            const std::string cons = PppUtils::getSystemString(sat);
+            if (cons.empty() || cons == "Unknown") continue;
+            for (const std::string* sig : { &pair.first, &pair.second }) {
+                if (sig->size() < 2 || (*sig)[0] != 'C') continue;
+                ++votes[cons + "|" + std::string(1, (*sig)[1])][*sig];
+            }
+        }
+        // Resolve each (constellation, band) to ONE designation, and say so when the
+        // satellites did not agree.  std::map iterates ascending and the replacement
+        // is strictly-greater, so the tie break is the lexically lowest code, which is
+        // the tie break the pin itself applies within a band.
+        std::map<std::string, std::string> pick;
+        for (const auto& [cb, v] : votes) {
+            long long best = -1;
+            for (const auto& [sig, n] : v)
+                if (n > best) { best = n; pick[cb] = sig; }
+            if (v.size() > 1 && ambiguous != nullptr) ambiguous->insert(cb);
+        }
+        if (votes_out != nullptr) *votes_out = std::move(votes);
+        return pick;
+    }
+
+    SignalRosterDatumWrite signalRosterApplyDatum(
+            StationRoster& sr, const std::map<std::string, std::string>& picks,
+            const std::set<std::string>* ambiguous) {
+        SignalRosterDatumWrite out;
+        for (auto& [cons, cells] : sr) {
+            for (auto& [band, br] : cells) {
+                const std::string cb = cons + "|" + std::string(1, band);
+                const auto pit = picks.find(cb);
+                if (pit == picks.end()) continue;
+                br.datum_code = pit->second;
+                ++out.cells;
+                if (ambiguous != nullptr && ambiguous->count(cb)) ++out.ambiguous;
+                // The pin names a CODE.  A datum PHASE is named only where that code
+                // IS this station's modelled code, in which case the phase it
+                // accompanies is this cell's modelled phase; anywhere else the roster
+                // says nothing rather than deriving a signal from the code's
+                // attribute (the project's "reproduced, never re-derived" rule).
+                if (!br.modelled_code.empty() && br.modelled_code == br.datum_code
+                    && !br.modelled_phase.empty()) {
+                    br.datum_phase = br.modelled_phase;
+                    ++out.with_phase;
+                } else {
+                    ++out.off_model;
+                }
+            }
+        }
+        return out;
+    }
+
+    void networkSignalRosterDatumPin(
+            NetworkRunContext& ctx,
+            const std::map<std::string, std::pair<std::string, std::string>>& if_pin_real) {
+        auto& rs = ctx.roster;
+        if (!rs.armed) return;
+        rs.datum_pin.clear();
+        rs.datum_votes.clear();
+        if (if_pin_real.empty()) return;
+        auto& ctr = ctx.counters.sid;
+        Stopwatch watch(ctr.audit_ms);
+        ++ctr.datum_epochs;
+        ctr.datum_sat_pins += static_cast<long long>(if_pin_real.size());
+        rs.datum_pin = if_pin_real;
+
+        std::set<std::string> ambiguous;
+        const auto picks =
+            signalRosterDatumPicks(if_pin_real, &rs.datum_votes, &ambiguous);
+
+        for (std::size_t i = 0; i < rs.by_station.size(); ++i) {
+            const auto w = signalRosterApplyDatum(rs.by_station[i], picks, &ambiguous);
+            ctr.datum_cells           += w.cells;
+            ctr.datum_cells_phase     += w.with_phase;
+            ctr.datum_cells_off_model += w.off_model;
+            ctr.datum_cells_ambiguous += w.ambiguous;
+            for (const auto& [cons, cells] : rs.by_station[i]) {
+                for (const auto& [band, br] : cells) {
+                    const std::string cb = cons + "|" + std::string(1, band);
+                    if (!br.datum_code.empty())  ++ctr.datum_code_census[cb + "|" + br.datum_code];
+                    if (!br.datum_phase.empty()) ++ctr.datum_phase_census[cb + "|" + br.datum_phase];
+                }
+            }
+        }
+    }
+
+    // =====================================================================
     // Arming
     // =====================================================================
 
@@ -415,7 +531,9 @@ namespace GnssProcessor {
                                     se.time, stations[i].name, o->satellite, key,
                                     arcStateName(step.from), arcStateName(step.to),
                                     step.generation, step.gap_len_ep, "",
-                                    modelled ? "modelled" : "tracked");
+                                    modelled ? "modelled" : "tracked",
+                                    "raw", arcStateName(step.adm_state),
+                                    step.adm_gap_len_ep);
                                 if (ctx.arc_ledger.eventAllowed(static_cast<int>(i),
                                                                 step.transition)) {
                                     ++ctr.arc_events;
@@ -425,9 +543,17 @@ namespace GnssProcessor {
                                         static_cast<double>(step.gap_len_ep),
                                         static_cast<double>(step.generation),
                                         arcStateName(step.to),
-                                        fmt::format("signal={};gen={};prev_gen={};gap_ep={};role={}",
+                                        // PHASE 2: BOTH gap lengths.  `gap_ep` is the raw
+                                        // one; `adm_gap_ep` is the epochs the ADMITTED side
+                                        // has missed as this raw edge is crossed (-1 when
+                                        // the arc has never been admitted at all), which is
+                                        // the number a carry reader needs and is not
+                                        // derivable from the raw one.
+                                        fmt::format("signal={};gen={};prev_gen={};gap_ep={};"
+                                                    "adm_gap_ep={};adm_state={};role={}",
                                                     key, step.generation, step.prev_generation,
-                                                    step.gap_len_ep,
+                                                    step.gap_len_ep, step.adm_gap_len_ep,
+                                                    arcStateName(step.adm_state),
                                                     modelled ? "modelled" : "tracked"));
                                 }
                             }
@@ -455,15 +581,20 @@ namespace GnssProcessor {
             ++ctr.arc_trace_rows;
             traces.writeArcLedgerRow(se.time, name, sat, sig,
                                      arcStateName(step.from), arcStateName(step.to),
-                                     step.generation, step.gap_len_ep, reason, "");
+                                     step.generation, step.gap_len_ep, reason, "",
+                                     "raw", arcStateName(step.adm_state),
+                                     step.adm_gap_len_ep);
             if (ctx.arc_ledger.eventAllowed(sta, step.transition)) {
                 ++ctr.arc_events;
                 traces.emitEvent(se.time, "ARC", arcTransitionName(step.transition),
                                  sat, name, static_cast<double>(step.gap_len_ep),
                                  static_cast<double>(step.generation),
                                  arcStateName(step.to),
-                                 fmt::format("signal={};gen={};gap_ep={};reason={}",
+                                 fmt::format("signal={};gen={};gap_ep={};adm_gap_ep={};"
+                                             "adm_state={};reason={}",
                                              sig, step.generation, step.gap_len_ep,
+                                             step.adm_gap_len_ep,
+                                             arcStateName(step.adm_state),
                                              reason[0] ? reason : "-"));
             }
         }
@@ -484,8 +615,11 @@ namespace GnssProcessor {
 
     void networkSignalRosterAudit(NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log,
+                                  NetworkRunTraces& traces,
                                   const SyncedEpoch& se,
                                   const std::vector<NetStation>& stations,
+                                  const std::vector<std::vector<PppObservation>>& modeled,
+                                  const std::vector<bool>& present,
                                   const RawSlipEpoch* raw,
                                   const std::set<std::pair<int, std::string>>& freed,
                                   const NetworkSolutionEpoch& sol,
@@ -495,7 +629,87 @@ namespace GnssProcessor {
         auto& ctr = ctx.counters.sid;
         Stopwatch watch(ctr.audit_ms);
         (void)log;
-        (void)se;
+
+        // The ANSWERED test, hoisted above the admitted pass because that pass's own
+        // census uses it.  The gap re-entry response fires in PASS A, upstream of
+        // this pass, and its own latch is `ctx.carry.relevel.free_ambs` with the
+        // cause bit `kCauseGap`.  The driver's slipped set is a different, wider
+        // channel (RAIM, D5, the deweight release all write to it), so the narrow
+        // latch is what answers "was this re-entry answered by the tier that exists
+        // for it".
+        const auto& rel = ctx.carry.relevel;
+        const auto answered = [&](int sta, const std::string& sat,
+                                  const std::string& sig) {
+            const auto k = std::make_pair(sta, sat + "_" + sig);
+            if (!rel.free_ambs.count(k)) return false;
+            const auto cit = rel.free_cause.find(k);
+            return cit == rel.free_cause.end()
+                   || (cit->second & RelevelEpochState::kCauseGap) != 0;
+        };
+
+        // --- PHASE 2: the ADMITTED lifecycle, before every class that reads it ---
+        // The feed is the station's MODELLED phase rows.  `modeled[i]` exists only
+        // for satellites that survived the elevation mask, and `observed` holds only
+        // the signals the model built (the canonical latch, its card SCC companions
+        // and whatever the allow list admitted) — which is exactly the set
+        // `local_carry` and the ambiguity states are keyed from.  The raw side, fed
+        // at the build seam upstream of all of that, is a strict superset; the two
+        // are reported side by side and never added.
+        {
+            std::set<ArcLedger::Key> admitted;
+            for (std::size_t i = 0; i < modeled.size() && i < stations.size(); ++i) {
+                if (i < present.size() && !present[i]) continue;
+                for (const PppObservation& o : modeled[i]) {
+                    if (o.satellite.empty()) continue;
+                    for (const auto& [key, val] : o.observed) {
+                        (void)val;
+                        if (key.size() < 3 || key[0] != 'L') continue;
+                        admitted.emplace(static_cast<int>(i), o.satellite, key);
+                    }
+                }
+            }
+            ctr.adm_rows += static_cast<long long>(admitted.size());
+            std::vector<std::pair<ArcLedger::Key, ArcStep>> adm_edges;
+            ctx.arc_ledger.admitEpoch(admitted, adm_edges);
+            for (const auto& [key, step] : adm_edges) {
+                const int sta = std::get<0>(key);
+                const std::string& sat = std::get<1>(key);
+                const std::string& sig = std::get<2>(key);
+                switch (step.transition) {
+                case ArcTransition::Birth:   ++ctr.adm_birth;   break;
+                case ArcTransition::Gap:     ++ctr.adm_gap;     break;
+                case ArcTransition::Reentry: ++ctr.adm_reentry; break;
+                case ArcTransition::Death:   ++ctr.adm_death;   break;
+                default: break;
+                }
+                // The CARRY-SIDE census on the admitted lifecycle: a return at an arc
+                // whose leveling carry is still live is the population the card's
+                // 195 / 68 (and phase 1's 51 / 16) were measured on, now read off the
+                // admitted arc's own edge instead of the carry's re-stash stamp.
+                if (step.transition == ArcTransition::Reentry
+                    && ctx.carry.local_carry.count(std::make_tuple(sta, sat, sig))) {
+                    ++ctr.carry_adm_gap_any;
+                    if (step.gap_len_ep >= 2 && step.gap_len_ep <= 30) {
+                        ++ctr.carry_adm_gap_2_30;
+                        if (answered(sta, sat, sig)) ++ctr.carry_adm_gap_2_30_answered;
+                    }
+                }
+                const std::string& name =
+                    (sta >= 0 && sta < static_cast<int>(rs.station_names.size()))
+                        ? rs.station_names[static_cast<std::size_t>(sta)] : sat;
+                const char* reason =
+                    (step.reason_mask & kArcReasonHorizon) ? "horizon" : "";
+                ++ctr.adm_trace_rows;
+                traces.writeArcLedgerRow(se.time, name, sat, sig,
+                                         arcStateName(step.from), arcStateName(step.to),
+                                         step.generation, step.gap_len_ep, reason, "",
+                                         "adm", arcStateName(step.adm_state),
+                                         step.adm_gap_len_ep);
+            }
+            ctr.adm_live_max = std::max<long long>(
+                ctr.adm_live_max,
+                static_cast<long long>(ctx.arc_ledger.admittedLiveCount()));
+        }
 
         // --- (a) the arc-level tracker's band signal against modelled_phase ----
         // Per ROW here; the (station, band) CELL census is the run-end mode of the
@@ -526,20 +740,31 @@ namespace GnssProcessor {
             }
         }
 
-        // --- (c) local_carry presence against the ledger ----------------------
+        // --- (c) local_carry presence against the ledger, BOTH SIDES ----------
+        // The raw side is the phase-1 number and stays; the admitted side is the one
+        // a carry reader would key on, and the difference between them is the
+        // structural finding phase 2 exists to close.
         for (const auto& [key, lc] : ctx.carry.local_carry) {
             (void)lc;
             ++ctr.lc_entries;
             const ArcLedger::Key ak{ std::get<0>(key), std::get<1>(key), std::get<2>(key) };
             const ArcRecord* a = ctx.arc_ledger.find(ak);
-            if (a == nullptr)                   ++ctr.lc_arc_unknown;
-            else if (a->state == ArcState::Dead) ++ctr.lc_arc_dead;
+            if (a == nullptr) {
+                ++ctr.lc_arc_unknown;
+                ++ctr.lc_adm_arc_unknown;
+                continue;
+            }
+            if (a->state == ArcState::Dead) ++ctr.lc_arc_dead;
+            if (a->adm_state == ArcState::Dead)        ++ctr.lc_adm_arc_dead;
+            else if (a->adm_state == ArcState::Absent) ++ctr.lc_adm_arc_unknown;
         }
         for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
-            if (a.state != ArcState::Tracking || !a.modelled) continue;
-            if (!ctx.carry.local_carry.count(
-                    std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key))))
-                ++ctr.lc_tracking_no_entry;
+            if (!a.modelled) continue;
+            const bool carried = ctx.carry.local_carry.count(
+                std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key))) > 0;
+            if (carried) continue;
+            if (a.state == ArcState::Tracking)     ++ctr.lc_tracking_no_entry;
+            if (a.adm_state == ArcState::Tracking) ++ctr.lc_adm_tracking_no_entry;
         }
 
         // --- (d) StateManager ambiguity presence against the ledger ------------
@@ -566,14 +791,23 @@ namespace GnssProcessor {
                     if (us == std::string::npos) continue;
                     const ArcLedger::Key ak{ si, k.substr(0, us), k.substr(us + 1) };
                     const ArcRecord* a = ctx.arc_ledger.find(ak);
-                    if (a == nullptr)                   ++ctr.amb_arc_unknown;
-                    else if (a->state == ArcState::Gap) ++ctr.amb_arc_gapped;
+                    if (a == nullptr) {
+                        ++ctr.amb_arc_unknown;
+                        ++ctr.amb_adm_arc_unknown;
+                        continue;
+                    }
+                    if (a->state == ArcState::Gap) ++ctr.amb_arc_gapped;
+                    if (a->adm_state == ArcState::Gap)         ++ctr.amb_adm_arc_gapped;
+                    else if (a->adm_state == ArcState::Absent) ++ctr.amb_adm_arc_unknown;
                 }
                 for (auto it = arcs.lower_bound(ArcLedger::Key{ si, "", "" });
                      it != arcs.end() && std::get<0>(it->first) == si; ++it) {
-                    if (it->second.state != ArcState::Gap || !it->second.modelled) continue;
-                    if (!live.count(std::get<1>(it->first) + "_" + std::get<2>(it->first)))
-                        ++ctr.amb_destroyed_in_gap;
+                    if (!it->second.modelled) continue;
+                    const bool alive =
+                        live.count(std::get<1>(it->first) + "_" + std::get<2>(it->first)) > 0;
+                    if (alive) continue;
+                    if (it->second.state == ArcState::Gap)     ++ctr.amb_destroyed_in_gap;
+                    if (it->second.adm_state == ArcState::Gap) ++ctr.amb_adm_destroyed_in_gap;
                 }
             }
         }
@@ -657,21 +891,9 @@ namespace GnssProcessor {
         }
 
         // --- the ANSWERED half, and the CARRY-SIDE gap census ------------------
-        // The gap re-entry response fires in PASS A, upstream of this pass, and its
-        // own latch is `ctx.carry.relevel.free_ambs` with the cause bit `kCauseGap`.
-        // The driver's slipped set is a different, wider channel (RAIM, D5, the
-        // deweight release all write to it), so the narrow latch is what answers
-        // "was this re-entry answered by the tier that exists for it".
+        // The `answered` test is defined at the top of this pass (the admitted census
+        // uses it too).
         (void)freed;
-        const auto& rel = ctx.carry.relevel;
-        const auto answered = [&](int sta, const std::string& sat,
-                                  const std::string& sig) {
-            const auto k = std::make_pair(sta, sat + "_" + sig);
-            if (!rel.free_ambs.count(k)) return false;
-            const auto cit = rel.free_cause.find(k);
-            return cit == rel.free_cause.end()
-                   || (cit->second & RelevelEpochState::kCauseGap) != 0;
-        };
         for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
             if (a.state != ArcState::Reentered) continue;
             if (a.gap_len_ep < 2 || a.gap_len_ep > 30) continue;
@@ -910,6 +1132,74 @@ namespace GnssProcessor {
             c.arc_birth == 0
                 ? "  ⚠ ARMED AND INERT: ZERO arcs were ever born, so the ledger saw "
                   "no observation at all.  This is dead wiring, not a quiet run."
+                : "");
+
+        // ---------------------------------------------------------------
+        // PHASE 2: the reader, the writer and the admitted lifecycle
+        // ---------------------------------------------------------------
+        std::string datum_line;
+        for (const auto& [k, n] : c.datum_code_census) {
+            if (!datum_line.empty()) datum_line += ", ";
+            datum_line += fmt::format("{} ({} cell-epochs)", k, n);
+        }
+        if (datum_line.empty()) datum_line = "none";
+        std::string datum_ph_line;
+        for (const auto& [k, n] : c.datum_phase_census) {
+            if (!datum_ph_line.empty()) datum_ph_line += ", ";
+            datum_ph_line += fmt::format("{} ({} cell-epochs)", k, n);
+        }
+        if (datum_ph_line.empty()) datum_ph_line = "none";
+
+        log->info(
+            "Network (card SID phase 2 / THE READER, THE WRITER AND THE ADMITTED "
+            "LIFECYCLE): "
+            "TRACKER READ (network.roster_tracker): {} lookup(s) answered by a roster "
+            "cell, {} fell back to the station LATCH (the roster is built upstream of "
+            "computeModels, so the FIRST epoch of a constellation has no modelled role "
+            "yet; a count far above one epoch's worth of cells means the reader is not "
+            "reading the roster), {} answered by neither (a band with no latch at all).  "
+            "IF PIN AS A WRITER: {} epoch(s) with a realized pin, {} per-SATELLITE pin(s) "
+            "walked, {} roster cell(s) given a datum CODE of which {} also carry a datum "
+            "PHASE and {} could not (the pinned code is not that station's modelled "
+            "code); {} cell(s) sat on a (constellation, band) whose satellites pinned "
+            "MORE THAN ONE code, where the designation written is the mode.  Datum code "
+            "by (constellation, band): {}.  Datum phase: {}.  "
+            "ADMITTED LIFECYCLE: {} admitted phase row(s) fed over the run, peak {} "
+            "admitted-live arc(s); TRANSITIONS {} birth, {} gap, {} reentry, {} death "
+            "({} trace row(s), side=adm).  "
+            "(c) local_carry, ADMITTED side: {} of {} entr(y|ies) at a DEAD admitted arc, "
+            "{} at an arc never admitted, {} MODELLED arc(s) admitted-Tracking with no "
+            "carry entry [RAW side, for comparison: {} dead, {} unknown, {} tracking "
+            "without an entry].  "
+            "(d) StateManager ambiguities, ADMITTED side: {} of {} state(s) alive while "
+            "their ADMITTED arc is in a GAP, {} with no admitted arc, and {} MODELLED "
+            "arc(s) in an ADMITTED GAP inside the horizon whose state is already gone "
+            "[RAW side: {} gapped, {} unknown, {} destroyed in a gap].  "
+            "CARRY-SIDE GAP CENSUS on the ADMITTED lifecycle: {} return(s) at an arc "
+            "with a live carry, {} of them after 2 to 30 missed epochs, {} ANSWERED and "
+            "{} NOT [the phase-1 RE-STASH-STAMP reading of the same population, kept for "
+            "comparison: {} / {} / {} / {}].{}",
+            c.trk_roster_hits, c.trk_roster_fallback, c.trk_roster_none,
+            c.datum_epochs, c.datum_sat_pins, c.datum_cells, c.datum_cells_phase,
+            c.datum_cells_off_model, c.datum_cells_ambiguous,
+            datum_line, datum_ph_line,
+            c.adm_rows, c.adm_live_max,
+            c.adm_birth, c.adm_gap, c.adm_reentry, c.adm_death, c.adm_trace_rows,
+            c.lc_adm_arc_dead, c.lc_entries, c.lc_adm_arc_unknown,
+            c.lc_adm_tracking_no_entry,
+            c.lc_arc_dead, c.lc_arc_unknown, c.lc_tracking_no_entry,
+            c.amb_adm_arc_gapped, c.amb_states, c.amb_adm_arc_unknown,
+            c.amb_adm_destroyed_in_gap,
+            c.amb_arc_gapped, c.amb_arc_unknown, c.amb_destroyed_in_gap,
+            c.carry_adm_gap_any, c.carry_adm_gap_2_30,
+            c.carry_adm_gap_2_30_answered,
+            c.carry_adm_gap_2_30 - c.carry_adm_gap_2_30_answered,
+            c.carry_gap_any, c.carry_gap_2_30, c.carry_gap_2_30_answered,
+            c.carry_gap_2_30 - c.carry_gap_2_30_answered,
+            c.adm_rows == 0
+                ? "  ⚠ ARMED AND INERT: ZERO admitted rows were ever fed, so the "
+                  "admitted lifecycle never advanced.  This is dead wiring, not a "
+                  "quiet run."
                 : "");
     }
 

@@ -6174,6 +6174,13 @@ namespace GnssProcessor {
         // is the phase's own bar (standing invariant 6 in both knob states).
         network_signal_roster_ =
             jval<bool>(json, "network.signal_roster", "network_signal_roster", false);
+        // Card SID phase 2 (section 6 of the same card): the arc-level slip tracker
+        // becomes the roster's first READER.  Default OFF; the interlock against a
+        // roster that was never built, and the supersession notice against card GRK's
+        // knob, are raised in the posture block at the end of this section (the slip-QC
+        // knobs parse well below this line).
+        network_roster_tracker_ =
+            jval<bool>(json, "network.roster_tracker", "network_roster_tracker", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
@@ -10261,6 +10268,37 @@ namespace GnssProcessor {
                       "artifacts: logs/network_arc_ledger.csv (one row per transition), the ARC "
                       "event tier in network_events.csv (holdoff-throttled), and the run-end "
                       "disagreement table.");
+        // Card SID phase 2: the tracker reads the roster.  REFUSED without the
+        // observatory, because the reader would then have no roster to read and a
+        // silent fallback to the canonical latch would make an armed run look like it
+        // had exercised the reader (standing invariant 4: the counter has to mean
+        // what its name says).
+        if (network_roster_tracker_ && !network_signal_roster_) {
+            log->error("Network producer (card SID phase 2): network.roster_tracker is armed "
+                       "WITHOUT network.signal_roster, so there is no roster to read.  "
+                       "DISARMED.  Arm network.signal_roster (the phase-1 observatory, "
+                       "byte-identical on the solve) alongside it.");
+            network_roster_tracker_ = false;
+        }
+        if (network_roster_tracker_)
+            log->info("Network producer (card SID phase 2): network.roster_tracker is ON — the "
+                      "arc-level slip tracker (networkComputeRawObservables) names each band by "
+                      "the ROSTER's modelled_phase for that (station, constellation, band) when "
+                      "that phase is reported with its matching code this epoch, and falls back "
+                      "to the lexically lowest raw phase with a matching code only where the "
+                      "roster names none.  The per-signal tier of card GRS is untouched (it keys "
+                      "on the signal).  The roster is built upstream of computeModels, so the "
+                      "FIRST epoch of a constellation has no modelled role yet and the reader "
+                      "falls back to that station's latch there; the two fall-back counts are "
+                      "reported at run end.");
+        if (network_roster_tracker_ && network_config_.slip_qc.tracker_modeled_first)
+            log->info("Network producer (card SID phase 2): network.roster_tracker and "
+                      "network.cycle_slip.tracker_modeled_first are BOTH armed.  The ROSTER READ "
+                      "SUPERSEDES the latch lookup: the tracker's band signal comes from the "
+                      "roster's modelled_phase, and card GRK's latch lookup is not bound at all.  "
+                      "The result is identical either way (the roster's modelled role IS that "
+                      "latch, phase 1's roster_latch_disagree counter at its bar of 0), so this "
+                      "is a notice and not a conflict.");
         // PB emission-continuity filter INERT unless the invariant carry is armed
         // (its re-based emission frame is the filter's input); the carry-ON case is
         // reported inside the carry_invariant block above.

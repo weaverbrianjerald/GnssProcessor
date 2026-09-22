@@ -26,9 +26,10 @@
  *    canonical latch (@c PppModel::exportCanonicalSignals) and never re-derived;
  *  - COMPANION: the band-1 codes that ride as card SCC companions;
  *  - EXCLUDED: the signals that exist and are deliberately not used, with a reason;
- *  - DATUM: the signal the S-basis pins.  EMPTY in phase 1: the IF pin pair is
- *    elected inside the datum seam, which runs far downstream of the roster's
- *    arrival site, so filling it needs the reader edit phase 2 makes.
+ *  - DATUM: the signal the S-basis pins.  Empty in phase 1; PHASE 2 makes the IF pin
+ *    pair election a roster WRITER (@ref networkSignalRosterDatumPin), which runs in
+ *    the datum seam far downstream of the roster's arrival site.  Still an
+ *    observatory: nothing reads the fields, and the run-end table carries the census.
  *
  * ### Where it is decided
  *
@@ -65,6 +66,7 @@ namespace GnssProcessor {
     class NetworkRunTraces;
     struct NetStation;               // filter/NetworkRunTypes.hpp
     struct NetworkRunContext;
+    struct PppObservation;           // common/PppObservation.hpp
     struct SyncedEpoch;              // rinex/MultiRinexSync.hpp
     struct RawSlipEpoch;             // slip/NetworkRawObservables.hpp
     struct NetworkSolutionEpoch;     // products/NetworkProductEmitter.hpp
@@ -100,8 +102,14 @@ namespace GnssProcessor {
         std::string modelled_code;                ///< the latched code of this band, or empty.
         std::vector<std::string> modelled_extra;  ///< phase 6 only; empty in phase 1.
         std::vector<std::string> companion_code;  ///< card SCC companions, in configured order.
-        std::string datum_phase;                  ///< the S-basis pinned phase; empty in phase 1.
-        std::string datum_code;                   ///< the S-basis pinned code; empty in phase 1.
+        /// Phase 2: the phase the pinned code accompanies at THIS station, filled only
+        /// where @ref datum_code is also this cell's @ref modelled_code (otherwise
+        /// naming one would derive a signal the estimator does not carry).
+        std::string datum_phase;
+        /// Phase 2: the CODE signal the S-basis ionosphere-free pin realized on this
+        /// (constellation, band) this epoch.  The pin is per SATELLITE, so this is the
+        /// mode over the epoch's pinned satellites; see @ref networkSignalRosterDatumPin.
+        std::string datum_code;
         /// (signal, reason) for every tracked signal that is neither modelled nor a
         /// companion.  Reasons: "allowlist", "not_latched", "no_latch".
         std::vector<std::pair<std::string, const char*>> excluded;
@@ -216,6 +224,20 @@ namespace GnssProcessor {
         /// Names of the producer stations, in roster order (for the trace and events).
         std::vector<std::string> station_names;
 
+        /// PHASE 2, the IF pin as a WRITER: this epoch's realized per-satellite
+        /// ionosphere-free pin, as @c NetworkSbasis::selectIfPinPair returned it
+        /// (satellite -> the two CODE signals).  Kept for the run-end census only;
+        /// nothing reads it, and the per-cell designation it produces lives in
+        /// @c BandRoster::datum_code / @c datum_phase.
+        std::map<std::string, std::pair<std::string, std::string>> datum_pin;
+        /// "<constellation>|<band digit>" -> code signal -> SATELLITES that pinned it
+        /// at this epoch.  The pin is per SATELLITE while a roster cell is per (station,
+        /// constellation, band), so the designation written into the cells is the
+        /// per-(constellation, band) MODE over this epoch's pinned satellites and a
+        /// (constellation, band) with more than one pinned code is counted as
+        /// AMBIGUOUS rather than silently collapsed.
+        std::map<std::string, std::map<std::string, long long>> datum_votes;
+
         /// Resolved horizon inputs, reported at run end so the number is auditable.
         double horizon_s{ 0.0 };
         double horizon_pl_s{ 0.0 };
@@ -312,6 +334,64 @@ namespace GnssProcessor {
         long long carry_gap_2_30_answered{ 0 };///< of those, answered by the gap re-entry tier at the return epoch.
         long long carry_entries_seen{ 0 };    ///< carry RE-STASHES walked (denominator of the census).
 
+        // =================================================================
+        // PHASE 2 (network.roster_tracker, the IF pin writer, the ADMITTED
+        // lifecycle).  Every class below is reported BESIDE its raw-side twin and
+        // never added to it.
+        // =================================================================
+
+        // --- the tracker's roster read (invariant 4: is the reader doing the work?)
+        long long trk_roster_hits{ 0 };       ///< lookups answered by a roster cell's modelled phase.
+        /// Lookups the roster could not answer that the station's LATCH could.  The
+        /// roster is built upstream of computeModels, so the FIRST epoch of a
+        /// constellation has no modelled role yet; a count far above one epoch's
+        /// worth of cells means the reader is not reading the roster.
+        long long trk_roster_fallback{ 0 };
+        long long trk_roster_none{ 0 };       ///< lookups neither could answer (a band with no latch at all).
+
+        // --- the IF pin as a roster WRITER (observatory: nothing reads the fields)
+        long long datum_epochs{ 0 };          ///< epochs the pin writer ran with a nonempty pin (denominator).
+        long long datum_sat_pins{ 0 };        ///< per-SATELLITE pins seen, summed over epochs.
+        long long datum_cells{ 0 };           ///< roster cells given a datum CODE, summed over epochs.
+        long long datum_cells_phase{ 0 };     ///< of those, that also carry a datum PHASE.
+        /// Cells whose (constellation, band) had more than one pinned code across the
+        /// epoch's satellites: the designation written is the mode, and this says so.
+        long long datum_cells_ambiguous{ 0 };
+        /// Cells whose pinned code is NOT that station's modelled code, so no datum
+        /// phase can be named without inventing one.
+        long long datum_cells_off_model{ 0 };
+        /// "<constellation>|<band>|<signal>" -> CELLS the designation was written to,
+        /// summed over epochs (the same unit as @ref datum_cells).
+        std::map<std::string, long long> datum_code_census;
+        std::map<std::string, long long> datum_phase_census;
+
+        // --- the ADMITTED lifecycle -------------------------------------------
+        long long adm_rows{ 0 };              ///< admitted PHASE rows fed to the ledger, summed over epochs.
+        long long adm_birth{ 0 };
+        long long adm_gap{ 0 };
+        long long adm_reentry{ 0 };
+        long long adm_death{ 0 };
+        long long adm_trace_rows{ 0 };        ///< admitted-side rows written to network_arc_ledger.csv.
+        long long adm_live_max{ 0 };          ///< peak admitted-live arcs in one epoch.
+
+        // --- (c) local_carry against the ADMITTED lifecycle --------------------
+        long long lc_adm_arc_dead{ 0 };           ///< carry entries whose ADMITTED arc is Dead.
+        long long lc_adm_arc_unknown{ 0 };        ///< carry entries the admitted side has never seen.
+        long long lc_adm_tracking_no_entry{ 0 };  ///< MODELLED arcs admitted-Tracking with no carry entry.
+
+        // --- (d) StateManager ambiguities against the ADMITTED lifecycle -------
+        long long amb_adm_arc_gapped{ 0 };        ///< states alive while their ADMITTED arc is Gap.
+        long long amb_adm_arc_unknown{ 0 };       ///< states with no admitted arc at all.
+        long long amb_adm_destroyed_in_gap{ 0 };  ///< ADMITTED arcs in a Gap inside the horizon whose state is gone.
+
+        // --- the carry-side gap census ON THE ADMITTED LIFECYCLE ---------------
+        // The phase-1 census reads the carry's own RE-STASH stamp; this one reads
+        // the admitted arc's re-entry edge.  Both are reported so the two
+        // definitions can be compared instead of one silently replacing the other.
+        long long carry_adm_gap_any{ 0 };         ///< admitted re-entries at an arc with a live carry.
+        long long carry_adm_gap_2_30{ 0 };        ///< of those, after 2 to 30 missed epochs.
+        long long carry_adm_gap_2_30_answered{ 0 };///< of those, answered by the gap re-entry tier at the return epoch.
+
         double    build_ms{ 0.0 };            ///< wall time inside the build seam, summed.
         double    audit_ms{ 0.0 };            ///< wall time inside the audit seam, summed.
     };
@@ -352,6 +432,91 @@ namespace GnssProcessor {
                                   const std::vector<NetStation>& stations);
 
     /**
+     * @brief PHASE 2 — the roster's answer to "which phase stands for this band?".
+     *
+     * The READ side of @c network.roster_tracker.  Pure and const: it looks the cell
+     * up and returns its @c modelled_phase, or an empty string when the roster has
+     * no answer (the station reported nothing, the constellation has no priority
+     * list, the band has no latch, or this is the FIRST epoch of a constellation,
+     * whose latch is decided inside @c computeModels downstream of the build seam).
+     * The caller decides what an empty answer means.
+     *
+     * @param rs      The run's roster (@c ctx.roster).
+     * @param station Producer station index.
+     * @param cons    Constellation string, as @c PppUtils::getSystemString gives it.
+     * @param band    RINEX band digit.
+     */
+    std::string signalRosterModelledPhase(const SignalRoster& rs, int station,
+                                          const std::string& cons, char band);
+
+    /// @brief What one station's datum write did (@ref signalRosterApplyDatum).
+    struct SignalRosterDatumWrite {
+        long long cells{ 0 };      ///< cells given a datum CODE.
+        long long with_phase{ 0 }; ///< of those, that also carry a datum PHASE.
+        long long off_model{ 0 };  ///< of those, whose pinned code is not the modelled one.
+        long long ambiguous{ 0 };  ///< of those, on a (constellation, band) with more than one pinned code.
+    };
+
+    /**
+     * @brief PHASE 2 — resolve the per-SATELLITE IF pins to one code designation per
+     *        (constellation, band digit).  PURE.
+     *
+     * The constellation key is the ROSTER's, that is the system string
+     * @c PppUtils::getSystemString gives ("GPS"), not the satellite id's first
+     * character ("G") that the datum seam keys its own maps by.
+     *
+     * @param if_pin_real Satellite -> the two realized IF-pin CODE signals.
+     * @param votes_out   Optional: the full tally, "<cons>|<band>" -> signal -> count.
+     * @param ambiguous   Optional: receives every "<cons>|<band>" whose satellites did
+     *                    not agree on one code.
+     * @return "<cons>|<band>" -> the designated code signal (the mode; the lexically
+     *         lowest code on a tie, which is the pin's own tie break within a band).
+     */
+    std::map<std::string, std::string> signalRosterDatumPicks(
+        const std::map<std::string, std::pair<std::string, std::string>>& if_pin_real,
+        std::map<std::string, std::map<std::string, long long>>* votes_out = nullptr,
+        std::set<std::string>* ambiguous = nullptr);
+
+    /**
+     * @brief PHASE 2 — write the datum designation into one station's cells.  PURE.
+     *
+     * @param sr        The station's roster, MUTATED.
+     * @param picks     @ref signalRosterDatumPicks output.
+     * @param ambiguous Optional: the not-unanimous set, counted rather than acted on.
+     */
+    SignalRosterDatumWrite signalRosterApplyDatum(
+        StationRoster& sr, const std::map<std::string, std::string>& picks,
+        const std::set<std::string>* ambiguous = nullptr);
+
+    /**
+     * @brief PHASE 2 — the IF pin pair election as a roster WRITER.
+     *
+     * Called once per epoch straight after @c NetworkSbasis::buildCodeBiasDatumRows
+     * returns its realized pins, which is the only site that knows which signals the
+     * S-basis actually pinned this epoch.
+     *
+     * GRANULARITY, stated because it is not the roster's: the pin is elected PER
+     * SATELLITE over the network's registered code keys and it names two CODE
+     * signals.  A roster cell is per (station, constellation, band), so the
+     * designation written into the cells is the per-(constellation, band) MODE over
+     * the epoch's pinned satellites; a (constellation, band) whose satellites did not
+     * agree is counted as AMBIGUOUS rather than collapsed silently.  @c datum_phase
+     * is filled only where the pinned code IS that station's modelled code, in which
+     * case the phase it accompanies is that cell's modelled phase; anywhere else it
+     * stays empty rather than being derived from the code's attribute.
+     *
+     * OBSERVATORY: nothing reads @c BandRoster::datum_phase or @c datum_code.  The
+     * fields are rebuilt with the roster at the next epoch, so the census is
+     * accumulated here.
+     *
+     * @param ctx         Run context (the roster and the counters).
+     * @param if_pin_real Satellite -> the two realized IF-pin CODE signals.
+     */
+    void networkSignalRosterDatumPin(
+        NetworkRunContext& ctx,
+        const std::map<std::string, std::pair<std::string, std::string>>& if_pin_real);
+
+    /**
      * @brief The disagreement pass: every class of P4, counted and nothing else.
      *
      * Runs LATE in the epoch, where each input exists: the tracker's rows are built
@@ -359,10 +524,22 @@ namespace GnssProcessor {
      * post-assembly, the anchor incumbents are post-election and the solution epoch
      * is post-emit.  Reads only; changes nothing.
      *
+     * PHASE 2 adds the ADMITTED lifecycle here, before every class that reads it:
+     * the station's MODELLED phase rows (@c PppObservation::observed, which is what
+     * survives the elevation mask, the allow list and the admission screens, and is
+     * the same source @c local_carry and the ambiguity states are keyed from) advance
+     * a second state machine on each arc.  Classes (c) and (d) are then stated on
+     * BOTH sides, and the carry-side gap census gains an admitted-lifecycle reading
+     * beside its re-stash-stamp one.
+     *
      * @param ctx       Run context.
      * @param log       Producer logger.
+     * @param traces    Trace bundle (the admitted-side rows of network_arc_ledger.csv).
      * @param se        This epoch.
      * @param stations  The PRODUCER roster.
+     * @param modeled   Per-station MODELLED observations of this epoch: the admitted
+     *                  row set the admitted lifecycle is fed from.
+     * @param present   Per-station PASS-A presence.
      * @param raw       This epoch's raw slip observables, or nullptr when the
      *                  tracker did not run (the class then reports a zero
      *                  denominator rather than a zero count).
@@ -372,8 +549,11 @@ namespace GnssProcessor {
      */
     void networkSignalRosterAudit(NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log,
+                                  NetworkRunTraces& traces,
                                   const SyncedEpoch& se,
                                   const std::vector<NetStation>& stations,
+                                  const std::vector<std::vector<PppObservation>>& modeled,
+                                  const std::vector<bool>& present,
                                   const RawSlipEpoch* raw,
                                   const std::set<std::pair<int, std::string>>& freed,
                                   const NetworkSolutionEpoch& sol,
