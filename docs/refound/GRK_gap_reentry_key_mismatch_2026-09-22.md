@@ -4,8 +4,8 @@
 
 - **id:** GRK
 - **topic:** slip
-- **status:** open
-- **summary:** BUILT 2026-09-22 (main `c8232ad`, `network.cycle_slip.tracker_modeled_first`, default OFF): every gate passes except the refloat count against the emulation by one (the emulation and the knob are different interventions: card SID section 3); `gap_reentry_unreachable` 21 OFF and 0 ON; gross code rows 507 to 101 (12 h 759 to 261); consumer, census and clock wire unchanged. The exposure is corrected to all 18 L1W stations on band 1 and 28 stations on band 2 (the audit of card SID). NOT armed; recommendation: arm (it is also card SID's phase 2). Earlier summary: READ 2026-09-22 (manager; one emulation arm, no build). DEFECT of the row-level gap re-entry response (card GRS's predecessor, `network.cycle_slip.gap_reentry_relevel`): the raw slip tracker forms its band-1 signal as the lexically lowest phase with a matching code (L1C before L1W), while the carried ambiguity at a station whose priority latch chose L1W is keyed L1W. At the 10 field stations that track both, the response looks for a carry under L1C, finds none and returns (`no_carry`): 34 of the run's 88 shifted re-entries are answered on band 2 only and the stale L1W ambiguity folds across the break. Emulation (L1C stripped at those 10 stations, `runs/_rap_k1_strip_l1c`): gross post-fit code rows above 10 m 507 to 103 (SGOC00LKA G13: 393 to 1), refloats 128 to 144, band-1 arcs bridged clean 1 to 13; consumer, census and clock wire unchanged. Fix pre-registered in section 3 (the tracker prefers the station's MODELED signal per band, so that the tracker, the carry and the response agree by construction); NOT built: the author's decision.
+- **status:** closed
+- **summary:** ARMED 2026-09-22 in the RF-0hv working bases at the author's instruction (section 5; baseline pair `runs/_rf0hv9_{field,sim}6`; ledger and posture rows owed in the next build window). Earlier summary: BUILT 2026-09-22 (main `c8232ad`, `network.cycle_slip.tracker_modeled_first`, default OFF): every gate passes except the refloat count against the emulation by one (the emulation and the knob are different interventions: card SID section 3); `gap_reentry_unreachable` 21 OFF and 0 ON; gross code rows 507 to 101 (12 h 759 to 261); consumer, census and clock wire unchanged. The exposure is corrected to all 18 L1W stations on band 1 and 28 stations on band 2 (the audit of card SID). NOT armed; recommendation: arm (it is also card SID's phase 2). Earlier summary: READ 2026-09-22 (manager; one emulation arm, no build). DEFECT of the row-level gap re-entry response (card GRS's predecessor, `network.cycle_slip.gap_reentry_relevel`): the raw slip tracker forms its band-1 signal as the lexically lowest phase with a matching code (L1C before L1W), while the carried ambiguity at a station whose priority latch chose L1W is keyed L1W. At the 10 field stations that track both, the response looks for a carry under L1C, finds none and returns (`no_carry`): 34 of the run's 88 shifted re-entries are answered on band 2 only and the stale L1W ambiguity folds across the break. Emulation (L1C stripped at those 10 stations, `runs/_rap_k1_strip_l1c`): gross post-fit code rows above 10 m 507 to 103 (SGOC00LKA G13: 393 to 1), refloats 128 to 144, band-1 arcs bridged clean 1 to 13; consumer, census and clock wire unchanged. Fix pre-registered in section 3 (the tracker prefers the station's MODELED signal per band, so that the tracker, the carry and the response agree by construction); NOT built: the author's decision.
 - **source:** [SCU](SCU_station_coordinates_unknowns_2026-09-22.md) section 7 (the gross code rows at SGOC00LKA named as a candidate for the regional bias); [GRS](GRS_gap_reentry_per_signal_2026-09-20.md) (the per-signal tier that closed the L5 hole; this is the band-1 hole of the row-level tier)
 - **knobs / posture:** `network.cycle_slip.tracker_modeled_first` (built, default OFF). Posture: the RF-0hv working bases (baseline field `runs/_rf0hv8_field6`, sim `runs/_rf0hv7_sim6`)
 - **dates in the text:** 2026-09-22
@@ -177,3 +177,22 @@ replaces the knob by construction when the roster lands. The decision is the aut
 - The tracker's comparator sorts on the band digit alone under `std::sort` (formally unstable
   order inside a band); the knob makes the order irrelevant where the latch exists, phase 2 of
   card SID removes the sort.
+
+## 5. 2026-09-22: ARMED in the RF-0hv working bases
+
+At the author's instruction `config/refound/{field,sim}_gps_dual_rf0hv.json` now carry
+`network.cycle_slip.tracker_modeled_first: true` (one key plus dated comment lines). Working
+bases only. The promotion-ledger row and the loader's posture row land in the next build
+window (the posture table needs a rebuild and its parity check).
+
+Confirmation arms from the armed bases with only the product path changed, exe
+`gnss_processor_grk4.exe` (`CEB14EAB...`), both exit 0: `runs/_rf0hv9_field6` is
+byte-identical to `runs/_rap_grk_g1_field_on` on `products.txt` (lines starting with `#`
+removed), `closed_loop_trace.csv` and `network_epoch_status.csv`; `runs/_rf0hv9_sim6` is
+byte-identical to `runs/_rf0hv7_sim6` on the same three files (one signal per band on the sim).
+The field run's counters: `gap_reentry_unreachable` 0 of 112 `no_carry`.
+
+**The baseline pair from this date: `runs/_rf0hv9_{field,sim}6`.** Field: consumer 3D p50 by
+hour 0.560 0.059 0.028 0.030 0.036 0.045 m, clock wire 0.0045 / 0.0028 m, gross post-fit code
+rows above 10 m 101. Sim: unchanged, 0.601 0.104 0.096 0.056 0.055 0.049 m. Census replays of
+the field wire: key `grk` (identical wire).

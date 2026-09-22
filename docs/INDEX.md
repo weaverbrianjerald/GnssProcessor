@@ -138,8 +138,8 @@ record the program is re-founding **on**.
   of satellite-epochs (the phase twin of card SCC's code defect, and card EV7's mechanism).
   Plan: SignalRoster and ArcLedger as an observatory, then five migration phases ending in
   channel_mode all.
-- [GRK](refound/GRK_gap_reentry_key_mismatch_2026-09-22.md): open (BUILT 2026-09-22, gates pass,
-  NOT armed; recommendation: arm, it is card SID's phase 2), the gap re-entry response keyed on the slip
+- [GRK](refound/GRK_gap_reentry_key_mismatch_2026-09-22.md): closed (BUILT and ARMED 2026-09-22 in
+  the RF-0hv working bases; baseline pair `runs/_rf0hv9_{field,sim}6`), the gap re-entry response keyed on the slip
   tracker's signal, not on the carried one: the tracker takes the lexically lowest band-1 phase
   (L1C) while ten stations carry L1W, so 34 of 88 shifted re-entries are answered on band 2 only
   and the stale band-1 ambiguity folds across the break; emulation with L1C stripped at those

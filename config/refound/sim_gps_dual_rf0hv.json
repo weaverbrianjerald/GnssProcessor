@@ -67,7 +67,15 @@
     "band-1 code it tracks as code-only rows through a receiver inter-signal state: census hour 1 better by a median of 0.136 m, code-bias dropouts",
     "50 to 4, QUIN00USA's excursion gone; it costs WTZZ00DEU about 0.02 m from hour 3 and FAILS card SCC's frozen bar B1: armed as the author's",
     "decision, every frequency and every channel being the plan).  The baseline pair is now runs/_rf0hv7_{field,sim}6, exe gnss_processor_rf7.exe.",
-    "OPEN: site-specific census offsets, the pinned pair's standing code misfit, the consumer's elevation mask, the goldens' monument roster."
+    "OPEN: site-specific census offsets, the pinned pair's standing code misfit, the consumer's elevation mask, the goldens' monument roster.",
+    "2026-09-22 (card GRK, docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md): ONE MORE KNOB ARMED at the author's instruction --",
+    "network.cycle_slip.tracker_modeled_first: true.  DEFECT: the arc-level slip tracker named a band by the lexically lowest phase with a",
+    "matching code (L1C before L1W) while the carried ambiguity at an L1W station is keyed L1W, so the row-level gap re-entry response looked the",
+    "carry up under the wrong key at all 18 L1W stations (band 2 at 28 stations) and the band-1 carry folded across every break there (0 of 31",
+    "answered).  Armed, the tracker names each band by the station's LATCHED phase: unreachable re-entries 21 to 0, gross post-fit code rows",
+    "at full weight 507 to 101 (12 h 759 to 261), consumer, census and clock wire unchanged; byte-identical on the sim (one signal per band).",
+    "Field baseline: runs/_rf0hv9_field6, exe gnss_processor_grk4.exe; the sim is byte-identical (baseline runs/_rf0hv9_sim6 = runs/_rf0hv7_sim6).",
+    "This knob is phase 2 of card SID (the tracker reads the signal roster) and is superseded by it when the roster lands."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -290,7 +298,8 @@
       "mw_lli_corroborate": true,
       "gap_instrument": true,
       "gap_reentry_relevel": true,
-      "gap_reentry_per_signal": true
+      "gap_reentry_per_signal": true,
+      "tracker_modeled_first": true
     },
     "cold_clock_seed": true,
     "emit_clock_disc": true,
