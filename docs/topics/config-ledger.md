@@ -3,7 +3,7 @@
 **The ledger is [`CONFIG_promotion_ledger.md`](../CONFIG_promotion_ledger.md), and it is a
 LIVING REGISTER kept whole at that path.** One row per default-OFF knob in four verdict
 tiers (RECOMMEND_ON, RECOMMEND_SCOPED, UNVALIDATED, KEEP_OFF), plus the cross-cutting notes
-and the A1–A9 session appendices. This is the record the goldens are generated from.
+and the A1–A10 session appendices. This is the record the goldens are generated from.
 
 **Conventions and invariants**
 

@@ -466,6 +466,27 @@ namespace GnssProcessor {
               "0.0029 m triple), field dual T4_attrib 228 -> 92, and the 12 h field arm "
               "never worse than 0.02 m of consumer p50 in hours 3 to 12 (T4_attrib 702 "
               "-> 370)" },
+            // --- Card GRK, the TRACKER KEY of the two rows above (ledger row landed
+            //     2026-09-22).  The arc-level tracker named each band by the lexically
+            //     lowest phase carrying a matching code (L1C before L1W), while a carried
+            //     ambiguity at an L1W station is keyed L1W, so the ROW-LEVEL re-entry
+            //     response looked the carry up under a key that station never uses and
+            //     reached nothing at all 18 of them, and the band-1 carry folded across
+            //     every break there.  Armed, a band whose LATCHED phase is present in the
+            //     raw record with its matching code is named by that phase.  Regime = the
+            //     float vehicle AND the row-level response: without the response there is
+            //     no lookup to miss and the choice changes only detections and the trace
+            //     (the loader WARNS).
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && nc.slip_qc.gap_reentry,
+              nc.slip_qc.tracker_modeled_first,
+              Tier::SCOPED, false, "network.cycle_slip.tracker_modeled_first",
+              "the arc-level slip tracker names each band by the station's LATCHED phase, the "
+              "key the carry uses (the lexical rule named L1C at every L1W station, so the "
+              "row-level re-entry response never reached the band-1 carry there): unreachable "
+              "re-entries 21 -> 0, gross post-fit code rows at full weight 507 -> 101 (12 h "
+              "759 -> 261), consumer, census and clock wire unchanged; byte-identical on the "
+              "sim" },
             // --- Card CSL, the canonical-signal latch (ledger row landed 2026-09-20).
             //     A VALUE knob, and the ONLY processing.* row in this table: the default
             //     string "count" is truthy, so the armed test is an explicit comparison
@@ -571,6 +592,24 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.emit_pb_filter_window_epochs",
               "epoch-denominated: the 60.0 default does NOT transfer across cadence; the shipped "
               "300 s tier uses 15.0" },
+            // --- Card PBH, the EMIT-SIDE PHASE-BIAS HOLD (ledger row landed 2026-09-22).
+            //     The emitted phase bias of each (satellite, signal) is HELD at the first
+            //     value of its generation, and a gap longer than emit_pb_hold_max_gap_s
+            //     DECLARES a new generation on the wire (gen= token).  It is the LAST
+            //     writer of the value and runs one call ahead of the emitter's own
+            //     value-jump test, so it screens what the consumer receives while the
+            //     solve, the C records and the B records stay byte-identical to the OFF
+            //     run.  Regime = the float vehicle AND a closed-loop consumer, the posture
+            //     it was graded on: the hold's evidence is the consumer's.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && nc.closed_loop.enable,
+              nc.emit_pb_hold,
+              Tier::SCOPED, false, "network.emit_pb_hold",
+              "hold each emitted phase bias at the first value of its generation and declare a "
+              "new generation after a gap (the wire's phase-bias movement is harmful error for "
+              "a float consumer: 0.0467 m of within-arc RMS on the field against the clock's "
+              "0.0274 m, first differences uncorrelated with the clock's): adopted 2026-09-20, "
+              "all five PBH-1 bars pass; the solve is untouched" },
             { network_raim_ && (nc.closed_loop.enable || network_service_mode_),
               network_emit_ura_,
               Tier::SCOPED, true , "network.emit_ura",
@@ -772,6 +811,24 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_datum_prioritized",
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
+            // --- Cards RF-1 / RF-2b / RF-0hv, THE VEHICLE ITSELF (ledger row landed
+            //     2026-09-22 with the golden re-base, card GRB).  float_kf carries each
+            //     (station, satellite, signal) ambiguity as a float STATE with covariance
+            //     in the station block instead of a zero-q scalar level, and the held
+            //     S-basis freezes the phase datum's basis value with every handover
+            //     DECLARED.  The pair IS the posture, not a knob inside one, so the regime
+            //     is unconditional and the armed test is the VALUE PAIR: the retired
+            //     leveling goldens read as unarmed here and the refound ones as armed.
+            //     Sits beside the prioritized-datum row because the held basis is that
+            //     datum's basis (the loader requires the two together).
+            { true,
+              nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && network_phase_datum_held_basis_,
+              Tier::ON, true , "network.ambiguity_vehicle",
+              "the float vehicle with the held S-basis: the working posture since 2026-09-15 "
+              "and the goldens' posture since the re-base of 2026-09-22; field 6 h consumer "
+              "3.77 1.08 1.28 1.25 1.78 2.68 -> 0.560 0.059 0.028 0.030 0.036 0.045 m by hour "
+              "against the leveling posture" },
             { network_phase_datum_prioritized_ && !network_phase_datum_eq34_,
               network_phase_anchor_carry_reref_,
               Tier::SCOPED, false, "network.phase_anchor_carry_reref",
