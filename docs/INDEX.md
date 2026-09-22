@@ -129,6 +129,14 @@ record the program is re-founding **on**.
   clock wire 0.0091 / 0.0072 against 0.0184 / 0.0107 m, census 13 of 16 sites better (last
   half hour's median 0.171 to 0.099 m), sim identical and the relabelled truth arm cured;
   12 h trips 134 to 8. The guard made inert changes nothing on the fixed base.
+- [RF-3](refound/RF-3_code_row_qc_2026-09-22.md): open (READ 2026-09-22, build pre-registered), QC
+  that acts on code rows: the 101 gross post-fit code rows at full weight are the RE-COUPLING edge
+  of the slip response, not code faults (five of six episodes have clean data; a refloat re-births
+  the ambiguity at the arc's first-stash variance and the level walks for 24 epochs); the gross-LOS
+  screen cures what it declares (one-row rule: 101 to 33), the prefit fuse is blind; a birth floor
+  removes the walk but slows every birth (hour 1 +0.10 m). Build: a DROP-only floor (RF-3a), the
+  screen's one-row rule, bounded decoupling, same-epoch emission and station tier (RF-3b), the
+  wire's discontinuity tokens (RF-3c).
 - [GRB](refound/GRB_golden_rebase_2026-09-22.md): closed (2026-09-22, the author's instruction), the
   goldens re-based from the RF-0g leveling posture onto the RF-0hv float-vehicle posture as armed
   today (frozen bases `config/refound/{field,sim}_gps_dual_rf0hv_golden_2026-09-22.json`, 27
