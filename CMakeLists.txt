@@ -364,6 +364,7 @@ add_executable(gnss_tests
     tests/test_network_slip_qc.cpp
     tests/test_gap_reentry_relevel.cpp
     tests/test_gap_reentry_per_signal.cpp
+    tests/test_tracker_modeled_first.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
     tests/test_if_td_pair_width.cpp

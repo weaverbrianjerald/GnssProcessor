@@ -325,6 +325,10 @@ int Application::runNetwork() {
         // builds a per-signal list and never reads one.
         sp.gap_reentry_per_signal  = sq.gap_reentry_per_signal;
         sp.gap_reentry_per_signal_unmeasurable = sq.gap_reentry_per_signal_unmeasurable;
+        // Card GRK: the arc-level tracker's per-band signal taken from the MODEL,
+        // so the tracker, the carried ambiguity key and the gap re-entry
+        // response's lookup name the same signal.  Read at the compute pass only.
+        sp.tracker_modeled_first   = sq.tracker_modeled_first;
         // Bridge v3 E4: the GF-row capture needs the qualified raw verdicts.
         sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
         // CS-GF authority (iono_carry_source = smoothed_gf): same need.  The

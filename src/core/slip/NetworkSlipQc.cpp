@@ -2067,6 +2067,22 @@ struct GapArcOutcome {
  * @param led                This tier's ledger, accumulated into.
  * @param qc_cnt             Run-end counters (only @c relevel_free_marked here).
  * @param relevel            Free-epoch latch, or nullptr when relevel_free_epoch is off.
+ * @param present_sigs       Card GRK: the phase signals of this (station,
+ *                           satellite) that are PRESENT this epoch with a
+ *                           matching code, used ONLY to qualify
+ *                           @c gap_reentry_unreachable.  Null (the default)
+ *                           keeps the broader count, which is what a posture
+ *                           without the per-signal list can honestly state.
+ * @param count_unreachable  Card GRK: whether this call may feed
+ *                           @c gap_reentry_unreachable at all.  TRUE only from
+ *                           the ROW-LEVEL tier, whose key is the tracker's band
+ *                           signal and can therefore disagree with the carried
+ *                           one.  The per-signal tier passes FALSE: there the
+ *                           returning SIGNAL is the key, so a key mismatch
+ *                           cannot occur, and a return on a signal the station
+ *                           does not model would otherwise be scored against a
+ *                           same-band carry that tracked through the break and
+ *                           has no break of its own.
  * @return The outcome; @c reached false means the arc had no carry to protect.
  */
 GapArcOutcome gapReentryRespondArc(
@@ -2076,7 +2092,9 @@ GapArcOutcome gapReentryRespondArc(
     const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
     double pl_now_s, double pl_max_gap_s,
     std::uint8_t cause_bits, GapCause primary,
-    GapReentryLedger& led, SlipQcCounters& qc_cnt, RelevelEpochState* relevel) {
+    GapReentryLedger& led, SlipQcCounters& qc_cnt, RelevelEpochState* relevel,
+    const std::set<std::string>* present_sigs = nullptr,
+    bool count_unreachable = true) {
     GapArcOutcome out;
     // ⚠ THE KEY IS SYNTHESISED, NOT LOOKED UP — see the header banner.
     // The first cut mirrored the MW/LLI drain's refloat_signal and
@@ -2114,6 +2132,49 @@ GapArcOutcome gapReentryRespondArc(
     // DD ledger (gap_shifted_bridged / _fresh) still can, from the driver.
     if (!(out.pl_bridged || carry_invariant)) {
         ++led.no_carry;
+        // Card GRK: WHY there was no carry under this key.  A LocalCarry entry
+        // for the same (station, satellite) on ANOTHER signal of the SAME band,
+        // still inside the max-gap window, is exactly what the PASS-B inject
+        // will fold across this break, and this response cannot reach it
+        // because the tracker named the band by one signal while the carry is
+        // keyed on the station's canonical one.  That is the UNREACHABLE
+        // population, not an arc with nothing to protect, and it is counted in
+        // both states of network.cycle_slip.tracker_modeled_first so the run
+        // end can state the knob's target population either way.  The map key
+        // is (station index, satellite, signal) and orders lexicographically,
+        // so one lower_bound walks this station-satellite group alone.
+        //
+        // The carried signal must also be TRACKED this epoch.  Without that
+        // clause the count takes arcs whose carried signal is simply absent
+        // from the record: at BSHM00ISR / G14, TOW 270390 the station reports
+        // C1C, C1L, L1L, C2L, L2L, C5Q and L5Q, so the tracker's fallback to
+        // L1L / L2L is the right choice, the carried L1C / L2W arcs have no row
+        // at all this epoch, and their own return is the per-signal tier's
+        // business rather than a response this tier declined to make.
+        //
+        // And only the ROW-LEVEL tier may score it.  In the per-signal tier the
+        // returning SIGNAL is the key, so the two halves cannot name the band
+        // differently; a return there on a signal the station does not model
+        // (L2L where the station carries L2W) legitimately finds no carry, and
+        // counting it against the modelled same-band carry would score an arc
+        // that tracked THROUGH this break and has no break of its own.
+        for (auto it = (count_unreachable
+                            ? local_carry.lower_bound(std::make_tuple(i, satellite,
+                                                                      std::string{}))
+                            : local_carry.end());
+             it != local_carry.end() && std::get<0>(it->first) == i
+                 && std::get<1>(it->first) == satellite;
+             ++it) {
+            const std::string& other = std::get<2>(it->first);
+            if (other == sig || other.size() < 2 || sig.size() < 2) continue;
+            if (other[1] != sig[1]) continue;                  // a different band
+            if (present_sigs != nullptr && present_sigs->count(other) == 0) continue;
+            const double gap_s = pl_now_s - it->second.last_seen_s;
+            if (gap_s >= 0.0 && gap_s <= pl_max_gap_s) {
+                ++qc_cnt.gap_reentry_unreachable;              // once per ARC
+                break;
+            }
+        }
         return out;
     }
     ++led.arcs;
@@ -2168,6 +2229,30 @@ GapArcOutcome gapReentryRespondArc(
                      ? "refloat"
                      : (!carry_warm ? "cold"
                                     : (carry_invariant ? "dd_only" : "no_relevel"));
+    return out;
+}
+
+/// Card GRK: this epoch's raw row for (station @p i, @p satellite), or null.
+///
+/// The row carries the per-signal list @c gap_reentry_unreachable qualifies on.
+/// Looked up by a linear scan because a station's row vector holds one entry per
+/// tracked satellite (tens), and it is walked once per resumption.
+const RawSlipObs* gapReentryFindRow(const RawSlipEpoch& raw, int i,
+                                    const std::string& satellite) {
+    if (i < 0 || i >= static_cast<int>(raw.rows.size())) return nullptr;
+    for (const auto& r : raw.rows[static_cast<std::size_t>(i)])
+        if (r.satellite == satellite) return &r;
+    return nullptr;
+}
+
+/// The phase signals of @p row that are present with a matching code, or an
+/// empty set when the row carries no per-signal list (the Card GRS tier
+/// unarmed).  An empty set is passed to the responder as a NULL pointer, which
+/// keeps the broader unreachable count rather than silently reporting zero.
+std::set<std::string> gapReentryPresentSignals(const RawSlipObs* row) {
+    std::set<std::string> out;
+    if (row != nullptr)
+        for (const auto& s : row->sigs) out.insert(s.sig);
     return out;
 }
 
@@ -2247,13 +2332,20 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                            : (lli_set ? GapCause::Lli : GapCause::Unmeas);
         StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
+        // Card GRK: the signals this (station, satellite) actually tracks this
+        // epoch, which is what qualifies the unreachable count.  Built once per
+        // resumption and shared by both bands.
+        const std::set<std::string> present_sigs =
+            gapReentryPresentSignals(gapReentryFindRow(raw, i, g.satellite));
+        const std::set<std::string>* present_ptr =
+            present_sigs.empty() ? nullptr : &present_sigs;
         for (const std::string& sig : {g.sig1, g.sig2}) {
             if (sig.empty()) continue;
             const GapArcOutcome out =
                 gapReentryRespondArc(i, g.satellite, sig, sm, carry_invariant,
                                      carry_warm, carry_slipped_ambs, local_carry,
                                      pl_now_s, pl_max_gap_s, cause_bits, primary,
-                                     led, qc_cnt, relevel);
+                                     led, qc_cnt, relevel, present_ptr);
             if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
             // One event per ARC reached (invariant #7's re-coupling edge needs
             // an identity, not just a count).  `statistic` is the raw ΔMW in
@@ -2389,13 +2481,22 @@ void networkSlipDrainGapReentryPerSignal(
         // still valid and freeing them would inject exactly the response cost
         // SPEC_lane_slip_response measures (the slip cost of a whole-satellite
         // refloat is 100 % response-inflicted).
+        // Card GRK: this tier does NOT feed gap_reentry_unreachable.  Its key IS
+        // the returning signal, so the tracker and the carry cannot disagree
+        // about which signal names the band; a return on a signal the station
+        // does not model finds no carry for the honest reason, and the modelled
+        // same-band carry it would otherwise be scored against tracked through
+        // this break.  Measured: 40 of these on the 6 h field arm (23 clean, 17
+        // shifted), e.g. MAJU00MHL / G08 / L2L at TOW 260250.
         const GapArcOutcome out =
             gapReentryRespondArc(i, g.satellite, g.signal,
                                  *stations[static_cast<std::size_t>(i)].sm,
                                  carry_invariant, carry_warm, carry_slipped_ambs,
                                  local_carry, pl_now_s, pl_max_gap_s,
                                  RelevelEpochState::kCauseGap, primary,
-                                 led, qc_cnt, relevel);
+                                 led, qc_cnt, relevel,
+                                 /*present_sigs=*/nullptr,
+                                 /*count_unreachable=*/false);
         if (!out.reached) continue;   // no carry to protect: the inject would not bridge it
         // THE RE-COUPLING EDGE: `scope=signal` is what separates these rows from
         // the row-level tier's in network_events.csv, so a grader can count the

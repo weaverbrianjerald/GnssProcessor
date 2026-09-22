@@ -603,6 +603,41 @@ namespace GnssProcessor {
         /// gap the carry of a satellite that never left is certain to be folded.
         bool   gap_reentry_per_signal_unmeasurable{ true };
 
+        // --- Card GRK: the tracker's signal per band, keyed on the MODEL ----
+        /**
+         * @brief Arm (@c network.cycle_slip.tracker_modeled_first) for the
+         *        arc-level tracker's per-band signal choice
+         *        (docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).
+         *
+         * The arc-level tracker builds its primary pair from @c raw_observed as
+         * the lexically lowest phase per band that has a matching code, so a
+         * station reporting L1C and L1W tracks band 1 as L1C.  Its carried
+         * ambiguity is keyed on the station's CANONICAL band-1 signal, which
+         * under @c processing.canonical_signal_rule = priority is L1W at the
+         * stations that report both.  The gap re-entry response then looks the
+         * carry up under the tracker's key, finds nothing, counts @c no_carry
+         * and returns, and the stale band-1 level folds across the break.
+         *
+         * Armed, the tracker prefers on each band the phase signal the station
+         * LATCHED for that band (@c PppModel::latchedCanonicalPhaseOnBandDigit),
+         * and falls back to the lexically lowest raw phase with a matching code
+         * only where the latch names none or the latched phase is not reported
+         * this epoch (band 5 on a dual posture).  The tracker, the carry and the
+         * response then agree by construction.
+         *
+         * The LATCH, not the epoch's admitted row set: a returning arc's phase
+         * can be withheld from the admitted set for its first epochs by the
+         * admission and readmit machinery, which is exactly the re-entry epoch
+         * the tracker has to name correctly.
+         *
+         * SOLVE-AFFECTING through the detections and the response it enables;
+         * default OFF so an unarmed run is byte-identical.  NOT fingerprinted:
+         * the choice is forward-only and no carried quantity changes meaning
+         * across a flip.  The per-signal tier of card GRS is untouched (it keys
+         * on the signal itself).
+         */
+        bool   tracker_modeled_first{ false };
+
         // --- SIM-ONLY ORACLE slip response (the level-preserving ceiling) ----
         /**
          * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the

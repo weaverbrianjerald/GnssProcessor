@@ -41,12 +41,40 @@ bool assertsLli(const PppObservation& obs) {
 // Raw observable computation (verbatim from the former trace writer)
 // =====================================================================
 
+namespace {
+
+/// Card GRK: the phase signal this station LATCHED on @p band and is tracking
+/// this epoch, or empty.
+///
+/// The source is the station's canonical latch, NOT the epoch's admitted row set
+/// (@c PppObservation::observed).  The admitted set is per epoch, and a returning
+/// arc's phase can be withheld from it for its first epochs by the admission and
+/// readmit machinery, which is precisely the re-entry epoch this tracker has to
+/// name correctly; the latch is decided once per constellation and locked.  A
+/// latched signal is still usable only when the raw phase AND its matching code
+/// are both reported this epoch, since the observables are built from them.
+std::string latchedPhaseOfBand(const PppObservation& obs, char band,
+                               int station, const std::string& system,
+                               const TrackerLatchLookup* latch) {
+    if (latch == nullptr || !*latch) return std::string{};
+    const std::string k = (*latch)(station, system, band);
+    if (k.size() < 2 || k[0] != 'L' || k[1] != band) return std::string{};
+    if (!obs.raw_observed.count(k)) return std::string{};
+    if (!obs.raw_observed.count("C" + k.substr(1))) return std::string{};
+    return k;
+}
+
+}  // namespace
+
 void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>& modeled,
                                   const std::vector<bool>& present,
                                   int n_sta_total,
                                   PppUtils& utils,
                                   RawSlipEpoch& out,
-                                  bool per_signal) {
+                                  bool per_signal,
+                                  bool tracker_modeled_first,
+                                  SlipQcCounters* cnt,
+                                  const TrackerLatchLookup* latch) {
     for (int i = 0; i < n_sta_total; ++i) {
         if (i >= static_cast<int>(out.rows.size())) break;
         if (!present[i]) continue;
@@ -61,9 +89,38 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
             if (ph.empty()) continue;
             std::sort(ph.begin(), ph.end(),
                       [](const std::string& a, const std::string& b) { return a[1] < b[1]; });
-            const std::string s1 = ph.front();
+            std::string s1 = ph.front();
             std::string s2;
             for (const auto& k : ph) if (k[1] != s1[1]) { s2 = k; break; }  // distinct band
+            // ---- Card GRK: name each band by the LATCH, not lexically -------
+            // The two bands are already fixed (the two lowest DISTINCT ones);
+            // only WHICH signal of each band the tracker carries is decided
+            // here.  Unarmed the lexical pick above stands untouched, so the
+            // pair, the trace rows and every detection are byte-identical.
+            // Armed, a band whose latched phase is tracked this epoch takes that
+            // signal, which is the signal the carried ambiguity is keyed on, so
+            // the gap re-entry response's lookup and this tracker cannot name
+            // the same band differently.  A band with no latch, or whose latched
+            // phase is not reported this epoch (band 5 on a dual posture, or a
+            // station that simply lost that channel), keeps the lexical pick.
+            //
+            // The mismatch cell is counted in BOTH knob states, and it counts
+            // the signal the tracker ACTUALLY carries: unarmed that is the
+            // lexical pick, so the counter is the size of the population the
+            // gap re-entry response cannot reach; armed it is the latch's own
+            // signal, so the counter is 0 by construction.  Standing invariant
+            // #4 wants both readable from the same counter.
+            if ((tracker_modeled_first || cnt != nullptr) && latch != nullptr) {
+                const std::string system = PppUtils::getSystemString(obs.system);
+                for (std::string* s : { &s1, &s2 }) {
+                    if (s->empty()) continue;
+                    const std::string m =
+                        latchedPhaseOfBand(obs, (*s)[1], i, system, latch);
+                    if (m.empty()) continue;            // no latched cell here
+                    if (tracker_modeled_first) *s = m;
+                    if (cnt != nullptr && m != *s) ++cnt->gap_tracker_key_mismatch;
+                }
+            }
 
             const double lam1 = utils.getWavelength(obs.system, s1, obs.satellite);
             if (!(std::isfinite(lam1) && lam1 > 0.0)) continue;

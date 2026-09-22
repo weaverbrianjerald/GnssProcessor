@@ -1937,6 +1937,17 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.slip_qc.gap_reentry_lli ? "true" : "false",
                                      nc.slip_qc.gap_reentry_unmeasurable ? "true" : "false")
                        : std::string())
+               // Card GRK: the arc-level tracker's per-band signal source.  This
+               // block lists KNOBS, not counters (the two GRK counters are read
+               // from the run-end Card-G readout), so the knob is what is
+               // recorded here.  SOLVE-AFFECTING through the detections and the
+               // gap re-entry response, so an archived logs/ folder has to be
+               // able to say which side of it its products came from.  Emitted
+               // ONLY when armed (the gap_reentry precedent), so an unarmed
+               // run's manifest bytes are unchanged.
+               << (nc.slip_qc.tracker_modeled_first
+                       ? std::string("\"tracker_modeled_first\":true,")
+                       : std::string())
                // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp).
                // SOLVE-AFFECTING and truth-fed, so an archived logs/ folder MUST be
                // able to say that its products are a diagnostic ceiling rather than a

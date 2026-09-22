@@ -1739,8 +1739,25 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     // when no consumer asked for them (qc.utils null ⇒ every card inert).
     qc.epoch.reset(stations.size());
     if (qc.armed()) {
+        // Card GRK: the per-station canonical PHASE latch, bound over the station
+        // vector rather than copied into a table, because the latch is locked for
+        // the run and lives on each station's own PppModel.  A station whose model
+        // is absent returns empty, which the tracker reads as "change nothing".
+        const TrackerLatchLookup latch =
+            [&stations](int sta, const std::string& system, char band) -> std::string {
+                if (sta < 0 || sta >= static_cast<int>(stations.size())) return {};
+                const auto& m = stations[static_cast<std::size_t>(sta)].model;
+                if (!m) return {};
+                return m->latchedCanonicalPhaseOnBandDigit(system, band);
+            };
         networkComputeRawObservables(modeled, present, n_sta_total, *qc.utils, qc.epoch,
-                                     qc.params.gap_reentry_per_signal);
+                                     qc.params.gap_reentry_per_signal,
+                                     // Card GRK: the tracker's band signal from the
+                                     // latch, plus the mismatch cell counted in BOTH
+                                     // knob states (the counters sink is passed
+                                     // unconditionally for exactly that reason).
+                                     qc.params.tracker_modeled_first,
+                                     &qc.counters, &latch);
         // The qualification pass (empirical step gates, LLI credibility, arc
         // resumptions) runs only for a DECISION card — with just the trace armed
         // the observables are pure output and nothing is adjudicated.

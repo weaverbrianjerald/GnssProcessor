@@ -408,6 +408,37 @@ namespace GnssProcessor {
                           ? "FREED (a partial dropout with no witness is the measured poison "
                             "case)"
                           : "left alone");
+        // Card GRK (docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md).
+        // The knob changes which signal the arc-level tracker names per band.
+        // With no Card-G consumer armed that choice reaches only the slip_raw
+        // trace and the MW/GF detections, so the operator is told that the
+        // response half of the fix is not in this posture.
+        if (network_config_.slip_qc.tracker_modeled_first
+            && !network_config_.slip_qc.gap_reentry
+            && !network_config_.slip_qc.gap_instrument) {
+            log->warn("Network (slip-QC card GRK): network.cycle_slip.tracker_modeled_first "
+                      "is armed with NEITHER network.cycle_slip.gap_reentry_relevel NOR "
+                      "network.cycle_slip.gap_instrument.  The defect it closes is a KEY "
+                      "MISMATCH between the tracker's band signal and the carried ambiguity "
+                      "the gap re-entry response looks up, and with no Card-G consumer armed "
+                      "there is no such lookup: the changed choice reaches only the "
+                      "trace_slip_raw rows and the MW/GF detections.  Arm "
+                      "network.cycle_slip.gap_reentry_relevel for the response half.");
+        }
+        if (network_config_.slip_qc.tracker_modeled_first)
+            log->info("Network (slip-QC card GRK): tracker MODELED-FIRST ON.  The arc-level "
+                      "tracker takes, on each band, the phase signal this station LATCHED for "
+                      "that band, and falls back to the lexically lowest raw phase with a "
+                      "matching code only where the latch names none or the latched phase is "
+                      "not reported this epoch.  The tracker's key, the carried "
+                      "ambiguity key and the gap re-entry response's lookup then agree by "
+                      "construction; unarmed, a station reporting L1C and L1W tracks band 1 "
+                      "as L1C while its carry is keyed on the canonical latch (L1W under "
+                      "processing.canonical_signal_rule = priority), the response counts "
+                      "gap_reentry_no_carry and the stale level folds across the break.  "
+                      "SOLVE-AFFECTING through the detections and the response; the "
+                      "gap_tracker_key_mismatch and gap_reentry_unreachable counters are "
+                      "reported at run end in BOTH knob states.");
         // SIM-ONLY ORACLE slip response interlocks (include/slip/NetworkSlipOracle.hpp),
         // HERE for the same load-order reason as the two blocks above: carry_invariant
         // and phase_leveling both parse well after the cycle_slip block.
@@ -5777,6 +5808,12 @@ namespace GnssProcessor {
             sq.gap_reentry_per_signal_unmeasurable =
                 jval<bool>(json, "network.cycle_slip.gap_reentry_per_signal_unmeasurable",
                            "network_cycle_slip_gap_reentry_per_signal_unmeasurable", true);
+            // Card GRK: the arc-level tracker's per-band signal, chosen from the
+            // MODEL rather than lexically, so the tracker, the carried ambiguity
+            // key and the gap re-entry response name the same signal.
+            sq.tracker_modeled_first =
+                jval<bool>(json, "network.cycle_slip.tracker_modeled_first",
+                           "network_cycle_slip_tracker_modeled_first", false);
             // SIM-ONLY ORACLE slip response (include/slip/NetworkSlipOracle.hpp):
             // shift the carried level by the TRUE integer jump instead of freeing
             // the arc, to measure the CEILING of a level-preserving re-level.

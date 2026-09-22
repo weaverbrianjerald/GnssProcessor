@@ -38,6 +38,7 @@
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -46,6 +47,20 @@
 #include <vector>
 
 namespace GnssProcessor {
+
+/**
+ * @brief Card GRK: "which PHASE signal did station @p station LATCH on this
+ *        (system, band digit)?", as @c PppModel::latchedCanonicalPhaseOnBandDigit
+ *        answers it.
+ *
+ * A callable rather than a copied table because the latch lives on each station's
+ * own @c PppModel and is locked for the run; the call site binds one lambda over
+ * the station vector and the compute pass stays free of a model dependency.
+ * Returns EMPTY when the latch does not know the cell, which the tracker reads as
+ * "change nothing" and the mismatch counter reads as "no cell here".
+ */
+using TrackerLatchLookup =
+    std::function<std::string(int station, const std::string& system, char band_digit)>;
 
 /**
  * @brief Card GRS: ONE phase signal of a (station, satellite) at one epoch.
@@ -417,6 +432,17 @@ struct SlipQcParams {
     /// whose carry survives to be folded.
     bool   gap_reentry_per_signal_unmeasurable{true};
 
+    // --- Card GRK (network.cycle_slip.tracker_modeled_first) ----------------
+    /// Choose the arc-level tracker's signal on each band from the MODEL (the
+    /// phase present in @c PppObservation::observed, i.e. the canonical latch's
+    /// pick) instead of lexically from @c raw_observed, falling back to the
+    /// lexical rule only on a band the model does not carry.  Default OFF ⇒ the
+    /// pair, the trace rows and every detection are byte-identical.  Armed, the
+    /// tracker's key matches the carried ambiguity key, so the gap re-entry
+    /// response reaches the arc instead of counting @c gap_reentry_no_carry.
+    /// The Card GRS per-signal tier is untouched (it keys on the signal).
+    bool   tracker_modeled_first{false};
+
     // --- Bridge v3 E4 (network.cycle_slip.relevel_bridge_gf) ---
     /// The GF-row capture consumes the qualified verdicts (d_gf + the empirical
     /// gf_step_scale), so it arms BOTH the compute and the qualify pass.
@@ -619,6 +645,41 @@ struct SlipQcCounters {
     /// Deliberately OUTSIDE the closure: nothing was going to be bridged, so
     /// there is no response to make and none to report as missing.
     long long gap_reentry_no_carry{0};
+    /// Card GRK, the KEY-MISMATCH half of @ref gap_reentry_no_carry.  ROW-LEVEL
+    /// re-entry ARCS (the unit of @c networkSlipDrainGapReentry) that found no
+    /// carry under the TRACKER's band signal while a @c LocalCarry entry for the
+    /// same (station, satellite) existed on ANOTHER signal of the SAME band,
+    /// still inside @c phase_leveling_max_gap_s, AND that other signal is
+    /// PRESENT at this epoch as a phase with its matching code.  Counted in BOTH
+    /// states of @c network.cycle_slip.tracker_modeled_first (standing invariant
+    /// #4: the knob's target population has to be visible before and after).
+    ///
+    /// Two qualifications, each paid for by a measured over-count:
+    ///  - the carried signal must be TRACKED this epoch.  Without that the count
+    ///    takes arcs whose carried signal is simply absent from the record
+    ///    (BSHM00ISR / G14, TOW 270390: the station reports C1C, C1L, L1L, C2L,
+    ///    L2L, C5Q, L5Q and no L1C / L2W / C2W, so the tracker's fallback to
+    ///    L1L / L2L is correct and the carried arcs have no row at all);
+    ///  - only the ROW-LEVEL tier feeds it.  In the Card GRS per-signal tier the
+    ///    returning SIGNAL is the key, so a key mismatch cannot occur there;
+    ///    without the exclusion a per-signal return on a signal the station does
+    ///    not model is scored against the modelled same-band carry that tracked
+    ///    THROUGH the break (40 such returns on the 6 h field arm, 23 clean and
+    ///    17 shifted, e.g. MAJU00MHL / G08 / L2L at TOW 260250).
+    ///
+    /// The presence test reads the raw row's per-signal list, which exists only
+    /// under @c gap_reentry_per_signal; with no list the responder is handed no
+    /// signal set and the counter keeps the broader definition (carry on the
+    /// same band, inside the window), which is the honest fallback rather than a
+    /// silent zero.
+    long long gap_reentry_unreachable{0};
+    /// Card GRK, the DECOUPLING half: (station, satellite, epoch, band) cells at
+    /// which the arc-level tracker's chosen signal differs from the phase this
+    /// station LATCHED on that band, counted only where the latch names a signal
+    /// that is also tracked with its matching code this epoch.  Knob-independent
+    /// telemetry of the mismatch itself, so an OFF run states the size of the
+    /// population and an armed run reads 0 by construction.
+    long long gap_tracker_key_mismatch{0};
     /// ARCS reached whose ambiguity STATE did not exist at drain time — freed
     /// via the synthesised @c StateKeys::makeAmbiguityKey the PASS-B inject
     /// site will use once the pre-pass re-creates the column.  This is the
@@ -805,13 +866,35 @@ struct SlipQcChannel {
  *                     signal that has a matching code.  Default false ⇒ the row
  *                     is byte-identical to the pre-card one and nothing extra is
  *                     allocated.
+ * @param tracker_modeled_first
+ *                     Card GRK (@c network.cycle_slip.tracker_modeled_first):
+ *                     take each band's signal from the station's LATCH (@p latch)
+ *                     when that signal also has a raw phase and a matching raw
+ *                     code THIS epoch, and only otherwise apply the lexical rule
+ *                     on that band.  The two bands of the pair are the two lowest
+ *                     DISTINCT bands either way.  Default false ⇒ the lexical
+ *                     rule alone, byte-identical.
+ * @param cnt          Optional run-end counters.  When non-null,
+ *                     @ref SlipQcCounters::gap_tracker_key_mismatch is
+ *                     accumulated in BOTH states of @p tracker_modeled_first,
+ *                     one per (station, satellite, epoch, band) cell whose
+ *                     tracker signal differs from the latched one.  Default
+ *                     null so every pre-card caller compiles unchanged.
+ * @param latch        Card GRK: the per-station canonical PHASE latch.  Null (the
+ *                     default) leaves the tracker on the lexical rule and the
+ *                     mismatch counter at 0 even with the knob armed, so an OFF
+ *                     run whose counter reads 0 on a mixed-signal network is a
+ *                     lookup that was never bound (standing invariant #4).
  */
 void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>& modeled,
                                   const std::vector<bool>& present,
                                   int n_sta_total,
                                   PppUtils& utils,
                                   RawSlipEpoch& out,
-                                  bool per_signal = false);
+                                  bool per_signal = false,
+                                  bool tracker_modeled_first = false,
+                                  SlipQcCounters* cnt = nullptr,
+                                  const TrackerLatchLookup* latch = nullptr);
 
 /**
  * @brief Adjudicate this epoch's raw steps, update the per-station empirical

@@ -3462,6 +3462,40 @@ int networkTeardown(
                   qcc.d5_retaps, qcc.d5_retaps_stepped,
                   qcc.d5_retap_ambs, qcc.d5_retap_ambs_stepped,
                   response_clause);
+        // ---- Card GRK: the tracker key against the carried key --------------
+        // Reported in BOTH states of network.cycle_slip.tracker_modeled_first.
+        // Unarmed, gap_reentry_unreachable is the share of gap_reentry_no_carry
+        // that had a carry the response could not reach, so a nonzero count is
+        // a wired response with a hole in it rather than a quiet run, and the
+        // line is a WARNING naming the knob that closes it.  Armed, both
+        // counters are 0 by construction and the line says so, which is what
+        // makes the knob's effect readable from the run end alone.
+        {
+            const std::string grk_line = fmt::format(
+                "Network (slip-QC card GRK / tracker key): {} cell(s) [unit: (station, "
+                "satellite, epoch, band)] where the arc-level tracker's band signal "
+                "DIFFERS from the phase this station LATCHED on that band, and {} "
+                "ROW-LEVEL re-entry arc(s) [unit: (station, satellite, signal) of a "
+                "whole-satellite return] of the {} counted gap_reentry_no_carry that were "
+                "UNREACHABLE (a leveling carry for the same station and satellite existed "
+                "on another signal of the SAME band, still inside "
+                "phase_leveling_max_gap_s, AND that signal is TRACKED this epoch with its "
+                "matching code, so the PASS-B inject folds it across the break while the "
+                "response looks it up under the tracker's signal and finds nothing).  Two "
+                "populations are deliberately OUTSIDE it: a carried signal simply absent "
+                "from the record this epoch has no row here at all, and the per-signal "
+                "tier keys on the returning SIGNAL, where a key mismatch cannot occur.  "
+                "network.cycle_slip.tracker_modeled_first is {}.",
+                qcc.gap_tracker_key_mismatch, qcc.gap_reentry_unreachable,
+                qcc.gap_reentry_no_carry,
+                nc.slip_qc.tracker_modeled_first ? "ON" : "OFF");
+            if (!nc.slip_qc.tracker_modeled_first && qcc.gap_reentry_unreachable > 0)
+                log->warn("{}  ARM network.cycle_slip.tracker_modeled_first to close it: "
+                          "the tracker then names each band by the LATCHED signal, which is "
+                          "the key the carry uses.", grk_line);
+            else
+                log->info("{}", grk_line);
+        }
         // ---- Card GRS: the PER-SIGNAL tier ------------------------------
         // Reported only when the rider is armed, so an unarmed run's Card-G
         // line is unchanged.  Its populations are DISJOINT from the row-level

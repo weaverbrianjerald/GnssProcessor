@@ -649,6 +649,44 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief The PHASE signal this station LATCHED on one RINEX band digit.
+         *
+         * The exact analogue of @ref latchedCanonicalCodeOnBandDigit over the 'L'
+         * entries of @c constellation_canonical_, and read the same way: filled on
+         * the constellation's first observed epoch, locked for the run, refilled by
+         * @ref restoreCanonicalSignals at a warm resume.  Card GRK needs it OUTSIDE
+         * this class: the arc-level slip tracker picks one phase per band from the
+         * raw record, the carried ambiguity is keyed on the latch, and the gap
+         * re-entry response cannot reach an arc when the two disagree.
+         *
+         * The LATCH rather than the epoch's admitted row set is the right source for
+         * that comparison, because the admitted set is per epoch: a returning arc's
+         * phase can be withheld from it for the first epochs by the admission or
+         * readmit machinery, which is exactly the re-entry epoch the tracker has to
+         * name correctly.  The latch does not move.
+         *
+         * Keyed on the signal's own BAND DIGIT rather than on the band NAME the map
+         * uses, for the reason given on the code accessor.
+         *
+         * An EMPTY return means the latch does not know this cell yet, which every
+         * caller must read as "change nothing" - not as "no signal is canonical".
+         *
+         * @param system     System name string, e.g. "GPS".
+         * @param band_digit RINEX band digit, e.g. '1'.
+         * @return The latched RINEX phase signal, or empty when undecided.
+         */
+        std::string latchedCanonicalPhaseOnBandDigit(const std::string& system,
+                                                     char band_digit) const {
+            const auto cit = constellation_canonical_.find(system);
+            if (cit == constellation_canonical_.end()) return {};
+            for (const auto& [key, sig] : cit->second) {
+                if (key.second != 'L') continue;
+                if (sig.size() >= 2 && sig[1] == band_digit) return sig;
+            }
+            return {};
+        }
+
+        /**
          * @brief Set the label this model prints in the canonical-signal rider (RS-8).
          *
          * The network producer sets it to the station name at construction; the
