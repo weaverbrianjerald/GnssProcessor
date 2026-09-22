@@ -1698,6 +1698,24 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? fmt::format("\"amb_float_drop_floor_after_ep\":{},",
                                      nc.amb_float_drop_floor_after_ep)
                        : std::string())
+               // Card SID phase 6a: the second phase channel is solve-affecting
+               // provenance, so the manifest records the knob, its allow-list and its
+               // sigma scale when armed.  Emitted ONLY when armed, so an unarmed run's
+               // manifest bytes are unchanged.
+               << (nc.second_phase_channel
+                       ? fmt::format("\"second_phase_channel\":true,"
+                                     "\"second_phase_signals\":\"{}\","
+                                     "\"second_phase_sigma_scale\":{},",
+                                     [&] {
+                                         std::string s;
+                                         for (const auto& x : nc.second_phase_signals) {
+                                             if (!s.empty()) s += '+';
+                                             s += x;
+                                         }
+                                         return s;
+                                     }(),
+                                     nc.second_phase_sigma_scale)
+                       : std::string())
                // RF-3b: the four sub-rules of the gross-LOS screen, same rule.
                << ((nc.gross_los_min_rows_rule != NetworkGrossLosMinRowsRule::Fixed
                     || nc.gross_los_bound || nc.gross_los_emit_exclude

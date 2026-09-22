@@ -32,6 +32,7 @@
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkExtraBandScope.hpp"  // card L5P: the extra-band / primary-pair predicates
 #include "filter/NetworkSecondCodeScope.hpp" // card SCC: secondCodeCellEdges (the two cell edges)
+#include "filter/NetworkSecondPhaseScope.hpp" // card SID phase 6a: the cell edges + the witness
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
 #include "filter/NetworkCarryVce.hpp"        // M2: LS-VCE carry-row variance-component monitor
 #include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
@@ -398,6 +399,41 @@ void Application::networkSplitStation_(NetStation& st, const NetworkEstimator& e
             st.scc_rows          += n_comp;
             st.scc_fallback_rows += n_fall;
         }
+    }
+    // --- card SID phase 6a: the SECOND PHASE's rows (R5 + R7) -----------------
+    // (docs/refound/SID_signal_identity_2026-09-22.md section 4.)  The PHASE twin of
+    // the block above, and the one structural difference between the two cards shows
+    // here: card SCC could recognize its rows by the receiver state they route
+    // through, while a second PHASE row is modelled exactly like the latched one (its
+    // float ambiguity absorbs the receiver inter-signal constant, which is why no
+    // such state exists).  So the test reads the republished CELL SET — the same
+    // (satellite, signal) keys the serial PASS-A sweep took from
+    // `PppObservation::second_phases`, which is the selection's own output and cannot
+    // disagree with which rows were added.
+    //
+    // R5 scales those rows' phase sigma.  R7 counts them.  The count runs whether or
+    // not the scale is applied: a scale of 1 is the card's default posture, not an
+    // unarmed one.
+    //
+    // OFF => the cell set is never populated => the whole block is skipped =>
+    // byte-identical, and with the knob armed at scale 1 the weights are untouched
+    // (no division is performed at all).
+    if (!st.spc_cells.empty()) {
+        const double sp_scale = config_.networkSecondPhaseSigmaScale();
+        const Eigen::Index mr = std::min<Eigen::Index>(
+            m, static_cast<Eigen::Index>(em.signal_types.size()));
+        long long n_sp = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            if (sig.empty() || sig[0] != 'L') continue;           // CODE UNTOUCHED
+            if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
+            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+            if (sat.empty()) continue;
+            if (!st.spc_cells.count(StateKeys::makeSatPhaseBiasKey(sat, sig))) continue;
+            ++n_sp;
+            if (sp_scale > 1.0) w(r) /= sp_scale * sp_scale;       // σ × scale
+        }
+        st.spc_rows += n_sp;
     }
     y = em.innovations;
 }
@@ -1769,6 +1805,134 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
         for (const auto& [key, sup] : col_support) {
             (void)key;
             if (sup.first >= 2 && sup.second < 2) ++C.cols_via_companion;
+        }
+    }
+
+    // --- card SID phase 6a: the second phase channel's per-epoch bookkeeping ---
+    // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R7 + R8.)  Same
+    // placement and the same reasons as the block above: SERIAL, in station order,
+    // after present[] is final (an absent station's cells CLOSE, which is the
+    // decoupling edge) and before anything reads `modeled` again, which it only
+    // reads.
+    //
+    // Four jobs.  (1) Republish each station's SECOND-PHASE cell set for PASS B: the
+    // row-weight seam has the signal and the satellite of every row and no other way
+    // to tell a second phase from the latched one, because this card builds no
+    // receiver state to key on.  (2) Count the cells, both cell edges, the arcs born,
+    // the live peak, the contributing stations, and the (satellite, signal) columns
+    // that reached the two-station registration bar ONLY through second phases — the
+    // card's thesis as a number.  (3) Count the FALLBACK occurrences: an allow-listed
+    // band-1 phase reported for a satellite whose band has no latched phase this
+    // epoch, which R1 deliberately does not add.  (4) Advance the between-channel
+    // WITNESS (R8), observatory only.
+    //
+    // OFF => the whole block is skipped, every set stays empty and nothing is
+    // emitted, so the epoch is byte-identical.
+    if (config_.networkSecondPhaseChannel()) {
+        auto& C = ctx.counters.second_phase;
+        const auto& allow = config_.networkSecondPhaseSignals();
+        const long long now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
+        // Per-(satellite, signal): how many present stations support the column at
+        // all, and how many of those support it as their LATCHED phase.  The
+        // registration bar is two stations, so a column with >= 2 supporters of which
+        // < 2 are latched is one this card put on the wire.
+        std::map<std::string, std::pair<int, int>> col_support;
+        long long live = 0, contributing = 0;
+        for (int i = 0; i < n_sta_total; ++i) {
+            NetStation& st = stations[i];
+            std::set<std::string> cells;
+            if (present[i] && i < static_cast<int>(modeled.size())) {
+                for (const auto& ob : modeled[static_cast<std::size_t>(i)]) {
+                    for (const auto& [sig, val] : ob.observed) {
+                        (void)val;
+                        if (sig.empty() || sig[0] != 'L') continue;
+                        const std::string key =
+                            StateKeys::makeSatPhaseBiasKey(ob.satellite, sig);
+                        auto& sup = col_support[key];
+                        ++sup.first;
+                        if (ob.second_phases.count(sig)) cells.insert(key);
+                        else                             ++sup.second;
+                    }
+                    // (3) THE FALLBACK OCCURRENCES.  The selection adds nothing when
+                    // the band's latched phase is absent this epoch, so the only place
+                    // the case is visible is here, against the station's own latch.
+                    // `raw_observed` is the untouched raw key set, which is what the
+                    // selection screened.
+                    const std::string cons = PppUtils::getSystemString(ob.satellite);
+                    const std::string latched =
+                        st.model ? st.model->latchedCanonicalPhaseOnBandDigit(cons, '1')
+                                 : std::string{};
+                    if (!latched.empty() && !ob.raw_observed.count(latched))
+                        for (const std::string& sig : allow)
+                            if (sig != latched && ob.raw_observed.count(sig))
+                                ++C.fallback_rows;
+                    // (4) THE WITNESS (R8), observatory only: at a station carrying
+                    // both band-1 phases of a satellite, the epoch-to-epoch change of
+                    // (latched minus second) in CYCLES.  `raw_observed` holds the raw
+                    // RINEX values, so a phase is already in cycles and the two share a
+                    // frequency; a slip on ONE channel is an integer here and a common
+                    // slip cancels.  Measured on the raw pair, so it does not depend on
+                    // the row having been admitted.
+                    if (latched.empty()) continue;
+                    const auto lit = ob.raw_observed.find(latched);
+                    if (lit == ob.raw_observed.end()) continue;
+                    for (const std::string& sig : allow) {
+                        if (sig == latched) continue;
+                        const auto sit = ob.raw_observed.find(sig);
+                        if (sit == ob.raw_observed.end()) continue;
+                        const double d = secondPhaseWitness(lit->second, sit->second);
+                        if (!std::isfinite(d)) continue;
+                        const std::string wkey = ob.satellite + "|" + sig;
+                        auto wit = st.spc_witness.find(wkey);
+                        if (wit != st.spc_witness.end()
+                            && wit->second.second == now_ep - 1) {
+                            const double jump = std::abs(d - wit->second.first);
+                            ++C.witness_pairs;
+                            if (jump > 0.5) ++C.witness_jumps;
+                            if (jump > C.witness_max) {
+                                C.witness_max    = jump;
+                                C.witness_max_id = fmt::format("{}|{}|{}@{:.0f}",
+                                                               st.name, ob.satellite,
+                                                               sig, se.time.tow);
+                            }
+                        }
+                        st.spc_witness[wkey] = { d, now_ep };
+                    }
+                }
+            }
+            // The two edges (standing invariant #7).  A cell OPENS when a station
+            // starts contributing a second phase for a satellite and signal, and
+            // CLOSES when it stops — including when the whole station drops out.
+            std::vector<std::string> opened, closed;
+            secondPhaseCellEdges(st.spc_cells_prev, cells, &opened, &closed);
+            for (const auto& cell : opened) {
+                const auto parts = StateKeys::parseSatPhaseBiasKey(cell);
+                if (st.spc_cells_seen.insert(cell).second) ++C.arcs_born;
+                traces.emitEvent(se.time, "SPC", "second_phase_open",
+                                 parts ? parts->satellite : std::string{}, st.name,
+                                 std::nullopt, std::nullopt, "open",
+                                 parts ? parts->signal : cell);
+            }
+            for (const auto& cell : closed) {
+                const auto parts = StateKeys::parseSatPhaseBiasKey(cell);
+                traces.emitEvent(se.time, "SPC", "second_phase_close",
+                                 parts ? parts->satellite : std::string{}, st.name,
+                                 std::nullopt, std::nullopt, "close",
+                                 parts ? parts->signal : cell);
+            }
+            C.cell_open  += static_cast<long long>(opened.size());
+            C.cell_close += static_cast<long long>(closed.size());
+            C.cells      += static_cast<long long>(cells.size());
+            live         += static_cast<long long>(cells.size());
+            if (!cells.empty()) ++contributing;
+            st.spc_cells_prev = cells;
+            st.spc_cells      = std::move(cells);
+        }
+        C.arcs_live_max = std::max(C.arcs_live_max, live);
+        C.stations_max  = std::max(C.stations_max, contributing);
+        for (const auto& [key, sup] : col_support) {
+            (void)key;
+            if (sup.first >= 2 && sup.second < 2) ++C.cols_via_second;
         }
     }
 

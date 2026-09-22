@@ -121,6 +121,7 @@
 #include "filter/NetworkInject.hpp"
 #include "filter/NetworkCanonicalPairAdmission.hpp" // card CPA: canonical-pair admission seam
 #include "app/SignalRoster.hpp"  // card SID phase 1: the roster / arc-ledger observatory
+#include "filter/NetworkSecondPhaseScope.hpp"  // card SID phase 6a: the epoch tail
 #include "filter/NetworkLedgerEmit.hpp"  // card SID phase 5a: the emitter read + the declared roster
 #include "filter/NetworkInstallCarry.hpp" // INC-9b: installPosterior + WL zone-4 fold/inject
 #include "filter/NetworkDdPriorBuild.hpp" // INC-9b: buildEnsembleGauges/buildCarryDdPriors free fns
@@ -2827,6 +2828,14 @@ int Application::runNetwork() {
         // before it runs.  Reads only; every class is a counter plus an ARC event.
         // DISARMED, or with no capture from this epoch: returns on its first line.
         networkLedgerEmitFold(ctx, traces, se);
+        // Card SID phase 6a (R3 + R4): the second phase channel's EPOCH TAIL.  Here
+        // for the same reason the pass above is here — this is the first point at
+        // which both of its inputs are final: `relevel.free_cause` carries every
+        // tier's freeing verdict for this epoch (the post-solve RAIM ones included,
+        // written at SB_RAIM) and it is not cleared until the next epoch's slip scan,
+        // and the phase-datum anchors have been elected.  Reads only; every class is
+        // a counter.  DISARMED: returns on its first line.
+        networkSecondPhaseEpochTail(ctx, config_, stations);
         subEnd(SB_ROSTER);
         // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  BEFORE the
         // stash/status block, because the epoch-status row written there reads the

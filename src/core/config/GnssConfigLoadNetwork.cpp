@@ -54,6 +54,7 @@
 #include "filter/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
 #include "filter/NetworkOraclePinScope.hpp" // oraclePinParseScope (ONE grammar for the oracle_pin scope)
 #include "filter/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
+#include "filter/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -3246,6 +3247,59 @@ namespace GnssProcessor {
                        "inter-signal state.",
                        network_config_.second_code_sigma_scale);
             network_config_.second_code_sigma_scale = 1.0;
+        }
+        // Card SID phase 6a: the SECOND PHASE CHANNEL, the phase twin of the block
+        // above.  A station contributes every allow-listed band-1 carrier phase it
+        // reports besides the one its canonical latch selected, so the L1C and L1W
+        // satellite phase-bias families stop competing for the same stations.  The
+        // three interlocks are checked in the post-parse block below, where the
+        // vehicle, the held basis and the channel mode are all populated.
+        network_config_.second_phase_channel =
+            jval<bool>(json, "network.second_phase_channel", "second_phase_channel", false);
+        {
+            const auto& nwj = jsection(json, "network");
+            if (nwj.contains("second_phase_signals")) {
+                const auto& arr = nwj["second_phase_signals"];
+                if (!arr.is_array()) {
+                    log->error("Network (card SID phase 6a): network.second_phase_signals "
+                               "must be an array of RINEX phase types (e.g. [\"L1C\", "
+                               "\"L1W\"]) — keeping the default list.");
+                } else {
+                    // The list is EXPLICIT: a refused entry is dropped and named, never
+                    // silently coerced, and an all-refused list leaves the allow-list
+                    // empty so the knob disarms rather than acting on a guess.
+                    std::vector<std::string> sigs;
+                    for (const auto& s : arr) {
+                        if (!s.is_string()) {
+                            log->error("Network (card SID phase 6a): "
+                                       "network.second_phase_signals holds a non-string "
+                                       "entry — ignored.");
+                            continue;
+                        }
+                        const std::string sig = s.get<std::string>();
+                        std::string why;
+                        if (!secondPhaseAllowEntryValid(sig, &why)) {
+                            log->error("Network (card SID phase 6a): "
+                                       "network.second_phase_signals entry '{}' is refused "
+                                       "({}) — ignored.", sig, why);
+                            continue;
+                        }
+                        if (std::find(sigs.begin(), sigs.end(), sig) != sigs.end()) continue;
+                        sigs.push_back(sig);
+                    }
+                    network_config_.second_phase_signals = std::move(sigs);
+                }
+            }
+        }
+        network_config_.second_phase_sigma_scale =
+            jval<double>(json, "network.second_phase_sigma_scale",
+                         "second_phase_sigma_scale", 1.0);
+        if (!(network_config_.second_phase_sigma_scale >= 1.0)) {
+            log->error("Network (card SID phase 6a): network.second_phase_sigma_scale = {} "
+                       "is not at or above 1 (or is not a number) — falling back to 1.0 (no "
+                       "scaling).  The knob only ever DEWEIGHTS the second-phase rows.",
+                       network_config_.second_phase_sigma_scale);
+            network_config_.second_phase_sigma_scale = 1.0;
         }
 
         if (network_config_.extra_band_code_sigma_scale > 1.0)
@@ -11388,6 +11442,82 @@ namespace GnssProcessor {
                           network_config_.second_code_sigma_scale);
             }
         }
+        // Card SID phase 6a (R6): the second phase channel's three INTERLOCKS.  Checked
+        // beside card SCC's, after the vehicle and the datum knobs are final.  A refused
+        // interlock disarms the knob rather than failing the load: the posture is then
+        // exactly the unarmed one, which is a valid run.
+        if (network_config_.second_phase_channel) {
+            if (channel_mode_ == ChannelMode::All) {
+                log->error("Network (card SID phase 6a): network.second_phase_channel is "
+                           "REFUSED with processing.channel_mode = 'all' — that mode "
+                           "already widens every selected band to every tracking "
+                           "attribute on the PHASE side, so the two mechanisms would "
+                           "fight over the same rows.  DISARMED; set channel_mode to "
+                           "'single' to use this card.");
+                network_config_.second_phase_channel = false;
+            } else if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf
+                       || !network_phase_datum_held_basis_) {
+                log->error("Network (card SID phase 6a): network.second_phase_channel "
+                           "requires network.ambiguity_vehicle = 'float_kf' with "
+                           "network.phase_datum_held_basis — on the LEVELING vehicle a "
+                           "second phase per band would create a zero-q level for every "
+                           "extra arc, and no arm exists there (standing invariant #1: a "
+                           "stiff time-linked quantity needs a wired event response "
+                           "before it runs).  DISARMED.");
+                network_config_.second_phase_channel = false;
+            } else if (network_config_.second_phase_signals.size() < 2) {
+                log->error("Network (card SID phase 6a): network.second_phase_channel is "
+                           "armed but network.second_phase_signals holds {} admitted "
+                           "entr(y/ies) — a second phase needs at least two band-1 phases "
+                           "in the list to ever be one.  DISARMED.",
+                           network_config_.second_phase_signals.size());
+                network_config_.second_phase_channel = false;
+            } else {
+                if (!network_config_.slip_qc.gap_reentry_per_signal) {
+                    network_config_.second_phase_warn_no_per_signal = true;
+                    log->warn("Network (card SID phase 6a): network.second_phase_channel is "
+                              "armed WITHOUT network.cycle_slip.gap_reentry_per_signal.  The "
+                              "row-level gap re-entry tier keys on the tracker's ONE signal "
+                              "per band, so a second-phase arc's re-entry is answered by the "
+                              "per-signal tier and by nothing else at the row level; without "
+                              "it the only response left is the post-fit T4 attribution "
+                              "(standing invariant #1).  Armed anyway, counted, and reported "
+                              "at run end.");
+                }
+                if (network_cycle_slip_if_phase_td_
+                    && network_config_.cycle_slip_if_phase_td_pairs
+                           != NetworkIfPhaseTdPairs::All) {
+                    network_config_.second_phase_warn_iftd_pairs = true;
+                    log->warn("Network (card SID phase 6a): network.second_phase_channel is "
+                              "armed with network.cycle_slip.if_phase_td on but "
+                              "if_phase_td_pairs is NOT 'all'.  That detector forms ONE "
+                              "ionosphere-free pair out of the first two phase signals, "
+                              "and with two band-1 phases present those two share a "
+                              "frequency: the pair is degenerate, so the detector produces "
+                              "NO rows at all for such a satellite.  Set if_phase_td_pairs "
+                              "to 'all' (the working bases do) or the IF-TD tier is silent "
+                              "on this posture (standing invariant #4).");
+                }
+                log->info("Network (card SID phase 6a): SECOND PHASE CHANNEL armed — a "
+                          "station contributes every allow-listed band-1 phase it reports "
+                          "[{}] besides the one its canonical latch selected, each as an "
+                          "ordinary float ambiguity joining the EXISTING satellite "
+                          "phase-bias family of that signal.  No receiver inter-signal "
+                          "phase state (a float ambiguity absorbs a constant per arc, so "
+                          "one would sit in the null space) and no new datum row; the "
+                          "anchor election simply gains candidates.  Phase sigma x {:.3f} "
+                          "on the added rows.",
+                          [&] {
+                              std::string s;
+                              for (const auto& sig : network_config_.second_phase_signals) {
+                                  if (!s.empty()) s += ", ";
+                                  s += sig;
+                              }
+                              return s;
+                          }(),
+                          network_config_.second_phase_sigma_scale);
+            }
+        }
         // Card S2H (docs/SPEC_level_information_budget.md §17 item 3 / §27 item 1):
         // the S-consistent harvest.  Validated BEFORE the LV-2/LV-5 guards because it
         // SUPERSEDES them: both mechanisms act on the same channel (the carried
@@ -12556,6 +12686,15 @@ namespace GnssProcessor {
         // Pin it OFF (and its scale at 1) so an arm of this knob moves the WIRE alone.
         c.network_config_.second_code_channel     = false;
         c.network_config_.second_code_sigma_scale = 1.0;
+        // Card SID phase 6a (R6): the second PHASE channel is a PRODUCER-side mechanism
+        // for the same reason — it exists so the satellite L1C and L1W phase-bias
+        // families share the network's stations.  A consumer is one station with no
+        // family to support; arming it there would only add a second float ambiguity to
+        // the held-out solution, which is a separate variable and not the one under
+        // test.  Pin it OFF (and its scale at 1) so an arm of this knob moves the WIRE
+        // alone.
+        c.network_config_.second_phase_channel     = false;
+        c.network_config_.second_phase_sigma_scale = 1.0;
         // Closed-loop-specific overlay: enable ambiguity resolution for the
         // consumer (the producer itself is float) — the closed loop validates
         // integer RECOVERY on the held-out station from the producer's products.

@@ -266,9 +266,25 @@ namespace GnssProcessor {
                 // its log lines are unchanged) and each additional pair gets a
                 // chain of its own, "<system>|<sig1>_<sig2>" — its own reference,
                 // its own gradient history, its own reset key.
+                //
+                // Card SID phase 6a: with `network.second_phase_channel` two of these
+                // signals can share a FREQUENCY (L1C beside L1W), and index pair (0, 1)
+                // is then the degenerate one — it fails the `denom` guard below and
+                // files nothing.  Tagging the bare-system chain by INDEX would therefore
+                // starve it: every real pair would land on a "<system>|<sig1>_<sig2>"
+                // chain and the chain that owns the original reference election, the
+                // gradient history and the reset keys would receive no rows at all.  The
+                // tag is therefore "the first pair with distinct frequencies", tracked
+                // by the flag below.  On every posture without this card no two phases
+                // share a frequency, so the first pair to pass the guard IS (0, 1) and
+                // the behaviour is byte-identical — including the case where (0, 1)
+                // passes the frequency guard and then fails a later check, because the
+                // flag is set at the frequency guard, exactly where the old index test
+                // would have committed.
                 const std::string sys_key = PppUtils::getSystemString(obs.system);
                 const std::size_t n_use =
                     all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
+                bool if_pair_taken = false;
                 for (std::size_t a = 0; a < n_use; ++a) {
                 for (std::size_t b = a + 1; b < n_use; ++b) {
                 const auto& [sig1, obs1, mod1] = phase_signals[a];
@@ -282,6 +298,10 @@ namespace GnssProcessor {
                 const double f2sq = f2 * f2;
                 const double denom = f1sq - f2sq;
                 if (std::abs(denom) < 1e-12) continue;
+                // Card SID phase 6a: claim the bare-system chain here, at the frequency
+                // guard, and not at the row push (see the comment above the loop).
+                const bool is_first_pair = !if_pair_taken;
+                if_pair_taken = true;
 
                 const double c1 = f1sq / denom;
                 const double c2 = -f2sq / denom;
@@ -295,7 +315,6 @@ namespace GnssProcessor {
                 if (lambda_if <= 0.0) continue;
 
                 const std::string synth_key = sig1 + "_" + sig2;
-                const bool is_first_pair = (a == 0 && b == 1);
 
                 result[is_first_pair ? sys_key : (sys_key + "|" + synth_key)].push_back(
                     { obs.satellite, synth_key, sig1, sig2,

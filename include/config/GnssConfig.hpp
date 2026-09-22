@@ -4044,6 +4044,52 @@ namespace GnssProcessor {
             return network_config_.second_code_sigma_scale;
         }
 
+        /**
+         * @brief Card SID phase 6a — is the SECOND PHASE CHANNEL armed?
+         *
+         * `network.second_phase_channel`.  When true a network station contributes,
+         * as ordinary float-ambiguity phase rows, every allow-listed band-1 carrier
+         * phase it reports besides the one its canonical latch selected, so the
+         * satellite L1C and L1W phase-bias families stop competing for the same
+         * stations.  Default OFF and byte-identical; the loader refuses it with
+         * `processing.channel_mode: all`, off the float vehicle, and with fewer than
+         * two admitted entries in the allow-list.
+         *
+         * @return True when the second phase channel is armed.
+         */
+        bool networkSecondPhaseChannel() const {
+            return network_config_.second_phase_channel;
+        }
+
+        /**
+         * @brief Card SID phase 6a — the band-1 phase signals a station may add.
+         *
+         * `network.second_phase_signals`, validated at load: every entry is a
+         * 3-character phase type on band 1.  Read by
+         * @c PppModel::selectUncombinedSignals (which phases to add) and by the
+         * roster's `modelled_extra` walk.  Meaningless unless
+         * @ref networkSecondPhaseChannel.
+         *
+         * @return The allow-list, in configured order.
+         */
+        const std::vector<std::string>& networkSecondPhaseSignals() const {
+            return network_config_.second_phase_signals;
+        }
+
+        /**
+         * @brief Card SID phase 6a (R5) — sigma multiplier for second-phase rows.
+         *
+         * Applied in @c Application::networkSplitStation_ to every PHASE row whose
+         * (satellite, signal) cell this card opened at that station.  1.0 is the
+         * default and is never applied (byte-identical); the loader refuses a value
+         * below 1.  The closed-loop consumer is pinned to 1 with the knob itself.
+         *
+         * @return The multiplier; 1.0 (no scaling) by default.
+         */
+        double networkSecondPhaseSigmaScale() const {
+            return network_config_.second_phase_sigma_scale;
+        }
+
         /// @brief SPEC_slip_relevel_walk §6 — latch a detector-marked arc's free
         ///        epoch where the leveling-carry inject can still see it (the
         ///        pending-reseed mark is consumed by the PASS-B measurement

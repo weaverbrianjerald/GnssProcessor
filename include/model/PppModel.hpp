@@ -990,7 +990,8 @@ namespace GnssProcessor {
         bool selectSignals(const RinexObservation& obs, const std::string& system_str,
             std::vector<std::pair<std::string, std::string>>& selected_signals,
             bool& is_iono_free, std::string& comb_type,
-            std::set<std::string>* companion_out = nullptr);
+            std::set<std::string>* companion_out = nullptr,
+            std::set<std::string>* second_phase_out = nullptr);
 
         /**
          * @brief Map available RINEX measurements to frequency bands.
@@ -1023,12 +1024,20 @@ namespace GnssProcessor {
          *        consumer which rows are companions (the Melbourne-Wubbena guard, R4,
          *        and the cell telemetry, R7).  Left untouched when the knob is off, so
          *        an unarmed run never allocates.
+         * @param second_phase_out Optional; card SID phase 6a (R1).  When non-null and
+         *        `network.second_phase_channel` is armed on the network path, receives
+         *        the allow-listed band-1 PHASE signals this call added BESIDES the one
+         *        the latch selected.  Same contract as @p companion_out: the keys are
+         *        also in @p selected_signals, and the set is what makes a second-phase
+         *        row distinguishable downstream (the sigma scale, R5, and the cell
+         *        telemetry, R7).  Left untouched when the knob is off.
          */
         bool selectUncombinedSignals(const RinexObservation& obs, const std::string& system_str,
             const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
             const std::vector<std::string>& freq_bands,
             std::vector<std::pair<std::string, std::string>>& selected_signals,
-            std::set<std::string>* companion_out = nullptr) const;
+            std::set<std::string>* companion_out = nullptr,
+            std::set<std::string>* second_phase_out = nullptr) const;
 
         /**
          * @brief Select best iono-free code+phase pairs from available bands.

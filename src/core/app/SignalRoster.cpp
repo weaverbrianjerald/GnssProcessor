@@ -89,7 +89,9 @@ namespace GnssProcessor {
             const std::vector<RosterLatchRow>& latch,
             const std::vector<std::string>& companion_allow,
             bool companions_armed,
-            const std::set<std::string>* allowlist) {
+            const std::set<std::string>* allowlist,
+            const std::vector<std::string>& second_phase_allow,
+            bool second_phase_armed) {
         std::map<char, BandRoster> out;
 
         // 1. The TRACKED sets, per band digit, deduplicated and ascending.
@@ -144,6 +146,36 @@ namespace GnssProcessor {
             }
         }
 
+        // 3b. The SECOND PHASES (card SID phase 6a).  Exactly the shape of the
+        //     companion walk above and exactly the rule
+        //     NetworkSecondPhaseScope.cpp and PppModel implement: band 1 only, the
+        //     allow list in its configured order, the latched phase skipped, the
+        //     untracked skipped, duplicates skipped, and the latched phase required
+        //     PRESENT this epoch (otherwise it is the FALLBACK case, which adds
+        //     nothing).
+        if (second_phase_armed) {
+            auto bit = out.find('1');
+            if (bit != out.end()) {
+                BandRoster& b1 = bit->second;
+                const bool latched_present =
+                    !b1.modelled_phase.empty()
+                    && std::binary_search(b1.tracked_phase.begin(), b1.tracked_phase.end(),
+                                          b1.modelled_phase);
+                if (latched_present) {
+                    for (const std::string& sig : second_phase_allow) {
+                        if (sig.size() != 3 || sig[0] != 'L' || sig[1] != '1') continue;
+                        if (sig == b1.modelled_phase) continue;
+                        if (!std::binary_search(b1.tracked_phase.begin(),
+                                                b1.tracked_phase.end(), sig)) continue;
+                        if (allowlist && !allowlist->empty() && !allowlist->count(sig)) continue;
+                        if (std::find(b1.modelled_extra.begin(), b1.modelled_extra.end(), sig)
+                            != b1.modelled_extra.end()) continue;
+                        b1.modelled_extra.push_back(sig);
+                    }
+                }
+            }
+        }
+
         // 4. The EXCLUDED signals, with the reason that actually applies.  The allow
         //    list is the earlier gate, so it names the exclusion where it bites; a
         //    band the latch carries names the signal it chose instead; a band with
@@ -153,7 +185,7 @@ namespace GnssProcessor {
             const auto note = [&](const std::string& sig, const std::string& modelled,
                                   bool companion) {
                 if (sig == modelled) return;
-                if (companion) return;
+                if (companion) return;   // a companion code or a second phase is MODELLED
                 const char* reason = "no_latch";
                 if (allowlist && !allowlist->empty() && !allowlist->count(sig))
                     reason = "allowlist";
@@ -161,7 +193,10 @@ namespace GnssProcessor {
                     reason = "not_latched";
                 br.excluded.emplace_back(sig, reason);
             };
-            for (const std::string& s : br.tracked_phase) note(s, br.modelled_phase, false);
+            for (const std::string& s : br.tracked_phase)
+                note(s, br.modelled_phase,
+                     std::find(br.modelled_extra.begin(), br.modelled_extra.end(), s)
+                         != br.modelled_extra.end());
             for (const std::string& s : br.tracked_code)
                 note(s, br.modelled_code,
                      std::find(br.companion_code.begin(), br.companion_code.end(), s)
@@ -450,6 +485,9 @@ namespace GnssProcessor {
         const auto& nc = config_.getNetworkConfig();
         const bool companions_armed = config_.networkSecondCodeChannel();
         const std::vector<std::string>& companion_allow = config_.networkSecondCodeSignals();
+        const bool second_phase_armed = config_.networkSecondPhaseChannel();
+        const std::vector<std::string>& second_phase_allow =
+            config_.networkSecondPhaseSignals();
         const auto& prio = config_.getSignalPriorities();
         (void)nc;
 
@@ -513,7 +551,9 @@ namespace GnssProcessor {
                 }
 
                 auto cells = signalRosterBuildCells(tracked, latch, companion_allow,
-                                                    companions_armed, allow);
+                                                    companions_armed, allow,
+                                                    second_phase_allow,
+                                                    second_phase_armed);
 
                 // P2's SELF-CHECK.  The roster is built FROM the latch, so a nonzero
                 // count here is a bug in this file, not a finding about the run.
@@ -615,8 +655,17 @@ namespace GnssProcessor {
                             (void)val;
                             if (!isObsKey(key, 'L')) continue;
                             const auto cell = cells.find(key[1]);
+                            // Card SID phase 6a: a SECOND PHASE is modelled too — it
+                            // carries its own float ambiguity and joins its signal's
+                            // satellite phase-bias family — so the ledger's `modelled`
+                            // flag reads the extra set beside the latch.  Empty unless
+                            // the channel is armed, so every other posture is unchanged.
                             const bool modelled =
-                                cell != cells.end() && cell->second.modelled_phase == key;
+                                cell != cells.end()
+                                && (cell->second.modelled_phase == key
+                                    || std::find(cell->second.modelled_extra.begin(),
+                                                 cell->second.modelled_extra.end(), key)
+                                           != cell->second.modelled_extra.end());
                             const ArcLedger::Key ak{ static_cast<int>(i), o->satellite, key };
                             const ArcStep step = ctx.arc_ledger.observe(ak, modelled);
                             if (step.transition == ArcTransition::Birth) {
@@ -1124,6 +1173,13 @@ namespace GnssProcessor {
                     for (const auto& [band, br] : cells) {
                         (void)band;
                         if (!br.modelled_phase.empty()) want_phase.insert(br.modelled_phase);
+                        // Card SID phase 6a: the wire's coverage DENOMINATOR is the set
+                        // of families the network models, so a second phase belongs in
+                        // it.  Without this the L1W family would never be counted on a
+                        // bed where no station LATCHES L1W (the sim with a cloned second
+                        // phase is exactly that bed) and `wire_pb_missing[L1W]` would
+                        // read zero for the wrong reason.  Empty unless armed.
+                        for (const auto& x : br.modelled_extra) want_phase.insert(x);
                         if (!br.modelled_code.empty())  want_code.insert(br.modelled_code);
                     }
                 }

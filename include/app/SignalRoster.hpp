@@ -146,6 +146,9 @@ namespace GnssProcessor {
      * @param companions_armed  @c network.second_code_channel.
      * @param allowlist         The network signal allow list for this constellation,
      *                          or nullptr when every tracked code is admitted.
+     * @param second_phase_allow `network.second_phase_signals`, in configured order
+     *                          (card SID phase 6a).
+     * @param second_phase_armed `network.second_phase_channel`.
      * @return band digit -> cell, for every band digit that has a tracked signal or
      *         a latched one.
      */
@@ -154,7 +157,9 @@ namespace GnssProcessor {
         const std::vector<RosterLatchRow>& latch,
         const std::vector<std::string>& companion_allow,
         bool companions_armed,
-        const std::set<std::string>* allowlist);
+        const std::set<std::string>* allowlist,
+        const std::vector<std::string>& second_phase_allow = {},
+        bool second_phase_armed = false);
 
     /**
      * @brief The arc-level tracker's own band pick, reproduced for comparison.

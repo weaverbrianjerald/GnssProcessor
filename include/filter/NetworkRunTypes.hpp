@@ -267,6 +267,36 @@ struct NetStation {
     /// canonical latch is decided this reads 0; a nonzero count means some station's
     /// canonical code is regularly missing, which is a finding about the latch.
     long long scc_fallback_rows{ 0 };
+
+    // --- card SID phase 6a (docs/refound/SID_signal_identity_2026-09-22.md) ------
+    /// THIS epoch's SECOND-PHASE cells at this station, as
+    /// @c StateKeys::makeSatPhaseBiasKey keys.  Republished SERIALLY from the PASS-A
+    /// observations, before the parallel PASS-B produce reads it (station-local, so
+    /// thread-safe), which is what lets @ref Application::networkSplitStation_ tell a
+    /// second-phase row from the latched one: nothing else distinguishes them, because
+    /// this card deliberately builds no receiver state a row could be keyed on.
+    /// EMPTY on every unarmed posture, so the split never reads it and the assembly is
+    /// byte-identical.
+    std::set<std::string> spc_cells;
+    /// Card SID phase 6a (R7, standing invariant #7): the PREVIOUS epoch's
+    /// @ref spc_cells, so the serial sweep can diff the two and emit the opening and
+    /// closing edges.  Not cleared between epochs — a station absent this epoch keeps
+    /// its set, and its cells close when it returns without them.
+    std::set<std::string> spc_cells_prev;
+    /// Card SID phase 6a (R7): every second-phase cell this station has EVER opened.
+    /// The run-end "arcs born" count is its size, summed over stations; a re-opening
+    /// after a dropout is an EDGE, not a birth.
+    std::set<std::string> spc_cells_seen;
+    /// Card SID phase 6a (R7): SECOND-PHASE rows this station folded over the run.
+    /// Accumulated inside the PARALLEL produce phase, so it lives per-station and is
+    /// summed into the run-end report at teardown (the @c scc_rows precedent).
+    long long spc_rows{ 0 };
+    /// Card SID phase 6a (R8): the between-channel WITNESS memory, keyed
+    /// "<satellite>|<second signal>" -> (latched minus second, in CYCLES; the loop
+    /// epoch it was measured at).  Epoch-to-epoch differencing of a quantity in which
+    /// a one-channel slip is an integer and a common slip cancels.  Station-local and
+    /// written only by the serial sweep.  EMPTY unless the knob is armed.
+    std::map<std::string, std::pair<double, long long>> spc_witness;
 };
 
 /// One SD extra-wide-lane INTEGER decision for a (station, constellation, satellite),

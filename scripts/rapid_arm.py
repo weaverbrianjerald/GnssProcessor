@@ -78,6 +78,17 @@ Ops:
                                       signal known receiver and satellite inter-signal biases —
                                       which is how a sim bed whose files carry ONE band-1 code
                                       gets a second one (card SCC, R9).  Put the clone FIRST.
+  clone;from=L1C;to=L1W;noise=0.002;seed=7[;rx_sigma=0.03][;sat_sigma=0.05]
+                                      A PHASE clone (card SID phase 6a).  The field of an L type
+                                      is in CYCLES and every magnitude here is in metres, so the
+                                      draws are converted with the band frequency.  A phase clone
+                                      also adds a per-STATION constant (the receiver inter-channel
+                                      phase bias, N(0, rx_sigma) metres, default 0.03) and a
+                                      per-SATELLITE constant (N(0, sat_sigma) metres, default
+                                      0.05), so the second family carries a known inter-signal
+                                      truth without a following `bias` op.  Both sigmas default to
+                                      0 for a CODE clone, which therefore behaves exactly as
+                                      above.  The consumer is excluded unless `consumer=1`.
 An op on a phase type is given in metres and applied in cycles.  Every draw is keyed
 on (seed, station, satellite), so the same spec gives the same file in every arm.
 `draws` prints those constants without writing a file, so an injected truth can be
@@ -380,8 +391,26 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
         assert src_code in codes, (src, "clone source type not in the file", src_code)
         assert dst_code not in codes, (src, "clone target type already exists", dst_code)
         assert dst_code not in [c["to"] for c in clones], (src, "cloned twice", dst_code)
+        # Card SID phase 6a: a PHASE clone.  The RINEX field of an L type is in CYCLES
+        # while `noise` (like every other op's magnitude) is given in metres, so the
+        # per-record draw is converted here exactly as delta_m's callers convert theirs.
+        # A phase clone also carries the two inter-signal CONSTANTS the card needs, so
+        # that a bed whose files hold one band-1 phase gets a second one with a known
+        # receiver inter-channel bias and a known satellite inter-signal bias: drawing
+        # them inside the clone (rather than leaving them to a following `bias` op) is
+        # what keeps the two constants attached to the signal they define.  A CODE clone
+        # keeps sigma 0 for both, so card SCC's spec produces the identical file.
+        phase = dst_code[0] == "L"
+        cyc = 1.0
+        if phase:
+            assert system in FREQ and dst_code[1] in FREQ[system], \
+                (src, "no frequency for a phase clone", system, dst_code)
+            cyc = FREQ[system][dst_code[1]] / C
         clones.append({"to": dst_code, "src": codes.index(src_code),
-                       "noise": float(op.get("noise", 0.0)), "seed": op.get("seed", "1")})
+                       "noise": float(op.get("noise", 0.0)), "seed": op.get("seed", "1"),
+                       "cyc": cyc,
+                       "rx_sigma": float(op.get("rx_sigma", 0.03 if phase else 0.0)),
+                       "sat_sigma": float(op.get("sat_sigma", 0.05 if phase else 0.0))})
     work = codes + [c["to"] for c in clones]
     new_codes, drop = list(work), set()
     for op in ops:
@@ -442,7 +471,14 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                 if c["noise"] > 0.0:
                     d = draw(c["seed"], "clone", c["to"], station, sat,
                              "%.3f" % sod).gauss(0.0, c["noise"])
-                fld.append(f"{float(f[:14]) + d:14.3f}" + f[14:16])
+                # The two inter-signal CONSTANTS (metres, drawn once per station and
+                # once per satellite).  Both sigmas are 0 for a code clone, so its draw
+                # sequence and its output are unchanged.
+                if c["rx_sigma"] > 0.0:
+                    d += draw(c["seed"], "clone_rx", c["to"], station).gauss(0.0, c["rx_sigma"])
+                if c["sat_sigma"] > 0.0:
+                    d += draw(c["seed"], "clone_sat", c["to"], sat).gauss(0.0, c["sat_sigma"])
+                fld.append(f"{float(f[:14]) + d * c['cyc']:14.3f}" + f[14:16])
             for n_op, op in enumerate(rec_ops):
                 if not sat_selected(sat, op["sats"]):
                     continue
@@ -973,6 +1009,52 @@ def cmd_selftest(_):
         chk(False, "ecc with stations=all must be refused")
     except AssertionError as ex:
         chk("ecc must name its stations" in str(ex), f"ecc stations=all refused {ex}")
+    # 14: card SID phase 6a — a PHASE clone.  The field is in CYCLES while every
+    #     magnitude is in metres, so the injected constants must come back divided by
+    #     the wavelength; the per-STATION and per-SATELLITE constants are constant over
+    #     epochs and differ between satellites; and a CODE clone is unchanged by the
+    #     addition (card SCC's spec must give the identical file it always gave).
+    L1 = FREQ["G"]["1"] / C                                   # cycles per metre at L1
+    rewrite_rinex(src, d + "/p.rnx", [parse_op("clone;from=L1C;to=L1W;noise=0;seed=5")], "AAAA")
+    p = open(d + "/p.rnx").read().split("\n")
+    chk(p[1].startswith("G    7 C1C C2W C5Q L1C L2W L5Q L1W"), f"phase clone header {p[1]!r}")
+
+    def col7(line):
+        return float(line.ljust(3 + 16 * 7)[3 + 16 * 6:3 + 16 * 6 + 14])
+
+    g3 = [col7(p[5 + 4 * k]) - 1.0e8 for k in range(4)]        # G03, four epochs
+    g5 = [col7(p[6 + 4 * k]) - 1.1e8 for k in range(4)]        # G05, four epochs
+    chk(max(g3) - min(g3) < 1e-3 and max(g5) - min(g5) < 1e-3,
+        f"a noiseless phase clone is constant over epochs {g3} {g5}")
+    chk(abs(g3[0] - g5[0]) > 1e-3, f"the per-satellite constant differs by satellite {g3[0]} {g5[0]}")
+    rx = draw("5", "clone_rx", "L1W", "AAAA").gauss(0.0, 0.03)
+    s3 = draw("5", "clone_sat", "L1W", "G03").gauss(0.0, 0.05)
+    chk(abs(g3[0] - (rx + s3) * L1) < 1e-2,
+        f"the phase clone is the two constants in cycles {g3[0]} vs {(rx + s3) * L1}")
+    chk(abs(g3[0] - (rx + s3)) > 1e-3,
+        f"the phase clone converts metres to cycles {g3[0]} vs the raw metre value {rx + s3}")
+    # a different station draws a different receiver constant, the same satellite one
+    rewrite_rinex(src, d + "/p2.rnx", [parse_op("clone;from=L1C;to=L1W;noise=0;seed=5")], "BBBB")
+    p2 = open(d + "/p2.rnx").read().split("\n")
+    rx2 = draw("5", "clone_rx", "L1W", "BBBB").gauss(0.0, 0.03)
+    chk(abs((col7(p2[5]) - 1.0e8) - (rx2 + s3) * L1) < 1e-2, "the receiver constant is per station")
+    chk(abs(col7(p2[5]) - col7(p[5])) > 1e-3, "two stations get different receiver constants")
+    # the sigmas are steerable, and zero sigmas give a pure copy
+    rewrite_rinex(src, d + "/p3.rnx",
+                  [parse_op("clone;from=L1C;to=L1W;noise=0;seed=5;rx_sigma=0;sat_sigma=0")], "AAAA")
+    chk(abs(col7(open(d + "/p3.rnx").read().split("\n")[5]) - 1.0e8) < 1e-6,
+        "zero sigmas make a phase clone an exact copy")
+    # noise is in metres too, and is per epoch
+    rewrite_rinex(src, d + "/p4.rnx",
+                  [parse_op("clone;from=L1C;to=L1W;noise=0.002;seed=5;rx_sigma=0;sat_sigma=0")], "AAAA")
+    p4 = open(d + "/p4.rnx").read().split("\n")
+    nz = [col7(p4[5 + 4 * k]) - 1.0e8 for k in range(4)]
+    chk(len(set(round(v, 6) for v in nz)) == 4, f"phase clone noise is per epoch {nz}")
+    chk(max(abs(v) for v in nz) < 0.02 * L1 + 1e-6, f"phase clone noise is metres, not cycles {nz}")
+    # a CODE clone is untouched by all of this (card SCC's own spec)
+    rewrite_rinex(src, d + "/p5.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0;seed=7")], "AAAA")
+    chk(abs(col7(open(d + "/p5.rnx").read().split("\n")[5]) - 2.0e7) < 1e-6,
+        "a noiseless code clone stays an exact copy (no constants)")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

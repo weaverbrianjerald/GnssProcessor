@@ -834,6 +834,19 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
         }
+        // Card SID phase 6a (R6): the second PHASE channel adds a float ambiguity per
+        // extra arc and feeds an existing satellite phase-bias family from stations
+        // that did not support it before, so the carried levels and the shared border a
+        // snapshot holds mean different things across the flip — solve-affecting on
+        // both counts.  Armed-only append, on the card SCC precedent, so every
+        // pre-card snapshot fingerprint is unchanged.  The allow-list and the sigma
+        // scale join it: the list decides WHICH arcs exist, and the scale decides the
+        // weight at which their rows were accumulated.
+        if (config_.networkSecondPhaseChannel()) {
+            add("sid:2ndphase");
+            for (const auto& sig : config_.networkSecondPhaseSignals()) add(sig);
+            add(fmt::format("{}", config_.networkSecondPhaseSigmaScale()));
+        }
         // Card SID phase 3 (R6): the gap re-entry RESPONSE keys on the arc ledger's
         // admitted lifecycle, which decides WHICH carried levels survive a break.
         // A resume across the flip would restore levels the other side of the flip

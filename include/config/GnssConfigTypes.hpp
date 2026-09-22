@@ -1870,6 +1870,50 @@ namespace GnssProcessor {
         /// precedent: a config asking to TRUST a second code more than the canonical one
         /// is asking for the opposite of this knob and is a typo, not a posture.
         double second_code_sigma_scale{ 1.0 };
+        /// Card SID phase 6a (docs/refound/SID_signal_identity_2026-09-22.md §4, the
+        /// PHASE twin of card SCC): a network station contributes, as ordinary
+        /// float-ambiguity PHASE rows, every allow-listed band-1 carrier phase it
+        /// reports for a satellite besides the phase its canonical latch selected.
+        ///
+        /// WHY.  One phase per station and band means a satellite's L1W phase bias is
+        /// supported only by the stations that latched L1W: 18 of 58, a median of 4
+        /// carried stations per column-epoch, and 5 323 of 22 586 satellite-epochs
+        /// (23.6 per cent) with a clock record and no L1W phase bias.  That thinness
+        /// is also the mechanism behind card EV7's 13 coverage-gate drop edges, all on
+        /// L1W keys.
+        ///
+        /// WHAT IT IS NOT.  No receiver inter-signal PHASE state: a float ambiguity
+        /// already absorbs an arbitrary constant per arc, so such a state would sit in
+        /// the null space (the audit's risk 5).  No new datum row either: the
+        /// per-(satellite, signal) anchor election simply gains candidates.
+        ///
+        /// Default OFF => byte-identical.  Refused with `processing.channel_mode: all`
+        /// (which widens the phase side itself), off the float vehicle with a held
+        /// basis, and with fewer than two admitted entries in the allow-list.
+        /// Fingerprinted only when armed.
+        bool second_phase_channel{ false };
+        /// Card SID phase 6a: the EXPLICIT allow-list of band-1 PHASE signals a station
+        /// may contribute under @ref second_phase_channel.  The loader refuses an entry
+        /// that is not a 3-character phase type starting with 'L', and any entry whose
+        /// band digit is not '1' (band 2 belongs to phase 6b, where the interlock on
+        /// `processing.channel_mode` is lifted instead).
+        std::vector<std::string> second_phase_signals{ "L1C", "L1W" };
+        /// Card SID phase 6a (R5): multiplies the phase sigma of the second-phase rows.
+        /// At least 1; 1.0 is the default and is never applied (byte-identical).  Below
+        /// 1 is refused rather than clamped, on the @ref second_code_sigma_scale
+        /// precedent.
+        double second_phase_sigma_scale{ 1.0 };
+        /// Card SID phase 6a (R6): DERIVED AT LOAD, never read from JSON.  Set when the
+        /// second phase channel armed WITHOUT `network.cycle_slip.gap_reentry_per_signal`
+        /// — the one row-level tier that can answer a second-phase arc's re-entry.  That
+        /// is a WARNING and not a refusal, and the run-end readout restates it so the
+        /// posture is legible from the log alone (standing invariant #1).
+        bool second_phase_warn_no_per_signal{ false };
+        /// Card SID phase 6a (R4): DERIVED AT LOAD.  Set when the second phase channel
+        /// armed with the IF-phase time-difference tier on and `if_phase_td_pairs` not
+        /// 'all' — two band-1 phases share a frequency, so that tier's single pair is
+        /// degenerate and it produces no rows for such a satellite.
+        bool second_phase_warn_iftd_pairs{ false };
         /// §Z: BAND SCOPE of the T4 attribution erase (@ref NetworkRaimEraseBandScope).
         /// Default @c All reproduces the pre-knob instruction stream byte for byte.
         /// SOLVE-AFFECTING when armed (it changes which carried levels survive an

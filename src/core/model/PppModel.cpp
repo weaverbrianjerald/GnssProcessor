@@ -31,6 +31,7 @@
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include "filter/NetworkSecondCodeScope.hpp"   // secondCodeCompanions (card SCC, R1)
+#include "filter/NetworkSecondPhaseScope.hpp"  // secondPhaseCompanions (card SID phase 6a, R1)
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -980,7 +981,7 @@ std::vector<std::string> activeFrequencyBands(
             // canonical one — the Melbourne-Wubbena guard (R4) and the cell telemetry
             // (R7).  The set stays empty unless the knob is armed on the network path.
             if (!selectSignals(obs, system_str, selected_signals, is_iono_free, comb_type,
-                               &ppp_obs.companion_codes)) {
+                               &ppp_obs.companion_codes, &ppp_obs.second_phases)) {
                 note_drop(obs.satellite, DropReason::NoModel);
                 continue;
             }
@@ -1365,7 +1366,8 @@ std::vector<std::string> activeFrequencyBands(
         const std::map<std::string, std::pair<std::string, std::string>>& freq_band_to_signal,
         const std::vector<std::string>& freq_bands,
         std::vector<std::pair<std::string, std::string>>& selected_signals,
-        std::set<std::string>* companion_out) const {
+        std::set<std::string>* companion_out,
+        std::set<std::string>* second_phase_out) const {
 
         selected_signals.clear();
         for (const auto& band : freq_bands) {
@@ -1490,6 +1492,78 @@ std::vector<std::string> activeFrequencyBands(
                         "Uncombined band {} for {} {}: companion code {} added beside "
                         "the latched {} (card SCC)",
                         band, obs.satellite, system_str, sig, best_code);
+                }
+            }
+        }
+
+        // --- Card SID phase 6a: the SECOND PHASE CHANNEL -------------------------
+        // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R1.)  The PHASE
+        // twin of the block above.  One carrier phase per station and band means a
+        // satellite's L1W phase bias rests on the 18 stations that latched L1W: a
+        // median of 4 carried stations per column-epoch, 23.6 per cent of
+        // satellite-epochs with a clock record and no L1W phase bias, and every one of
+        // card EV7's 13 coverage-gate drop edges on an L1W key.  Add, as ordinary
+        // PHASE rows, every allow-listed band-1 phase this station reports for this
+        // satellite besides the one the latch already selected.
+        //
+        // WHAT THE ADDED KEY BECOMES.  Everything downstream of `selected_signals` is
+        // per SIGNAL: the measurement model allocates an ordinary float ambiguity
+        // "<sat>_<signal>" and the shared per-(satellite, signal) phase-bias state of
+        // that signal's EXISTING family, so an L1W row at an L1C station joins the L1W
+        // family rather than creating one.  Nothing here allocates a receiver
+        // inter-signal PHASE state, and nothing may: a float ambiguity already absorbs
+        // an arbitrary constant per arc, so such a state would sit in the null space of
+        // the normal equations (the audit's risk 5).  This is the one structural
+        // difference from card SCC, whose code rows had no such absorber.
+        //
+        // WHY NOT the channel_mode=All widening above.  That one widens every selected
+        // band to every tracking attribute, code side included and admitted or not;
+        // this card wants a BOUNDED, allow-listed band-1 phase set, which is why the
+        // loader refuses the two together.
+        //
+        // WHY BAND 1 ONLY.  Band 2 is phase 6b, which lifts the channel_mode interlock
+        // rather than working around it; the allow-list is validated at load, so
+        // membership here already implies "3-character phase type on band 1".
+        //
+        // THE FALLBACK CASE IS NOT ADDED.  An allow-listed phase arriving with no
+        // latched phase of that band beside it is not a SECOND phase — the latch
+        // decides what "second" means, and promoting it would silently make it the
+        // only one.  The serial PASS-A sweep counts those occurrences
+        // (`spc_fallback_rows`) and does nothing else with them.
+        //
+        // NETWORK ONLY, and ARMED ONLY: off the network path or with the knob down the
+        // block is skipped whole, so the selection is byte-identical.
+        if (config_.networkSecondPhaseChannel()
+            && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) {
+            for (const auto& band : freq_bands) {
+                const auto band_it = freq_band_to_signal.find(band);
+                if (band_it == freq_band_to_signal.end()) continue;
+                const std::string& best_phase = band_it->second.second;
+                // Band 1 is this phase's scope, tested on the signal's own RINEX band
+                // DIGIT: the band NAME is constellation-specific ("L1" on GPS, "E1" on
+                // Galileo) while the digit is what the allow-list speaks.
+                if (best_phase.size() < 2 || best_phase[1] != '1') continue;
+                // The band's latched phase must be PRESENT this epoch, not merely
+                // named: with it missing this is the FALLBACK case above.
+                if (!obs.measurements.count(best_phase)) continue;
+                // What this station reports for this satellite, filtered by the network
+                // coverage gate — the same gate the band map and the channel_mode
+                // widening both apply, so a non-admitted channel can never enter here.
+                std::set<std::string> reported;
+                for (const auto& [sig, val] : obs.measurements) {
+                    (void)val;
+                    if (sig.size() != 3 || sig[0] != 'L' || sig[1] != '1') continue;
+                    if (!signalAdmitted(system_str, sig)) continue;
+                    reported.insert(sig);
+                }
+                for (const auto& sig : secondPhaseCompanions(
+                         reported, best_phase, config_.networkSecondPhaseSignals())) {
+                    selected_signals.emplace_back(sig, "");
+                    if (second_phase_out) second_phase_out->insert(sig);
+                    log_manager_.getLogger("ppp_model")->trace(
+                        "Uncombined band {} for {} {}: second phase {} added beside the "
+                        "latched {} (card SID phase 6a)",
+                        band, obs.satellite, system_str, sig, best_phase);
                 }
             }
         }
@@ -1686,7 +1760,8 @@ std::vector<std::string> activeFrequencyBands(
     bool PppModel::selectSignals(const RinexObservation& obs, const std::string& system_str,
         std::vector<std::pair<std::string, std::string>>& selected_signals,
         bool& is_iono_free, std::string& comb_type,
-        std::set<std::string>* companion_out) {
+        std::set<std::string>* companion_out,
+        std::set<std::string>* second_phase_out) {
 
         auto it = signal_priorities_.find(system_str);
         const auto& signals = it != signal_priorities_.end() ? it->second : std::vector<std::string>{};
@@ -1732,7 +1807,8 @@ std::vector<std::string> activeFrequencyBands(
 
         if (config_.isUncombinedEnabled()) {
             if (!selectUncombinedSignals(obs, system_str, freq_band_to_signal, freq_bands,
-                                         selected_signals, companion_out)) {
+                                         selected_signals, companion_out,
+                                         second_phase_out)) {
                 log_manager_.getLogger("ppp_model")->warn("No valid signals for {} {} at TOW {:.3f}",
                     obs.satellite, system_str, obs.time.tow);
                 return false;

@@ -885,8 +885,17 @@ namespace GnssProcessor {
         // `companion_codes` is empty on every unarmed posture, so this costs one
         // lookup on an empty set and the verdict is byte-identical.  A FALLBACK code is
         // deliberately not in that set and stays eligible exactly as today.
+        // Card SID phase 6a (R4): the same rule for a SECOND PHASE.  With
+        // `network.second_phase_channel` the KF estimates a second band-1 phase, and
+        // GPS L1 attribute priority puts 'W' ahead of 'C', so an unguarded test would
+        // promote L1W over L1C in the band's phase bucket at every station that
+        // reports both — moving the detector's phase for the band, and with it every
+        // MW arc and every slip event.  `second_phases` is empty on every unarmed
+        // posture, so this costs one lookup on an empty set and the verdict is
+        // byte-identical.
         auto isKfChosen = [&obs](const std::string& key) {
             if (obs.companion_codes.count(key)) return false;
+            if (obs.second_phases.count(key))   return false;
             return obs.observed.find(key) != obs.observed.end();
         };
         auto priorityOf = [&obs](const std::string& key) -> int {
@@ -920,6 +929,21 @@ namespace GnssProcessor {
             // it stays, and the isKfChosen guard above is what keeps it from winning
             // the band.  Empty set OFF ⇒ byte-identical on both paths.
             if (!use_raw && obs.companion_codes.count(key)) continue;
+            // Card SID phase 6a (R4), the other half of the PHASE guard, with one
+            // deliberate difference from the line above.  In a SINGLE-channel bucket
+            // (mw_channel_mode mirror or single) the second phase must be invisible, so
+            // the detector keeps the exact key set it had unarmed.  In ALL-channel mode
+            // the bucket is explicitly asking for every tracking-mode channel of the
+            // band, which is the mode this card's G1c arm exists to measure, so the
+            // second phase enters and the cross-band pair loop below forms its own pairs
+            // with it.  NOTE, and it is measured rather than assumed: with
+            // mw_frequency_mode Mirror the card SCC line above has already removed the
+            // companion CODE, so `matchChannel` pairs an L1W phase with the latched C1C.
+            // That puts the receiver's C1C-minus-C1W inter-signal delay into the MW
+            // value as a CONSTANT per arc, which the arc's own running reference
+            // absorbs; it is a level offset, not a slope, so it does not by itself
+            // manufacture jump detections.  Empty set OFF => byte-identical.
+            if (!use_raw && !all_channels && obs.second_phases.count(key)) continue;
             const char band = key[1];
             if (band < '1' || band > '9') continue;
             // Band-scope filter (empty set = "no filter").

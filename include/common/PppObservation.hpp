@@ -83,6 +83,25 @@ namespace GnssProcessor {
          * @ref raw_observed is unrelated and still holds every raw signal.
          */
         std::set<std::string> companion_codes;
+        /**
+         * @brief Card SID phase 6a (R1): the band-1 PHASE keys this observation carries
+         *        BESIDES the one the station's canonical latch selected.
+         *
+         * EMPTY unless `network.second_phase_channel` is armed on the network path, so
+         * every other posture allocates nothing and behaves exactly as before.  The keys
+         * are also in @ref observed / @ref modeled / @ref variances (the measurement
+         * model needs all three to accept a row); this set is what makes a second-phase
+         * row DISTINGUISHABLE from the latched one it accompanies.
+         *
+         * Card SCC could identify its companion CODE rows downstream by the receiver
+         * inter-signal state they route through.  This card deliberately builds no such
+         * state (a float ambiguity already absorbs a constant per arc, so one would sit
+         * in the null space), so there is nothing else a consumer could key on: the
+         * sigma scale (R5) and the cell telemetry (R7) both read this set.
+         *
+         * @ref raw_observed is unrelated and still holds every raw signal.
+         */
+        std::set<std::string> second_phases;
     };
 
 } // namespace GnssProcessor
