@@ -557,6 +557,32 @@ namespace GnssProcessor {
               "re-host the post-fit RAIM pool onto the carry-neutral qc_amb census so T3/T4 run at all "
               "under carry_invariant: 107k cells / 118 epochs on the field golden, products byte-identical, "
               "~5 % epoch cost; sigma0 at its 1.0 floor so far (power leg owed)" },
+            // --- Cards GL / RF-3, the GROSS LINE-OF-SIGHT SCREEN made complete (ledger row
+            //     landed 2026-09-22).  The only ACTING code-row tier the producer owns: every
+            //     post-fit RAIM pool admits CARRIED-AMBIGUITY PHASE rows, so a code-only gross
+            //     error on one line of sight is invisible to RAIM's consensus, and on the
+            //     float vehicle those rows are the slip response's own re-coupling edge (a
+            //     drop restores a stale, stiff variance).  Armed as the TRIPLE the census
+            //     graded: the screen, the one-row rule (the bar read as min(gross_los_min_rows,
+            //     the LOS's code rows this epoch), so a line of sight whose station has lost
+            //     every other code signal is reachable) and the same-epoch emission exclusion
+            //     (the DECISION half runs ahead of the emission and the declared LOS leaves
+            //     its satellite's contributor set at the declaring epoch).  The hold
+            //     (gross_los_bound) is FALSIFIED and the station tier stays OFF, so the armed
+            //     test names the triple and nothing else.  Regime = the float vehicle, the
+            //     only posture the completed screen was graded on.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
+              nc.gross_los_screen
+                  && nc.gross_los_min_rows_rule == NetworkGrossLosMinRowsRule::Available
+                  && nc.gross_los_emit_exclude,
+              Tier::SCOPED, false, "network.gross_los_screen",
+              "the gross line-of-sight screen completed (the one-row rule and the same-epoch "
+              "emission exclusion): the acting code-row tier reaches a line of sight whose "
+              "station has lost every other code signal, and the response lands at the "
+              "declaring epoch, two epochs earlier than before; gross post-fit code rows above "
+              "10 m at full weight 100 -> 32, census 13 of 16 sites better on hours 4 to 6 with "
+              "none worse, WTZZ00DEU within 0.003 m, clock wire 0.0045 -> 0.0041 m; the hold "
+              "(gross_los_bound) FALSIFIED, the station tier OFF" },
             // --- SCOPED tier: EMISSION and PRODUCT knobs ------------------------------
             { nc.closed_loop.enable || network_service_mode_,
               network_emit_clock_disc_,
