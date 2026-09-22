@@ -3550,6 +3550,32 @@ int networkTeardown(
                       "whole run, so the ledger drove nothing.  Dead wiring, not a "
                       "quiet run."
                     : "");
+            // Card SID phase 4a (S1): the NO-VERDICT population, ATTRIBUTED.  Phase 3
+            // could only name it; the reason mask of the gap that preceded each return
+            // says which screen removed the row while both raw tiers kept seeing the
+            // satellite.  Printed only where the writers are armed, so a phase-3 run's
+            // line is unchanged.
+            if (!qcc.ledger_reentry_nv_reason.empty()) {
+                std::string sp;
+                for (int b = 0; b < kArcReasonCount; ++b) {
+                    const long long n = qcc.ledger_reentry_nv_reason[
+                        static_cast<std::size_t>(b)];
+                    if (n == 0) continue;
+                    if (!sp.empty()) sp += ", ";
+                    sp += fmt::format("{} {}", arcReasonName(1u << b), n);
+                }
+                log->info(
+                    "Network (card SID phase 4a / THE NO-VERDICT POPULATION BY REASON, "
+                    "S1): of the {} ledger re-entr(y|ies) that NO raw tier saw, the "
+                    "ADMITTED GAP that preceded the return was opened by: {}.  {} "
+                    "carried no reason mask at all.  A return may carry more than one "
+                    "reason, so these need not sum to the population.{}",
+                    qcc.ledger_reentry_no_verdict, sp.empty() ? "nothing" : sp,
+                    qcc.ledger_reentry_nv_no_mask,
+                    qcc.ledger_reentry_no_verdict == 0
+                        ? "  ⚠ EMPTY POPULATION: read it as a denominator."
+                        : "");
+            }
         }
         // ---- Card GRS: the PER-SIGNAL tier ------------------------------
         // Reported only when the rider is armed, so an unarmed run's Card-G

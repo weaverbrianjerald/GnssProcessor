@@ -95,15 +95,70 @@ namespace GnssProcessor {
         Death     ///< Gap to Dead, past the horizon.
     };
 
-    /// @brief Why an arc left, as a bit mask on @c ArcRecord::reason_mask.
+    /**
+     * @brief Why an arc left, as a bit mask on @c ArcRecord::reason_mask.
+     *
+     * Card SID phase 4 (S1) turns the reserved bits into WRITTEN ones: every
+     * screen that removes a modelled row, a satellite or a station records the
+     * arcs it removed and its own bit into the per-epoch @ref ArcReasonEpoch
+     * buffer, and the fold in @ref ArcLedger::admitEpoch stamps that mask on the
+     * admitted gap the removal opened.  An admitted gap that no writer explains
+     * carries @ref kArcReasonUnknown, which is the number phase 3's 87
+     * no-verdict returns are owed.
+     */
     enum ArcDeathReason : unsigned {
-        kArcReasonNone    = 0u,       ///< no reason recorded.
-        kArcReasonHorizon = 1u << 0,  ///< the gap outran the readers' longest window.
-        kArcReasonMask    = 1u << 1,  ///< reserved: an elevation-mask exit (phase 3).
-        kArcReasonSlip    = 1u << 2,  ///< reserved: a slip tier erased the arc (phase 3).
-        kArcReasonGate    = 1u << 3,  ///< reserved: a coverage gate dropped it (phase 4).
-        kArcReasonPrune   = 1u << 4   ///< reserved: the state vector pruned it (phase 3).
+        kArcReasonNone      = 0u,       ///< no reason recorded.
+        kArcReasonHorizon   = 1u << 0,  ///< the gap outran the readers' longest window.
+        kArcReasonMask      = 1u << 1,  ///< the elevation mask refused the LOS.
+        kArcReasonSlip      = 1u << 2,  ///< a slip tier erased or refloated the arc.
+        kArcReasonGate      = 1u << 3,  ///< the coverage gate dropped the family's column.
+        kArcReasonPrune     = 1u << 4,  ///< the state vector pruned the column.
+        kArcReasonAllowlist = 1u << 5,  ///< the network signal allow list excluded the signal.
+        kArcReasonAdmission = 1u << 6,  ///< the measurement-admission / DW screen withheld the band.
+        kArcReasonReadmit   = 1u << 7,  ///< the readmit horizon parked the satellite's carries.
+        kArcReasonGross     = 1u << 8,  ///< the gross-LOS screen removed the arc or its satellite.
+        kArcReasonDeweight  = 1u << 9,  ///< a DEWEIGHT, never a removal: excluded from every gap mask.
+        kArcReasonNoModel   = 1u << 10, ///< the model built no row (no product, no usable pair, eclipsing).
+        kArcReasonUnknown   = 1u << 11  ///< an admitted gap opened and no writer fired.
     };
+
+    /// @brief Number of reason bits, for the per-reason counter arrays.
+    inline constexpr int kArcReasonCount = 12;
+
+    /**
+     * @brief Bits that may explain an admitted GAP.
+     *
+     * @ref kArcReasonDeweight is excluded by construction: a de-weight leaves the
+     * row in the solve, so counting it as a gap opener would attribute a removal
+     * to a screen that removed nothing (the brief's own rule).  @ref
+     * kArcReasonUnknown is excluded because it is what the fold writes when this
+     * mask comes out empty.
+     */
+    inline constexpr unsigned kArcReasonGapMask =
+        kArcReasonHorizon | kArcReasonMask | kArcReasonSlip | kArcReasonGate
+        | kArcReasonPrune | kArcReasonAllowlist | kArcReasonAdmission
+        | kArcReasonReadmit | kArcReasonGross | kArcReasonNoModel;
+
+    /**
+     * @brief Bits whose writer fires AFTER the epoch's fold.
+     *
+     * The readmit park runs inside @c networkStashStatus, downstream of the
+     * roster's audit pass, so its record cannot reach the fold of its own epoch.
+     * Exactly these bits survive one @ref arcReasonBeginEpoch so the gap they can
+     * open — which is at the NEXT epoch at the earliest, the satellite having
+     * already departed — still finds them.  Every other bit is cleared, so an
+     * early writer can never attribute a gap it did not open.
+     */
+    inline constexpr unsigned kArcReasonLateMask = kArcReasonReadmit;
+
+    /// @brief Short name of one reason BIT, for the run-end table and the events.
+    const char* arcReasonName(unsigned bit);
+
+    /// @brief Index of one reason BIT in a @ref kArcReasonCount array, or -1.
+    int arcReasonIndex(unsigned bit);
+
+    /// @brief '|'-joined names of every bit in @p mask ("-" when empty).
+    std::string arcReasonMaskName(unsigned mask);
 
     /// @brief Human-readable name of a state, for the trace and the events.
     const char* arcStateName(ArcState s);
@@ -230,6 +285,9 @@ namespace GnssProcessor {
         long long not_modelled{ 0 };            ///< admitted returns whose signal the roster does not call Modelled.
     };
 
+    /// @brief Card SID phase 4 (S1): the per-epoch reason buffer (defined below the class).
+    struct ArcReasonEpoch;
+
     /**
      * @brief The forget window, in processed epochs, on the @c kAdmArcForgetEp
      *        precedent of @c NetworkMeasurementAdmission.cpp.
@@ -327,13 +385,21 @@ namespace GnssProcessor {
          * row, for the same reason the raw pass takes the present set: a station
          * outage must not manufacture a gap at every one of its arcs.
          *
+         * Card SID phase 4 (S1): @p reasons, when non-null and armed, stamps the
+         * REASON MASK of every admitted gap this call opens.  The mask is the
+         * screens' own records for that arc, narrowed to @ref kArcReasonGapMask,
+         * and @ref kArcReasonUnknown when nothing explains it.  Passing @c nullptr
+         * reproduces the phase-3 machine exactly.
+         *
          * @param admitted The (station, satellite, signal) arcs admitted at this epoch.
          * @param out      Receives one entry per admitted-side edge, in key order.
          *                 Cleared first.  @c transition / @c from / @c to describe
          *                 the ADMITTED side on these steps.
+         * @param reasons  The epoch's reason buffer, or nullptr.
          */
         void admitEpoch(const std::set<Key>& admitted,
-                        std::vector<std::pair<Key, ArcStep>>& out);
+                        std::vector<std::pair<Key, ArcStep>>& out,
+                        const ArcReasonEpoch* reasons = nullptr);
 
         /**
          * @brief Card SID phase 3: record that this arc's ambiguity column was pruned.
@@ -387,6 +453,93 @@ namespace GnssProcessor {
         std::set<Key> seen_;                              ///< observed at the open epoch.
         std::map<std::pair<int, int>, long long> ev_last_; ///< (station, transition) -> epoch of its last event.
     };
+
+    /**
+     * @brief Card SID phase 4 (S1) — one arc's reason record inside the epoch.
+     */
+    struct ArcReasonRec {
+        unsigned  bits{ kArcReasonNone };  ///< the reasons recorded for this arc.
+        long long ep{ -1 };                ///< the epoch they were recorded at.
+    };
+
+    /**
+     * @brief Card SID phase 4 (S1) — the per-epoch REASON buffer the screens write.
+     *
+     * Owned by @c NetworkRunContext.  Every screen that removes a modelled row, a
+     * satellite or a station records the arcs it removed and its own bit here; the
+     * roster's audit pass folds the buffer into the ledger, so an admitted gap
+     * carries the reason(s) that opened it instead of being anonymous.
+     *
+     * @c armed false (the default, @c network.ledger_screens off) makes every
+     * writer return on its first line: no walk, no allocation, no counter moved,
+     * and the fold hands @c nullptr to the machine, so the ledger's own behaviour
+     * is unchanged and the solve is byte-identical.
+     *
+     * The buffer is opened at the START of the fold's epoch through
+     * @ref arcReasonBeginEpoch rather than cleared at the build seam, because two
+     * writers (the readmit park and the gross-LOS screen) run downstream of the
+     * audit pass; see @ref kArcReasonLateMask.
+     */
+    struct ArcReasonEpoch {
+        bool      armed{ false };   ///< network.ledger_screens.
+        long long ep{ -1 };         ///< the epoch currently open.
+        std::map<ArcLedger::Key, ArcReasonRec> rec;   ///< arc -> the reasons recorded THIS epoch.
+        /// The @ref kArcReasonLateMask bits carried over from the PREVIOUS epoch,
+        /// kept apart from @ref rec so the carry is exactly one epoch wide and an
+        /// early writer can never inherit a stale bit.  Rebuilt at every
+        /// @ref arcReasonBeginEpoch.
+        std::map<ArcLedger::Key, unsigned> late;
+        /// Writer CALLS per reason index (invariant 4: a writer with zero calls is
+        /// dead wiring, and the run-end table says so in those words).
+        std::vector<long long> calls{ std::vector<long long>(kArcReasonCount, 0) };
+        /// Writer calls that named an arc the ledger has never admitted, so the
+        /// screen fired on something outside the admitted population.
+        std::vector<long long> calls_unknown{ std::vector<long long>(kArcReasonCount, 0) };
+    };
+
+    /**
+     * @brief Open one epoch of the reason buffer.  Cleared except for the late bits.
+     *
+     * @param buf The buffer.
+     * @param ep  The ledger's own epoch index for the epoch being opened.
+     */
+    void arcReasonBeginEpoch(ArcReasonEpoch& buf, long long ep);
+
+    /**
+     * @brief Record ONE reason for ONE arc.  The whole writer API.
+     *
+     * @param buf   The buffer; a no-op when it is not armed.
+     * @param key   The arc the screen removed.
+     * @param bit   Exactly one @ref ArcDeathReason bit.
+     * @param known Whether the ledger knows this arc (for the dead-wiring split).
+     */
+    void arcReasonRecord(ArcReasonEpoch& buf, const ArcLedger::Key& key,
+                         unsigned bit, bool known = true);
+
+    /// @brief The reasons recorded for @p key at the open epoch, or @c kArcReasonNone.
+    unsigned arcReasonOf(const ArcReasonEpoch& buf, const ArcLedger::Key& key);
+
+    /**
+     * @brief Record one reason for every ADMITTED-ALIVE arc of one satellite at
+     *        one station.  The EXPANSION rule for a screen with no per-arc identity.
+     *
+     * The elevation mask refuses a whole LOS, the readmit horizon parks a whole
+     * satellite, and the coverage gate removes a whole family: none of them names
+     * a signal.  The brief's rule is that such a writer expands to the arcs the
+     * screen actually removed, which on the admitted side is the set that was
+     * alive when the screen fired.
+     *
+     * @param buf     The buffer; a no-op when it is not armed.
+     * @param led     The ledger, READ-ONLY.
+     * @param station Station index, or -1 for every station.
+     * @param sat     Satellite id.
+     * @param signal  Signal id, or empty for every signal of the satellite.
+     * @param bit     Exactly one @ref ArcDeathReason bit.
+     * @return The number of arcs the expansion reached.
+     */
+    long long arcReasonExpand(ArcReasonEpoch& buf, const ArcLedger& led,
+                              int station, const std::string& sat,
+                              const std::string& signal, unsigned bit);
 
     /**
      * @brief Card SID phase 3 — the ADMITTED Gap-to-Reentered arcs of this epoch.  PURE.

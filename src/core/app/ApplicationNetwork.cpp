@@ -1709,7 +1709,7 @@ int Application::runNetwork() {
         // to ApplicationNetworkAssembly.cpp: the writer-before-prune
         // ordering contract is structural inside networkAssemblyPrefilter_.
         int n_dropped_sats = 0;
-        networkAssemblyPrefilter_(se, setup, traces, slip_qc,
+        networkAssemblyPrefilter_(se, ctx, setup, traces, slip_qc,
                                   modeled, present, n_dropped_sats);
 
         // FLICKER / GAP SIGNAL INTEGRITY.  Classifies every present (station,
@@ -1905,6 +1905,17 @@ int Application::runNetwork() {
                 // only thing the knob gates).
                 PhaseGateDrop gate_drop;
                 gate_drop.on = config_.networkPhaseDatumGateDropErase();
+                // Card SID phase 4 (S2 / B1): the ledger read at the election's
+                // first-sighting branch.  `observe` alone is the observatory and is
+                // byte-identical; `restore` adds phase 4b's action.  Both are false
+                // on every unarmed run, which leaves the pointer's every branch
+                // unreachable inside the election.
+                AnchorReentry pd_reentry;
+                pd_reentry.observe = config_.networkLedgerScreens() && ctx.roster.armed;
+                pd_reentry.restore = pd_reentry.observe && config_.networkLedgerAnchor();
+                pd_reentry.led     = &ctx.arc_ledger;
+                pd_reentry.state   = &ctx.carry.sid_anchor_reentry;
+                pd_reentry.now_ep  = ctx.arc_ledger.epochIndex();
                 networkElectPhaseAnchors(sticky, stations, present, cnd, hyg,
                                          ctx.counters.hyg,
                                          anchor_incumbent,
@@ -1933,7 +1944,11 @@ int Application::runNetwork() {
                                          // the election is byte-identical.
                                          held_basis.on ? &held_basis : nullptr,
                                          // Card EV7 §6: always non-null (see above).
-                                         &gate_drop);
+                                         &gate_drop,
+                                         // Card SID phase 4: null in effect when
+                                         // neither half is armed (the election tests
+                                         // `observe` on its first line).
+                                         &pd_reentry);
                 // Card EV7 §6 (F2): BOTH EDGES of the gate are events now.  One row
                 // per drop edge with the identities on either side — what left, who
                 // was anchoring it, who is left carrying it — and `handled` saying
@@ -1946,6 +1961,15 @@ int Application::runNetwork() {
                     // dropped family's arcs are in, counted exactly where the edge is
                     // already evented.  Read-only and a no-op when the knob is off.
                     networkSignalRosterGateDrop(ctx, gd.sat, gd.signal);
+                    // Card SID phase 4a (S1): the COVERAGE-GATE writer.  The gate
+                    // removes a phase-bias COLUMN and (armed) the family's carried
+                    // ambiguities; it does not remove the PHASE ROWS, which is the
+                    // whole of card EV7's mechanism, so this bit is expected to
+                    // open few or no admitted gaps.  Recorded anyway, because "the
+                    // gate fired and opened nothing" is the statement the readout
+                    // has to be able to make.
+                    arcReasonExpand(ctx.reasons, ctx.arc_ledger, -1, gd.sat,
+                                    gd.signal, kArcReasonGate);
                     emitEvent("PHASE_ANCHOR", "gate_drop",
                               gd.sat + "_" + gd.signal,
                               gd.survivors.empty() ? std::string("-") : gd.survivors,
@@ -1961,6 +1985,10 @@ int Application::runNetwork() {
                                                                  : gd.prev_anchor,
                                           gd.handled ? 1 : 0));
                 }
+                // Card SID phase 4 (S2 / B1): fold the read.  Here, where every
+                // other election readback is folded, so the counters and the two
+                // event tiers are written in one place and in epoch order.
+                networkSignalRosterAnchorRead(ctx, traces, se.time, pd_reentry);
                 // The families this card owns, for the erase-cause split below.  A
                 // gated key is erased from union_keys before the election's loop, so
                 // it can never also be a handover / first-sighting mark this epoch —

@@ -743,6 +743,7 @@ private:
      *        Implemented in @c ApplicationNetworkAssembly.cpp.
      */
     void networkAssemblyPrefilter_(const SyncedEpoch& se,
+                                   NetworkRunContext& ctx,
                                    NetworkSetupResult& setup,
                                    NetworkRunTraces& traces,
                                    const SlipQcChannel& qc,

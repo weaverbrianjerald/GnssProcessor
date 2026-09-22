@@ -234,6 +234,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
     src/core/filter/ArcLedger.cpp
+    src/core/filter/NetworkAnchorReentry.cpp
     src/core/filter/NetworkOraclePin.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkAmbStateTrace.cpp
@@ -369,6 +370,7 @@ add_executable(gnss_tests
     tests/test_tracker_modeled_first.cpp
     tests/test_signal_roster.cpp
     tests/test_arc_ledger.cpp
+    tests/test_ledger_anchor.cpp
     tests/test_ledger_reentry.cpp
     tests/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp

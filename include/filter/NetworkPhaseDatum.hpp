@@ -41,6 +41,7 @@
 #include "filter/NetworkRunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "filter/NetworkAnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
 #include "filter/NetworkPhaseGateDrop.hpp"  // Card EV7 §6: PhaseGateDropEvent / the edge rule
+#include "filter/NetworkAnchorReentry.hpp"  // Card SID phase 4: AnchorReentry / the drop memo
 
 #include <cstddef>
 #include <map>
@@ -469,7 +470,12 @@ void networkElectPhaseAnchors(
         const NetworkInjectState* inject = nullptr,
         const AnchorCandidacyUsable* cand_usable = nullptr,
         PhaseHeldBasis* held = nullptr,
-        PhaseGateDrop* gate_drop = nullptr);
+        PhaseGateDrop* gate_drop = nullptr,
+        /// Card SID phase 4 (S2 / B1): the ledger read at the first-sighting
+        /// branch, and the drop-edge memory the restore decides on.  Null (the
+        /// default) leaves the election byte-identical; armed in its OBSERVE half
+        /// alone it counts and events and still changes nothing.
+        AnchorReentry* reentry = nullptr);
 
 /**
  * @brief ANCHOR-SLIP HANDOVER (network.cycle_slip.anchor_slip_handover):

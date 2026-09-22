@@ -49,6 +49,7 @@
  */
 
 #include "filter/ArcLedger.hpp"
+#include "filter/NetworkAnchorReentry.hpp"  // Card SID phase 4: AnchorReentry
 
 #include <map>
 #include <memory>
@@ -68,6 +69,7 @@ namespace GnssProcessor {
     struct NetworkRunContext;
     struct PppObservation;           // common/PppObservation.hpp
     struct SyncedEpoch;              // rinex/MultiRinexSync.hpp
+    struct GnssTime;                 // common/GnssTypes.hpp
     struct RawSlipEpoch;             // slip/NetworkRawObservables.hpp
     struct NetworkSolutionEpoch;     // products/NetworkProductEmitter.hpp
 
@@ -422,6 +424,58 @@ namespace GnssProcessor {
         long long ans_no_carry{ 0 };          ///< a response was due but there was nothing to protect.
         long long ans_no_carry_entry{ 0 };    ///< the arc has no `local_carry` entry at all (outside the response's reach).
 
+        // =================================================================
+        // PHASE 4a (network.ledger_screens): the REASON-MASK WRITERS and the
+        // anchor read.  Every class is OBSERVATORY; phase 4b adds the two
+        // restore counters at the end, reported in both states of its knob.
+        // =================================================================
+
+        /// (S1) Admitted gaps the fold stamped a reason on (denominator).
+        long long gap_folded{ 0 };
+        /// (S1) Of those, gaps whose mask carries more than one reason.
+        long long gap_multi{ 0 };
+        /// (S1) Per reason INDEX (@ref arcReasonIndex): admitted gaps it opened.
+        /// A gap with two reasons increments both, so these do not sum to
+        /// @ref gap_folded; that is stated in the table rather than hidden.
+        std::vector<long long> gap_by_reason{ std::vector<long long>(kArcReasonCount, 0) };
+        /// (S1) Per reason INDEX: WRITER CALLS, i.e. (arc, screen) records made.
+        std::vector<long long> writer_calls{ std::vector<long long>(kArcReasonCount, 0) };
+        /// (S1) Per reason INDEX: writer invocations that reached no admitted arc.
+        std::vector<long long> writer_unknown{ std::vector<long long>(kArcReasonCount, 0) };
+        /// (S1) The phase-3 NO-VERDICT population split by the reason mask of the
+        /// gap that preceded the return.  Same indices; a return whose gap mask is
+        /// empty (no fold ran, e.g. the knob armed mid-lineage) is counted in
+        /// @ref nv_no_mask.
+        std::vector<long long> nv_by_reason{ std::vector<long long>(kArcReasonCount, 0) };
+        long long nv_total{ 0 };              ///< the no-verdict population seen at the split.
+        long long nv_no_mask{ 0 };            ///< of those, with no reason mask at all.
+
+        // --- (S2) the anchor election read against the ledger -------------
+        long long anchor_fs{ 0 };             ///< first sightings the election made (denominator).
+        long long anchor_fs_return{ 0 };      ///< of those, whose family had arcs in Reentered or Gap.
+        long long anchor_fs_same_gen{ 0 };    ///< of those, a same-generation return of a dropped family.
+        long long anchor_fs_new_gen{ 0 };     ///< of those, a return with new generations.
+        long long anchor_fs_events{ 0 };      ///< ARC anchor_first_sighting_on_return rows written.
+        /// Coverage-gate DROP EDGES seen by this class (denominator; the same
+        /// edges class (h) counts, read here with the generation test as well).
+        long long anchor_drop_edges{ 0 };
+        long long anchor_drop_arcs_tracking{ 0 }; ///< arcs Tracking at the edges, summed.
+        long long anchor_drop_arcs_gap{ 0 };      ///< arcs Gap or Reentered at the edges, summed.
+        long long anchor_drop_arcs_dead{ 0 };     ///< arcs Dead at the edges, summed.
+        /// (S2) `anchor_arc_age` against the ledger's admitted age.  The container
+        /// exists only while network.eq34_anchor_min_arc_ep, the pin bridge or the
+        /// fresh-pin ramp is armed, so a zero DENOMINATOR here means the hygiene
+        /// seam never ran and the class is dead wiring, not a clean agreement.
+        long long age_compared{ 0 };
+        long long age_disagree{ 0 };
+        long long age_no_ledger{ 0 };         ///< arcs the ledger could give no admitted age for.
+
+        // --- (B1 / B2) the behaviour half, reported in BOTH knob states ----
+        long long anchor_restore{ 0 };        ///< returns where the previous incumbent was restored.
+        long long anchor_restore_refused{ 0 };///< same-generation returns the election rules refused.
+        long long anchor_reentry_new{ 0 };    ///< returns that proceeded as today (new generations).
+        long long age_from_ledger{ 0 };       ///< arc ages taken from the ledger instead of the counter.
+
         double    build_ms{ 0.0 };            ///< wall time inside the build seam, summed.
         double    audit_ms{ 0.0 };            ///< wall time inside the audit seam, summed.
     };
@@ -644,6 +698,25 @@ namespace GnssProcessor {
      */
     void networkSignalRosterGateDrop(NetworkRunContext& ctx, const std::string& sat,
                                      const std::string& signal);
+
+    /**
+     * @brief Card SID phase 4 (S2 / B1) — fold the election's ledger read.
+     *
+     * Called from the driver immediately after @c networkElectPhaseAnchors returns,
+     * which is where the per-epoch @ref AnchorReentry result is in scope and where
+     * every other election readback is already folded. Counts the first sightings
+     * the ledger says were RETURNS, emits their identity, and reports phase 4b's
+     * restore decisions. No-op when the read is not armed.
+     *
+     * @param ctx     Run context (the counters).
+     * @param traces  Trace bundle (the @c ARC and @c PHASE_ANCHOR event rows).
+     * @param t       This epoch's time stamp.
+     * @param re      The election's per-epoch read result.
+     */
+    void networkSignalRosterAnchorRead(NetworkRunContext& ctx,
+                                       NetworkRunTraces& traces,
+                                       const GnssTime& t,
+                                       const AnchorReentry& re);
 
     /**
      * @brief Run-end readout: the table of every class, or nothing when disarmed.

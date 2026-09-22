@@ -52,6 +52,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.q_pb = config_.getProcessNoise().sat_phase_bias;
     k.q_cb = config_.getProcessNoise().sat_code_bias;
     k.ledger_reentry = config_.networkLedgerReentry();
+    k.ledger_screens = config_.networkLedgerScreens();
+    k.ledger_anchor  = config_.networkLedgerAnchor();
     k.pl_on = config_.networkPhaseLeveling();
     k.pl_q_amb = config_.networkPhaseLevelingQAmb();
     k.pl_warmup = config_.networkPhaseLevelingWarmupEpochs();
@@ -829,6 +831,18 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(config_.networkLedgerReentryNoVerdict()
                     == LedgerReentryNoVerdict::Refloat ? "refloat" : "bridge");
         }
+        // Card SID phase 4b (B3): the ELECTION'S MEMORY ACROSS A GAP.  Armed, a
+        // family the coverage gate erased and that returns at the same generation
+        // is re-pinned on its PREVIOUS incumbent rather than on whichever station
+        // the coverage rank picks, so the carried ambiguities a resumed run
+        // restores were accumulated against a different realization of that
+        // family's datum — and the drop memo that decides it is deliberately not
+        // snapshotted, so the two sides cannot be reconciled after the fact.
+        // Armed-only append, on the card SCC precedent, so every pre-card snapshot
+        // fingerprint is byte-identical.  network.ledger_screens is NOT appended:
+        // it is an observatory and changes no byte of the solve, which is the same
+        // trace-knob rule the loader's fingerprint-SAFE list applies.
+        if (config_.networkLedgerAnchor()) add("sid:ledger_anchor");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
@@ -6607,10 +6621,21 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 ++ctx.counters.n_readmit_parked;
                 ++parked_now[oc.sat];
             }
-            for (const auto& [sat, n] : parked_now)
+            for (const auto& [sat, n] : parked_now) {
                 traces.emitEvent(t, "READMIT", "park", sat, "", static_cast<double>(n),
                                  readmit_h, "park",
                                  "D2 clock + code-bias carry parked at departure");
+                // Card SID phase 4a (S1): the READMIT writer.  The park is a SHARED
+                // parameter's departure, so it names a satellite and never a
+                // station: the expansion writes the bit on every station's arcs of
+                // that satellite that the admitted lifecycle still calls alive.
+                // This seam runs DOWNSTREAM of the roster's audit pass, so the
+                // record reaches the fold one epoch later through
+                // @ref kArcReasonLateMask, which is the earliest epoch a gap it can
+                // explain is able to open (the satellite has already departed).
+                arcReasonExpand(ctx.reasons, ctx.arc_ledger, -1, sat, "",
+                                kArcReasonReadmit);
+            }
             // (3) Seed-vs-solve check: mark-if-moved telemetry for every seeded kind (the
             //     clock's authoritative mark is the Q3 guard's own trip, counted separately).
             for (const auto& sd : ctx.carry.readmit_seed_check) {

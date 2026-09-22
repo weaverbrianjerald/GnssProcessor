@@ -29,6 +29,7 @@
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
+#include "filter/NetworkAnchorReentry.hpp"
 #include "slip/NetworkRawObservables.hpp"
 
 #include <algorithm>
@@ -434,6 +435,110 @@ TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWit
         EXPECT_EQ(ep.rows.at(0)[0].sig1, "L1C");
         EXPECT_EQ(cnt.gap_tracker_key_mismatch, 1);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Card SID phase 4 (S2): FIRST-SIGHTING-ON-RETURN detection
+// ---------------------------------------------------------------------------
+//
+// The election calls a family a first sighting when it had no incumbent at the
+// previous epoch.  The read that phase 4a adds asks the LEDGER whether that family
+// had in fact just returned, and the answer is built from the family census below.
+// These cases pin the census the detection is decided on: what "returning" counts
+// as, what it does not, and that another family never contributes to it.
+
+namespace {
+
+ArcLedger::Key FK(int sta, const char* sat, const char* sig) {
+    return ArcLedger::Key{ sta, std::string(sat), std::string(sig) };
+}
+
+/// One admitted epoch, raw side driven alongside (the producer's own ordering).
+void fsAdmit(ArcLedger& led, long long ep, const std::vector<ArcLedger::Key>& arcs) {
+    // One keeper arc per station, on a satellite no case queries: a station that
+    // contributed nothing has its arcs FROZEN rather than gapped, so a test that
+    // drops a station's only arc would exercise the freeze instead of the gap.
+    std::vector<ArcLedger::Key> all = arcs;
+    for (int sta = 0; sta < 3; ++sta) all.push_back(FK(sta, "G99", "L9X"));
+    led.beginEpoch(ep, static_cast<double>(ep) * 30.0);
+    for (const auto& k : all) led.observe(k, /*modelled=*/true);
+    std::set<int> present;
+    for (const auto& k : all) present.insert(std::get<0>(k));
+    std::vector<std::pair<ArcLedger::Key, ArcStep>> raw_edges, adm_edges;
+    led.endEpoch(present, raw_edges);
+    led.admitEpoch(std::set<ArcLedger::Key>(all.begin(), all.end()), adm_edges);
+}
+
+}  // namespace
+
+TEST(SignalRosterTest, FirstSightingOnReturnSeesTheReturningArcs) {
+    // A family whose arcs are in a GAP or have just RE-ENTERED is a RETURN, and the
+    // election reading it as a birth is the class the audit named.  Both states
+    // count toward the returning half; a Tracking arc does not.
+    ArcLedger led;
+    led.configure(/*horizon_s=*/3900.0, kArcLedgerForgetEp);
+    const auto a = FK(0, "G30", "L1W");
+    const auto b = FK(1, "G30", "L1W");
+    const auto c = FK(2, "G30", "L1W");
+    for (long long ep = 0; ep <= 2; ++ep) fsAdmit(led, ep, { a, b, c });
+
+    // a and b drop out; c keeps the family present so the stations stay in the
+    // admitted present set and the two gaps are genuine per-arc gaps.
+    fsAdmit(led, 3, { b, c });          // a gaps
+    fsAdmit(led, 4, { c, a });          // a re-enters, b gaps
+
+    int tr = -1, gp = -1, dd = -1;
+    anchorReentryFamilyCensus(led, "G30", "L1W", tr, gp, dd);
+    EXPECT_EQ(gp, 2) << "one Reentered plus one Gap is the returning population";
+    EXPECT_EQ(tr, 1);
+    EXPECT_EQ(dd, 0);
+}
+
+TEST(SignalRosterTest, FirstSightingOnReturnIgnoresOtherFamilies) {
+    // The detection is per (satellite, signal): the SAME satellite on another band
+    // and another satellite on the same band must never be counted into it.
+    ArcLedger led;
+    led.configure(3900.0, kArcLedgerForgetEp);
+    const auto a  = FK(0, "G30", "L1W");
+    const auto a2 = FK(0, "G30", "L2W");
+    const auto o  = FK(0, "G31", "L1W");
+    const auto keep = FK(1, "G30", "L1W");
+    for (long long ep = 0; ep <= 2; ++ep) fsAdmit(led, ep, { a, a2, o, keep });
+    fsAdmit(led, 3, { a, a2, o, keep });
+    fsAdmit(led, 4, { a, keep });        // a2 and o gap; a keeps tracking
+
+    int tr = -1, gp = -1, dd = -1;
+    anchorReentryFamilyCensus(led, "G30", "L1W", tr, gp, dd);
+    EXPECT_EQ(tr, 2);
+    EXPECT_EQ(gp, 0) << "the L2W and G31 gaps belong to other families";
+
+    anchorReentryFamilyCensus(led, "G30", "L2W", tr, gp, dd);
+    EXPECT_EQ(gp, 1);
+    EXPECT_EQ(tr, 0);
+}
+
+TEST(SignalRosterTest, AGenuineFirstSightingHasNoReturningArcs) {
+    // The other side of the class, and the reason the counter needs a denominator:
+    // a family rising for the first time must read ZERO returning arcs, so a run
+    // whose first-sighting count is high and whose return count is zero is a run
+    // with nothing to fix.
+    ArcLedger led;
+    led.configure(3900.0, kArcLedgerForgetEp);
+    const auto a = FK(0, "G30", "L1W");
+    fsAdmit(led, 0, { a });
+    fsAdmit(led, 1, { a });
+
+    int tr = -1, gp = -1, dd = -1;
+    anchorReentryFamilyCensus(led, "G30", "L1W", tr, gp, dd);
+    EXPECT_EQ(tr, 1);
+    EXPECT_EQ(gp, 0);
+    EXPECT_EQ(dd, 0);
+
+    // A family the ledger has never seen at all is all zeros, not an error.
+    anchorReentryFamilyCensus(led, "G99", "L1W", tr, gp, dd);
+    EXPECT_EQ(tr, 0);
+    EXPECT_EQ(gp, 0);
+    EXPECT_EQ(dd, 0);
 }
 
 TEST(SignalRosterTest, RoleNamesAreStable) {

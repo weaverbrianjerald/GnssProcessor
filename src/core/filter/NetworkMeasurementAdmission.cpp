@@ -402,6 +402,16 @@ void networkMeasurementAdmission(NetworkRunContext& ctx,
             //     it (recorded per satellite and applied only when the observation
             //     is emptied, since a satellite that keeps another band is still a
             //     genuine supporter).
+            // Card SID phase 4a (S1): the ADMISSION writer.  The withhold removes
+            // the band's observables from `modeled`, which is exactly the set the
+            // admitted lifecycle is fed from, so this screen OPENS an admitted gap
+            // and the identity is exact at this line: the station index, the
+            // satellite and the erased signals themselves.  Recorded per PHASE key,
+            // because a phase arc is what the ledger tracks; the code keys of the
+            // same band go with it and are not separate arcs.
+            for (const std::string& b : phase_keys)
+                arcReasonRecord(ctx.reasons, ArcLedger::Key{ si, obs.satellite, b },
+                                kArcReasonAdmission);
             for (const std::string& b : phase_keys) {
                 withheld_pb.insert(obs.satellite + "|" + b);
                 prune_states = true;

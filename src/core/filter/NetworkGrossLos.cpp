@@ -510,6 +510,19 @@ void networkGrossLosScreen(NetworkRunContext& ctx,
                     // documents.  Marked unconditionally for the same reason it
                     // is there: the leveling vehicle is where this screen runs.
                     if (stations[i].sm) stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                    // Card SID phase 4a (S1): the GROSS-LOS writer.  The screen's
+                    // published action is a CODE-row de-weight (a cap, not a drop:
+                    // the rows still fold), so the arc is recorded with the
+                    // `deweight` bit, which @ref kArcReasonGapMask excludes from
+                    // every gap mask by construction.  The carry erase and the
+                    // refloat on the same line ARE a removal of carried state, so
+                    // the `gross` bit is recorded beside it.
+                    arcReasonRecord(ctx.reasons,
+                                    ArcLedger::Key{ static_cast<int>(i), pa.sat, pa.signal },
+                                    kArcReasonDeweight);
+                    arcReasonRecord(ctx.reasons,
+                                    ArcLedger::Key{ static_cast<int>(i), pa.sat, pa.signal },
+                                    kArcReasonGross);
                     ++n_amb;
                 }
                 tal.amb_refloated += n_amb;

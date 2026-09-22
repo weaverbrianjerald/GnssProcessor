@@ -774,6 +774,16 @@ struct SlipQcCounters {
     long long ledger_reentry_pivot_skipped{0};///< ARCS at a gauge-pinned station index below i_lo (never refloated locally).
     long long ledger_reentry_state_recreated{0}; ///< ARCS whose ambiguity column had been PRUNED inside the gap they return from.
     long long ledger_reentry_events{0};       ///< ARC arc_reentry rows written for the no-verdict population (holdoff-throttled).
+    /// Card SID phase 4a (S1): the NO-VERDICT population of @ref
+    /// ledger_reentry_no_verdict, split by the REASON MASK of the admitted gap
+    /// that preceded the return.  One entry per reason bit index
+    /// (@c arcReasonIndex); @ref ledger_reentry_nv_no_mask counts the returns
+    /// whose gap carries no mask at all (the gap opened before the writers were
+    /// armed, or the fold did not run for it).  Zero unless
+    /// network.ledger_screens.  Phase 3 named this population a screen-side
+    /// decoupling and owed it an attribution; this is the attribution.
+    std::vector<long long> ledger_reentry_nv_reason;
+    long long ledger_reentry_nv_no_mask{0};
     /// D5 innovation FLAG ROWS seen at the attribution site, one per RESOLVED
     /// flag.  Two things make this NOT a chord count, both deliberate:
     ///   * under the WL-3 joint pair block the gate runs per band ROW (rows i and

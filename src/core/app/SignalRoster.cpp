@@ -378,6 +378,12 @@ namespace GnssProcessor {
 
         ctx.arc_ledger.configure(rs.horizon_s, kArcLedgerForgetEp);
 
+        // PHASE 4a (S1): arm the reason writers.  The buffer is the ONLY thing the
+        // screens touch, so an unarmed run pays one bool test per writer call and
+        // nothing else; the fold then receives a buffer that is not armed and
+        // leaves the ledger's masks exactly as phase 3 wrote them.
+        ctx.reasons.armed = config_.networkLedgerScreens();
+
         // PHASE 3 (R3b): arm the ambiguity prune's key recorder on every station,
         // so the audit pass can mark the arcs whose column the prune destroyed
         // inside a gap.  The prune itself is untouched and the recorder is a
@@ -398,6 +404,19 @@ namespace GnssProcessor {
                   n, rs.horizon_s, rs.horizon_pl_s, rs.horizon_iono_s,
                   rs.horizon_pbhold_s, rs.horizon_readmit_s,
                   kArcLedgerForgetEp, kArcLedgerEventHoldoffEp);
+        if (ctx.reasons.armed)
+            log->info("Network (card SID phase 4a / LEDGER SCREENS): ARMED "
+                      "(network.ledger_screens).  Every removal screen records the arcs "
+                      "it removed and its reason bit into the per-epoch buffer, and the "
+                      "audit pass folds the buffer into the admitted gap it opened; a "
+                      "gap no writer explains carries 'unknown'.  A de-weight is recorded "
+                      "as 'deweight' and never counted as a gap.  The anchor election is "
+                      "READ against the ledger at its first-sighting branch.  "
+                      "OBSERVATORY: the solve is byte-identical.{}",
+                      config_.networkLedgerAnchor()
+                          ? "  ⚠ network.ledger_anchor (phase 4b) is ALSO armed, so the "
+                            "election ACTS on that read and the run is SOLVE-AFFECTING."
+                          : "");
     }
 
     // =====================================================================
@@ -418,6 +437,11 @@ namespace GnssProcessor {
         ++ctr.epochs;
         const double t_s = TimeUtils::continuousGpsSeconds(se.time);
         ctx.arc_ledger.beginEpoch(epoch_idx, t_s);
+        // PHASE 4a (S1): open the epoch's REASON buffer.  Here and not at the fold,
+        // because two writers (the readmit park and the gross-LOS screen) run
+        // downstream of the audit pass and their records have to survive exactly
+        // one epoch to reach the gap they can explain.
+        arcReasonBeginEpoch(ctx.reasons, epoch_idx);
         // PHASE 3 (R4): the response's per-arc record is EPOCH-scoped.  Cleared at
         // the first seam of the epoch so it can never describe a previous one,
         // which is the failure mode the two earlier "answered" approximations had.
@@ -513,12 +537,36 @@ namespace GnssProcessor {
                         static_cast<long long>(br.tracked_phase.size() + br.tracked_code.size());
                     ctr.companion_signals += static_cast<long long>(br.companion_code.size());
                     for (const auto& [sig, reason] : br.excluded) {
-                        (void)sig;
                         ++ctr.excluded_signals;
                         const std::string r = reason;
                         if (r == "allowlist")        ++ctr.excl_allowlist;
                         else if (r == "not_latched") ++ctr.excl_not_latched;
                         else                         ++ctr.excl_no_latch;
+                        // PHASE 4a (S1): the network signal ALLOW LIST writer.  The
+                        // decision itself is taken once per run inside PppModel,
+                        // which carries no station identity at all, but the roster
+                        // has already reproduced it per (station, constellation,
+                        // band, signal) with its reason, so the writer sits here
+                        // rather than being plumbed into a shared model.  The allow
+                        // list is a WHOLE-RUN exclusion, so it removes arcs that
+                        // were never admitted and the expansion normally reaches
+                        // nothing: that zero is reported, not hidden.
+                        if (!ctx.reasons.armed || r != "allowlist") continue;
+                        long long n_hit = 0;
+                        const auto& arcs = ctx.arc_ledger.arcs();
+                        for (auto ait = arcs.lower_bound(
+                                 ArcLedger::Key{ static_cast<int>(i), "", "" });
+                             ait != arcs.end()
+                             && std::get<0>(ait->first) == static_cast<int>(i); ++ait) {
+                            if (std::get<2>(ait->first) != sig) continue;
+                            if (ait->second.adm_state != ArcState::Tracking
+                                && ait->second.adm_state != ArcState::Reentered) continue;
+                            arcReasonRecord(ctx.reasons, ait->first, kArcReasonAllowlist);
+                            ++n_hit;
+                        }
+                        if (n_hit == 0)
+                            ++ctx.reasons.calls_unknown[static_cast<std::size_t>(
+                                arcReasonIndex(kArcReasonAllowlist))];
                     }
                 }
 
@@ -752,11 +800,31 @@ namespace GnssProcessor {
         // at the build seam upstream of all of that, is a strict superset; the two
         // are reported side by side and never added.
         {
+            // PHASE 4a (S1): the SLIP writer, on the one set that carries every
+            // refloat vehicle.  `relevel.free_ambs` is written by the MW / LLI
+            // drains, the IF-TD tier, the RAIM T3 and T4 responses, the gap
+            // re-entry tiers and the de-weight release alike, each with the exact
+            // (station, ambiguity key) identity, so recording it here is one site
+            // instead of a bit added at every responder — and it is upstream of the
+            // fold two lines below, which is the ordering the mask needs.  A freed
+            // arc is only a gap opener where the free is followed by the row
+            // disappearing; where it is not, the bit is simply not on a gap.
+            if (ctx.reasons.armed)
+                for (const auto& [sta, amb] : ctx.carry.relevel.free_ambs) {
+                    const auto us = amb.find('_');
+                    if (us == std::string::npos) continue;
+                    const ArcLedger::Key k{ sta, amb.substr(0, us), amb.substr(us + 1) };
+                    arcReasonRecord(ctx.reasons, k, kArcReasonSlip,
+                                    ctx.arc_ledger.find(k) != nullptr);
+                }
             std::set<ArcLedger::Key> admitted;
             signalRosterAdmittedArcs(modeled, present, admitted);
             ctr.adm_rows += static_cast<long long>(admitted.size());
             std::vector<std::pair<ArcLedger::Key, ArcStep>> adm_edges;
-            ctx.arc_ledger.admitEpoch(admitted, adm_edges);
+            // PHASE 4a (S1): the FOLD.  Unarmed the buffer is handed over all the
+            // same and the machine sees `armed == false`, so every reason mask
+            // stays exactly what phase 3 wrote.
+            ctx.arc_ledger.admitEpoch(admitted, adm_edges, &ctx.reasons);
             for (const auto& [key, step] : adm_edges) {
                 const int sta = std::get<0>(key);
                 const std::string& sat = std::get<1>(key);
@@ -767,6 +835,20 @@ namespace GnssProcessor {
                 case ArcTransition::Reentry: ++ctr.adm_reentry; break;
                 case ArcTransition::Death:   ++ctr.adm_death;   break;
                 default: break;
+                }
+                // PHASE 4a (S1): the per-reason gap census, read off the mask the
+                // fold has just stamped.  A gap with two reasons increments both
+                // bits, so the per-reason numbers do not sum to `gap_folded`; the
+                // multi count says by how much.
+                if (ctx.reasons.armed && step.transition == ArcTransition::Gap) {
+                    ++ctr.gap_folded;
+                    int n_bits = 0;
+                    for (int b = 0; b < kArcReasonCount; ++b)
+                        if (step.reason_mask & (1u << b)) {
+                            ++ctr.gap_by_reason[static_cast<std::size_t>(b)];
+                            ++n_bits;
+                        }
+                    if (n_bits > 1) ++ctr.gap_multi;
                 }
                 // The CARRY-SIDE census on the admitted lifecycle: a return at an arc
                 // whose leveling carry is still live is the population the card's
@@ -804,6 +886,25 @@ namespace GnssProcessor {
                         case ArcReentryOutcome::NoCarry:          ++ctr.ans_no_carry;   break;
                         case ArcReentryOutcome::BridgedNoVerdict:
                         case ArcReentryOutcome::None:             ++ctr.ans_bridged_nv; break;
+                        }
+                        // PHASE 4a (S1): the NO-VERDICT population split by the
+                        // reason mask of the GAP THAT PRECEDED the return.  Phase 3
+                        // measured 87 of 301 returns in 6 h that no raw tier saw and
+                        // named them "a screen-side decoupling"; this is the split
+                        // that says which screen.  The mask is read off the arc
+                        // rather than the step, because the step describes the
+                        // RE-ENTRY while the mask was stamped at the gap and has
+                        // survived it untouched.
+                        if (ctx.reasons.armed
+                            && (o == ArcReentryOutcome::BridgedNoVerdict
+                                || o == ArcReentryOutcome::None)) {
+                            ++ctr.nv_total;
+                            const ArcRecord* ar = ctx.arc_ledger.find(key);
+                            const unsigned m = ar ? ar->adm_reason_mask : kArcReasonNone;
+                            if (m == kArcReasonNone) ++ctr.nv_no_mask;
+                            for (int b = 0; b < kArcReasonCount; ++b)
+                                if (m & (1u << b))
+                                    ++ctr.nv_by_reason[static_cast<std::size_t>(b)];
                         }
                     }
                 }
@@ -1111,6 +1212,87 @@ namespace GnssProcessor {
         }
         if (gapped)             ++ctr.gate_drop_edges_gapped;
         else if (tracking)      ++ctr.gate_drop_edges_tracking;
+        // PHASE 4a (S2): the same edges, read on the ADMITTED side and per ARC.
+        // Class (h) above answers "does the family hold a gapped arc" on the raw
+        // side; this answers "how many of its arcs are alive, gapped or dead", which
+        // is what the generation test at the family's return is decided against.
+        if (!ctx.reasons.armed) return;
+        ++ctr.anchor_drop_edges;
+        int n_tr = 0, n_gp = 0, n_dd = 0;
+        anchorReentryFamilyCensus(ctx.arc_ledger, sat, signal, n_tr, n_gp, n_dd);
+        ctr.anchor_drop_arcs_tracking += n_tr;
+        ctr.anchor_drop_arcs_gap      += n_gp;
+        ctr.anchor_drop_arcs_dead     += n_dd;
+    }
+
+    // =====================================================================
+    // The anchor election's ledger read (S2) and its restore decisions (B1)
+    // =====================================================================
+
+    void networkSignalRosterAnchorRead(NetworkRunContext& ctx,
+                                       NetworkRunTraces& traces,
+                                       const GnssTime& t,
+                                       const AnchorReentry& re) {
+        if (!re.observe || !ctx.roster.armed) return;
+        auto& ctr = ctx.counters.sid;
+        ctr.anchor_fs        += re.n_first_sighting;
+        ctr.anchor_fs_return += re.n_first_sighting_return;
+        ctr.anchor_restore         += re.n_restore;
+        ctr.anchor_restore_refused += re.n_restore_refused;
+        ctr.anchor_reentry_new     += re.n_reentry_new;
+        for (const AnchorFirstSighting& fs : re.first_sightings) {
+            if (fs.cls == AnchorReentryClass::SameGeneration) ++ctr.anchor_fs_same_gen;
+            else if (fs.cls == AnchorReentryClass::NewGeneration) ++ctr.anchor_fs_new_gen;
+            // The IDENTITY the audit says this class has never had: which family,
+            // how long it had been without an incumbent, how many of its arcs had
+            // just come back, and what the generation test made of it.  Throttled
+            // on the ledger's own per (station, transition) holdoff so the stream
+            // stays bounded at 305 stations; the counters carry the full volume.
+            const bool interesting = fs.n_returning > 0
+                                     || fs.cls != AnchorReentryClass::NoMemory;
+            if (!interesting) continue;
+            const std::size_t us = fs.amb.find('_');
+            const std::string sat = us == std::string::npos ? fs.amb : fs.amb.substr(0, us);
+            const std::string sig = us == std::string::npos ? std::string{}
+                                                            : fs.amb.substr(us + 1);
+            if (ctx.arc_ledger.eventAllowed(-1, ArcTransition::Reentry)) {
+                ++ctr.anchor_fs_events;
+                traces.emitEvent(t, "ARC", "anchor_first_sighting_on_return", sat,
+                                 fs.station,
+                                 static_cast<double>(fs.n_returning),
+                                 fs.since_incumbent_ep < 0
+                                     ? std::nullopt
+                                     : std::optional<double>(
+                                           static_cast<double>(fs.since_incumbent_ep)),
+                                 fs.restored ? "restore" : "elect",
+                                 fmt::format("signal={};since_incumbent_ep={};"
+                                             "returning={};tracking={};class={};"
+                                             "prev_anchor={};elected={};refused={}",
+                                             sig, fs.since_incumbent_ep,
+                                             fs.n_returning, fs.n_tracking,
+                                             anchorReentryClassName(fs.cls),
+                                             fs.prev_anchor.empty() ? std::string("-")
+                                                                    : fs.prev_anchor,
+                                             fs.station,
+                                             fs.refused[0] == '\0' ? "-" : fs.refused));
+            }
+            // B1's own two edges, emitted only where the behaviour half is armed so
+            // an observatory run cannot be mistaken for one that acted.
+            if (!re.restore || fs.cls == AnchorReentryClass::NoMemory) continue;
+            traces.emitEvent(t, "PHASE_ANCHOR",
+                             fs.restored ? "reentry_restore" : "reentry_new", sat,
+                             fs.restored ? fs.prev_anchor : fs.station,
+                             static_cast<double>(fs.n_returning),
+                             std::nullopt,
+                             fs.restored ? "restore" : "elect",
+                             fmt::format("signal={};class={};prev_anchor={};elected={};"
+                                         "since_incumbent_ep={};refused={}",
+                                         sig, anchorReentryClassName(fs.cls),
+                                         fs.prev_anchor.empty() ? std::string("-")
+                                                                : fs.prev_anchor,
+                                         fs.station, fs.since_incumbent_ep,
+                                         fs.refused[0] == '\0' ? "-" : fs.refused));
+        }
     }
 
     // =====================================================================
@@ -1400,6 +1582,120 @@ namespace GnssProcessor {
                 ? "  ⚠ EMPTY POPULATION: no admitted arc returned after 2 to 30 "
                   "missed epochs in this run, so the split says nothing about the "
                   "response.  Read it as a denominator, not as a clean result."
+                : "");
+
+        // ---------------------------------------------------------------
+        // PHASE 4a: the REASON-MASK WRITERS (S1)
+        // ---------------------------------------------------------------
+        if (!ctx.reasons.armed) return;
+        {
+            std::string per_reason, per_writer, nv_split;
+            for (int b = 0; b < kArcReasonCount; ++b) {
+                const unsigned bit = 1u << b;
+                const std::size_t ub = static_cast<std::size_t>(b);
+                if (!per_reason.empty()) per_reason += ", ";
+                per_reason += fmt::format("{} {}", arcReasonName(bit), c.gap_by_reason[ub]);
+                const long long calls = ctx.reasons.calls[ub];
+                const long long unk   = ctx.reasons.calls_unknown[ub];
+                if (calls > 0 || unk > 0) {
+                    if (!per_writer.empty()) per_writer += ", ";
+                    per_writer += fmt::format("{} {}{}", arcReasonName(bit), calls,
+                                              unk > 0 ? fmt::format(" ({} reached no arc)", unk)
+                                                      : std::string{});
+                }
+                if (c.nv_by_reason[ub] > 0) {
+                    if (!nv_split.empty()) nv_split += ", ";
+                    nv_split += fmt::format("{} {}", arcReasonName(bit), c.nv_by_reason[ub]);
+                }
+            }
+            // The writers that never fired, named rather than left to be inferred
+            // from a zero in a list (standing invariant 4: a zero with a zero
+            // denominator is dead wiring and the teardown says so).
+            std::string silent;
+            for (int b = 0; b < kArcReasonCount; ++b) {
+                const unsigned bit = 1u << b;
+                if (bit == kArcReasonUnknown) continue;   // not a writer
+                if (ctx.reasons.calls[static_cast<std::size_t>(b)] > 0) continue;
+                if (!silent.empty()) silent += ", ";
+                silent += arcReasonName(bit);
+            }
+            log->info(
+                "Network (card SID phase 4a / REASON-MASK WRITERS, S1): {} admitted "
+                "GAP(s) were stamped with a reason, {} of them carrying more than one "
+                "(so the per-reason counts below do not sum to the total).  GAPS "
+                "OPENED PER REASON: {}.  WRITER CALLS (arc records made, per reason): "
+                "{}.  SILENT WRITERS (armed and never fired): {}.  A gross-LOS "
+                "DE-WEIGHT is recorded as 'deweight' and is EXCLUDED from every gap "
+                "mask by construction, because the row still folds.  'unknown' is an "
+                "admitted gap that no writer explains.{}",
+                c.gap_folded, c.gap_multi, per_reason,
+                per_writer.empty() ? "none" : per_writer,
+                silent.empty() ? "none" : silent,
+                c.gap_folded == 0
+                    ? "  ⚠ ARMED AND INERT: no admitted gap was folded at all, so the "
+                      "reason masks say nothing about this run."
+                    : "");
+            // ⚠ NOT the phase-3 `ledger_reentry_no_verdict` population: that one is
+            // every admitted return inside the CARRY horizon and is attributed by the
+            // response's own line in NetworkTeardown.cpp.  This is the R4 split's
+            // BRIDGED-WITH-NO-VERDICT bucket, whose population is narrowed to returns
+            // after 2 to 30 missed epochs.  The two are stated apart on purpose; a
+            // single "no-verdict by reason" number would silently be one or the other.
+            log->info(
+                "Network (card SID phase 4a / THE R4 BRIDGED-NO-VERDICT BUCKET BY "
+                "REASON, S1): {} re-entr(y|ies) of the 2-to-30-epoch R4 population that "
+                "no raw tier saw, split by the reason mask of the GAP THAT PRECEDED the "
+                "return: {}.  {} of them carry NO mask at all (the gap opened before the "
+                "writers were armed, or outside the fold).  The card's own no-verdict "
+                "population (the response's, over the whole carry horizon) is "
+                "attributed on the phase-3 line above.{}",
+                c.nv_total, nv_split.empty() ? "none" : nv_split, c.nv_no_mask,
+                c.nv_total == 0
+                    ? "  ⚠ EMPTY POPULATION: no no-verdict re-entry occurred, so the "
+                      "split is a denominator and not a result."
+                    : "");
+        }
+
+        // ---------------------------------------------------------------
+        // PHASE 4a / 4b: the ANCHOR ELECTION read against the ledger (S2 / B1 / B2)
+        // ---------------------------------------------------------------
+        log->info(
+            "Network (card SID phase 4 / THE ANCHOR ELECTION AGAINST THE LEDGER, S2): "
+            "the election treated {} (satellite, signal) famil(y|ies) as a FIRST "
+            "SIGHTING; {} of them ({:.1f} per cent) had at least one arc the ledger "
+            "calls Reentered or Gap, which is a RETURN read as a birth — the class the "
+            "audit named at `anchor_incumbent`.  Of those, {} were a SAME-GENERATION "
+            "return of a family a coverage-gate DROP EDGE had erased and {} came back "
+            "as NEW generations; {} identity event(s) written (holdoff {} epoch(s)).  "
+            "COVERAGE-GATE DROP EDGES seen by this class: {}, carrying {} arc(s) "
+            "Tracking, {} Gap or Reentered and {} Dead at the edge.  ANCHOR_ARC_AGE "
+            "against the ledger's admitted age: {} compared, {} DISAGREE, {} arc(s) "
+            "the ledger could give no admitted age for.{}",
+            c.anchor_fs, c.anchor_fs_return, pct(c.anchor_fs_return, c.anchor_fs),
+            c.anchor_fs_same_gen, c.anchor_fs_new_gen, c.anchor_fs_events,
+            kArcLedgerEventHoldoffEp,
+            c.anchor_drop_edges, c.anchor_drop_arcs_tracking,
+            c.anchor_drop_arcs_gap, c.anchor_drop_arcs_dead,
+            c.age_compared, c.age_disagree, c.age_no_ledger,
+            c.age_compared == 0
+                ? "  ⚠ ZERO DENOMINATOR on the age class: `anchor_arc_age` exists only "
+                  "while network.eq34_anchor_min_arc_ep, the pin bridge or the "
+                  "fresh-pin ramp is armed, and none of them is, so the hygiene seam "
+                  "never ran.  This is DEAD WIRING, not an agreement."
+                : "");
+        log->info(
+            "Network (card SID phase 4b / THE RESTORE, B1 and B2): network.ledger_anchor "
+            "is {}.  {} return(s) RESTORED the previous incumbent, {} same-generation "
+            "return(s) were REFUSED by the election's own rules (untracked, banned, "
+            "hygiene or basis), and {} return(s) proceeded as today because their arcs "
+            "were NEW generations.  {} arc age(s) were taken from the ledger instead of "
+            "the counter.{}",
+            ctx.knobs.ledger_anchor ? "ON" : "OFF",
+            c.anchor_restore, c.anchor_restore_refused, c.anchor_reentry_new,
+            c.age_from_ledger,
+            (c.anchor_restore + c.anchor_restore_refused + c.anchor_reentry_new) == 0
+                ? "  ⚠ EMPTY POPULATION: no family that a drop edge erased returned in "
+                  "this run, so the restore changed nothing here."
                 : "");
     }
 

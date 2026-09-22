@@ -403,6 +403,248 @@ TEST(ArcLedgerTest, AdmittedLiveCountIsItsOwnPopulation) {
     EXPECT_EQ(led.size(), 3u);
 }
 
+// ---------------------------------------------------------------------------
+// Card SID phase 4 (S1): the REASON MASK folded into the admitted gap
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The phase-4 epoch driver: open the reason buffer beside the ledger's epoch,
+/// let the caller write reasons, then close both sides with the fold.
+BothSides runWithReasons(ArcLedger& led, ArcReasonEpoch& buf, long long ep,
+                         const std::vector<ArcLedger::Key>& raw,
+                         const std::vector<ArcLedger::Key>& admitted,
+                         const std::set<int>& present,
+                         const std::vector<std::pair<ArcLedger::Key, unsigned>>& reasons) {
+    BothSides out;
+    led.beginEpoch(ep, static_cast<double>(ep) * kDt);
+    arcReasonBeginEpoch(buf, ep);
+    for (const auto& k : raw) out.observed.push_back(led.observe(k, /*modelled=*/true));
+    for (const auto& kb : reasons) arcReasonRecord(buf, kb.first, kb.second);
+    led.endEpoch(present, out.raw_edges);
+    led.admitEpoch(std::set<ArcLedger::Key>(admitted.begin(), admitted.end()),
+                   out.adm_edges, &buf);
+    return out;
+}
+
+unsigned admMask(const ArcLedger& led, const ArcLedger::Key& k) {
+    const ArcRecord* a = led.find(k);
+    return a == nullptr ? kArcReasonNone : a->adm_reason_mask;
+}
+
+std::size_t rIdx(unsigned bit) {
+    return static_cast<std::size_t>(arcReasonIndex(bit));
+}
+
+}  // namespace
+
+TEST(ArcLedgerTest, ReasonBitsFoldIntoTheAdmittedGapThatOpened) {
+    // S1's whole contract: a screen that removes a modelled row records its bit,
+    // and the gap the removal opens carries it.  Two arcs, two different screens,
+    // so a per-arc mask cannot be a per-epoch one in disguise.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto a = K(0, "G01", "L1W");
+    const auto b = K(0, "G02", "L1W");
+    const auto c = K(0, "G03", "L1W");   // stays admitted: keeps the station present
+    const std::set<int> present{ 0 };
+
+    runWithReasons(led, buf, 0, { a, b, c }, { a, b, c }, present, {});
+    runWithReasons(led, buf, 1, { a, b, c }, { c }, present,
+                   { { a, kArcReasonMask }, { b, kArcReasonAdmission } });
+
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
+    EXPECT_EQ(admMask(led, a), kArcReasonMask);
+    EXPECT_EQ(admMask(led, b), kArcReasonAdmission);
+    EXPECT_EQ(admMask(led, c), kArcReasonNone) << "an arc that did not gap keeps no mask";
+    EXPECT_EQ(buf.calls[rIdx(kArcReasonMask)], 1);
+    EXPECT_EQ(buf.calls[rIdx(kArcReasonAdmission)], 1);
+}
+
+TEST(ArcLedgerTest, ReasonMaskSurvivesTheGapAndIsReadableAtTheReentry) {
+    // The no-verdict split reads the mask AT THE RETURN, so the mask has to
+    // survive the whole gap untouched and only reset at a genuine re-birth.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto a = K(0, "G01", "L1W");
+    const auto c = K(0, "G03", "L1W");
+    const std::set<int> present{ 0 };
+
+    runWithReasons(led, buf, 0, { a, c }, { a, c }, present, {});
+    runWithReasons(led, buf, 1, { a, c }, { c }, present, { { a, kArcReasonAdmission } });
+    runWithReasons(led, buf, 2, { a, c }, { c }, present, {});
+    EXPECT_EQ(admMask(led, a), kArcReasonAdmission) << "the mask must not be re-stamped";
+    const auto s = runWithReasons(led, buf, 3, { a, c }, { a, c }, present, {});
+    bool saw = false;
+    for (const auto& ks : s.adm_edges)
+        if (ks.first == a) { saw = true; EXPECT_EQ(ks.second.transition, ArcTransition::Reentry); }
+    EXPECT_TRUE(saw);
+    EXPECT_EQ(admMask(led, a), kArcReasonAdmission)
+        << "a re-entry reads the mask of the gap it closes";
+}
+
+TEST(ArcLedgerTest, AnUnexplainedAdmittedGapIsUnknown) {
+    // The number phase 3 is owed: an admitted gap no writer explains.  It must be
+    // NAMED rather than left empty, so a zero in the unknown row means "every gap
+    // was attributed" and not "the fold never ran".
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto a = K(0, "G01", "L1W");
+    const auto c = K(0, "G03", "L1W");
+    const std::set<int> present{ 0 };
+
+    runWithReasons(led, buf, 0, { a, c }, { a, c }, present, {});
+    runWithReasons(led, buf, 1, { a, c }, { c }, present, {});
+    EXPECT_EQ(admMask(led, a), kArcReasonUnknown);
+}
+
+TEST(ArcLedgerTest, ADeweightIsNotAGapOpener) {
+    // The brief's own rule, and the reason kArcReasonGapMask exists: the gross-LOS
+    // screen caps a code row's weight and the row still folds, so a de-weight must
+    // never be read as the screen that removed the arc.  An arc whose ONLY record
+    // is a de-weight and which then gaps reads unknown.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto a = K(0, "G01", "L1W");
+    const auto c = K(0, "G03", "L1W");
+    const std::set<int> present{ 0 };
+
+    runWithReasons(led, buf, 0, { a, c }, { a, c }, present, {});
+    runWithReasons(led, buf, 1, { a, c }, { c }, present, { { a, kArcReasonDeweight } });
+    EXPECT_EQ(admMask(led, a), kArcReasonUnknown);
+    EXPECT_EQ(buf.calls[rIdx(kArcReasonDeweight)], 1)
+        << "the de-weight is still COUNTED as a writer call";
+
+    // A de-weight BESIDE a real removal leaves the real reason alone.
+    const auto b = K(1, "G01", "L1W");
+    const auto d = K(1, "G03", "L1W");
+    const std::set<int> two{ 0, 1 };
+    runWithReasons(led, buf, 2, { b, d, c }, { b, d, c }, two, {});
+    runWithReasons(led, buf, 3, { b, d, c }, { d, c }, two,
+                   { { b, kArcReasonDeweight }, { b, kArcReasonGross } });
+    EXPECT_EQ(admMask(led, b), kArcReasonGross);
+}
+
+TEST(ArcLedgerTest, TheLateBitSurvivesExactlyOneEpoch) {
+    // The readmit park runs downstream of the fold, so its record has to reach the
+    // NEXT epoch's fold and no further; every other bit is dropped at the epoch
+    // boundary so an early writer cannot attribute a gap it did not open.
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto a = K(0, "G01", "L1W");
+    arcReasonBeginEpoch(buf, 0);
+    arcReasonRecord(buf, a, kArcReasonReadmit);
+    arcReasonRecord(buf, a, kArcReasonMask);
+    EXPECT_EQ(arcReasonOf(buf, a), kArcReasonReadmit | kArcReasonMask);
+    arcReasonBeginEpoch(buf, 1);
+    EXPECT_EQ(arcReasonOf(buf, a), kArcReasonReadmit) << "only the late bit carries";
+    arcReasonBeginEpoch(buf, 2);
+    EXPECT_EQ(arcReasonOf(buf, a), kArcReasonNone) << "and it carries exactly one epoch";
+}
+
+TEST(ArcLedgerTest, AnUnarmedReasonBufferLeavesTheMachineAsPhase3WroteIt) {
+    // Invariant 6 in both knob states, at the unit level: the fold is handed the
+    // buffer on every run, and an unarmed one must change nothing at all.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;   // armed stays false
+    const auto a = K(0, "G01", "L1W");
+    const auto c = K(0, "G03", "L1W");
+    const std::set<int> present{ 0 };
+
+    runWithReasons(led, buf, 0, { a, c }, { a, c }, present, {});
+    runWithReasons(led, buf, 1, { a, c }, { c }, present, { { a, kArcReasonMask } });
+    EXPECT_EQ(led.find(a)->adm_state, ArcState::Gap);
+    EXPECT_EQ(admMask(led, a), kArcReasonNone);
+    EXPECT_TRUE(buf.rec.empty());
+    EXPECT_EQ(buf.calls[rIdx(kArcReasonMask)], 0);
+}
+
+TEST(ArcLedgerTest, ReasonExpansionReachesOnlyAdmittedAliveArcs) {
+    // The expansion rule for a screen whose identity is coarser than an arc: the
+    // elevation mask names a satellite, so the writer has to reach that station's
+    // arcs of it that the admitted lifecycle still calls alive, and nothing else.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto a1 = K(0, "G01", "L1W");
+    const auto a2 = K(0, "G01", "L2W");
+    const auto b1 = K(1, "G01", "L1W");
+    const auto o  = K(0, "G02", "L1W");
+    const std::set<int> present{ 0, 1 };
+
+    runWithReasons(led, buf, 0, { a1, a2, b1, o }, { a1, a2, b1, o }, present, {});
+    arcReasonBeginEpoch(buf, 1);
+    EXPECT_EQ(arcReasonExpand(buf, led, 0, "G01", "", kArcReasonMask), 2);
+    EXPECT_EQ(arcReasonOf(buf, a1), kArcReasonMask);
+    EXPECT_EQ(arcReasonOf(buf, a2), kArcReasonMask);
+    EXPECT_EQ(arcReasonOf(buf, b1), kArcReasonNone) << "another station is not reached";
+    EXPECT_EQ(arcReasonOf(buf, o), kArcReasonNone)  << "another satellite is not reached";
+
+    // Every station (-1), narrowed to ONE signal: the coverage gate's own shape.
+    EXPECT_EQ(arcReasonExpand(buf, led, -1, "G01", "L1W", kArcReasonGate), 2);
+    EXPECT_EQ(arcReasonOf(buf, b1), kArcReasonGate);
+    EXPECT_EQ(arcReasonOf(buf, a2), kArcReasonMask) << "L2W is not in the family";
+
+    // A satellite the ledger does not know reaches nothing and says so.
+    EXPECT_EQ(arcReasonExpand(buf, led, 0, "G99", "", kArcReasonMask), 0);
+    EXPECT_GT(buf.calls_unknown[rIdx(kArcReasonMask)], 0);
+}
+
+TEST(ArcLedgerTest, ReasonExpansionNeverRunsPastItsStation) {
+    // A defect of the first build of this helper, pinned here.  The scan starts at
+    // lower_bound(station, sat, ""), which for a station holding NO arc of that
+    // satellite lands on the first key of a LATER station — and the satellite test
+    // alone does not stop it there, because the satellite is exactly what matches.
+    // The elevation mask reaches this every time it refuses a satellite at a
+    // station that was not carrying it, which would have mis-attributed a
+    // neighbouring station's gap to the mask and deflated `unknown`.
+    ArcLedger led;
+    led.configure(900.0, kArcLedgerForgetEp);
+    ArcReasonEpoch buf;
+    buf.armed = true;
+    const auto s0 = K(0, "G02", "L1W");   // station 0 holds only G02
+    const auto s1 = K(1, "G01", "L1W");   // station 1 holds G01, the sought satellite
+    const std::set<int> present{ 0, 1 };
+
+    runWithReasons(led, buf, 0, { s0, s1 }, { s0, s1 }, present, {});
+    arcReasonBeginEpoch(buf, 1);
+    EXPECT_EQ(arcReasonExpand(buf, led, 0, "G01", "", kArcReasonMask), 0)
+        << "station 0 has no G01 arc, so the expansion must reach nothing";
+    EXPECT_EQ(arcReasonOf(buf, s1), kArcReasonNone)
+        << "station 1's G01 arc must NOT inherit station 0's screen";
+    EXPECT_EQ(arcReasonOf(buf, s0), kArcReasonNone);
+}
+
+TEST(ArcLedgerTest, ReasonNamesAreStable) {
+    // Parsed offline out of the run-end table and the ARC events, so they are part
+    // of the interface.
+    EXPECT_STREQ(arcReasonName(kArcReasonHorizon), "horizon");
+    EXPECT_STREQ(arcReasonName(kArcReasonMask), "mask");
+    EXPECT_STREQ(arcReasonName(kArcReasonSlip), "slip");
+    EXPECT_STREQ(arcReasonName(kArcReasonGate), "gate");
+    EXPECT_STREQ(arcReasonName(kArcReasonAllowlist), "allowlist");
+    EXPECT_STREQ(arcReasonName(kArcReasonAdmission), "admission");
+    EXPECT_STREQ(arcReasonName(kArcReasonReadmit), "readmit");
+    EXPECT_STREQ(arcReasonName(kArcReasonGross), "gross");
+    EXPECT_STREQ(arcReasonName(kArcReasonDeweight), "deweight");
+    EXPECT_STREQ(arcReasonName(kArcReasonNoModel), "nomodel");
+    EXPECT_STREQ(arcReasonName(kArcReasonUnknown), "unknown");
+    EXPECT_EQ(arcReasonMaskName(kArcReasonMask | kArcReasonSlip), "mask|slip");
+    EXPECT_EQ(arcReasonMaskName(kArcReasonNone), "-");
+    EXPECT_EQ(kArcReasonGapMask & kArcReasonDeweight, 0u)
+        << "a de-weight can never be a gap opener";
+}
+
 TEST(ArcLedgerTest, StateAndTransitionNamesAreStable) {
     // The trace and the ARC event tier are parsed by name offline, so the strings
     // are part of the interface, not log text.

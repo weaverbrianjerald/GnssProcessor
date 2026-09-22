@@ -6112,6 +6112,48 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Card SID phase 4a — the REASON-MASK WRITERS and the anchor
+         *        observatory (@c network.ledger_screens).
+         *
+         * Armed, every screen that removes a modelled row, a satellite or a
+         * station records the arcs it removed and its own reason bit into the
+         * run context's per-epoch buffer, and the roster's audit pass folds that
+         * buffer into the ledger so an admitted gap carries the reason(s) that
+         * opened it. The anchor election is READ against the ledger at the same
+         * time: a first sighting whose family has arcs in @c Reentered or @c Gap
+         * is counted and evented, each coverage-gate drop edge reports its arcs'
+         * states and the generation test at the family's return, and the
+         * @c anchor_arc_age container is compared with the ledger's own age.
+         *
+         * OBSERVATORY: nothing in the solve reads any of it, so the solve, the
+         * wire and every graded trace are byte-identical armed and disarmed
+         * (standing invariant 6 in both states). REFUSED (error plus disarm)
+         * without @ref networkSignalRoster. Not fingerprinted. Network mode only.
+         */
+        bool networkLedgerScreens() const { return network_ledger_screens_; }
+
+        /**
+         * @brief Card SID phase 4b — the anchor election treats a RETURN as a
+         *        return (@c network.ledger_anchor).
+         *
+         * Armed, a family the coverage gate's drop edge erased and that returns
+         * with arcs of the SAME generation restores its previous incumbent as the
+         * candidate of record, subject to the election's existing rules, instead
+         * of being elected afresh as a first sighting; a return with NEW
+         * generations proceeds exactly as today. Both outcomes are events
+         * (@c PHASE_ANCHOR @c reentry_restore / @c reentry_new) with counters. The
+         * @c anchor_arc_age container becomes a READER of the ledger's admitted
+         * age at the same time.
+         *
+         * SOLVE-AFFECTING when armed (the election's memory across a gap changes
+         * what the carried anchor means), so it is graded as a behaviour change
+         * and it is FINGERPRINTED (armed-only append, on the card SCC precedent).
+         * REFUSED (error plus disarm) without @ref networkLedgerScreens.
+         * Network mode only.
+         */
+        bool networkLedgerAnchor() const { return network_ledger_anchor_; }
+
+        /**
          * @brief Whether RAIM refloats are driven by prominence attribution
          *        (@c network.raim_attribution) instead of the per-satellite consensus.
          *
@@ -8365,6 +8407,8 @@ namespace GnssProcessor {
         bool   network_signal_roster_{false};                      ///< Card SID phase 1 (network.signal_roster): build the per-station SIGNAL ROSTER (tracked / modelled / companion / excluded per station, constellation and band digit, reproduced from the canonical latch) and the ARC LEDGER (Absent / Tracking / Gap / Reentered / Dead per (station, satellite, signal)) once per epoch, and count every disagreement between them and the site that decides the same question today. OBSERVATORY: nothing but the counters and the trace reads either object, so the solve is byte-identical ARMED and disarmed. Outputs: the run-end table, the ARC event tier, logs/network_arc_ledger.csv. Not fingerprinted. Network mode only.
         bool   network_roster_tracker_{false};                     ///< Card SID phase 2 (network.roster_tracker): the arc-level slip tracker (networkComputeRawObservables) names each band by the ROSTER's modelled_phase for that (station, constellation, band) when that phase is reported with its matching code this epoch, falling back to the lexical rule only where the roster names none. The first READER of the phase-1 observatory; supersedes network.cycle_slip.tracker_modeled_first by construction (the roster's modelled role IS that knob's latch), and both may be armed. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
         bool   network_ledger_reentry_{false};                     ///< Card SID phase 3 (network.ledger_reentry): the gap RE-ENTRY RESPONSE takes its population from the arc ledger's ADMITTED lifecycle (every arc whose admitted state goes Gap to Reentered this epoch, whose signal the roster calls Modelled, whose gap is inside phase_leveling_max_gap_s) and looks the raw tiers' verdict up per arc instead of being driven by them. The raw tiers keep running unchanged. An arc no raw tier saw has NO verdict and is handled by network.ledger_reentry_no_verdict. SOLVE-AFFECTING when armed (it changes which carried levels survive a break). REFUSED (error + disarm) without network.signal_roster and network.roster_tracker. FINGERPRINTED (armed-only append). Network mode only.
+        bool   network_ledger_screens_{false};                     ///< Card SID phase 4a (network.ledger_screens): the REASON-MASK WRITERS at every screen that removes a modelled row, a satellite or a station, folded into the ledger so an admitted gap carries the reason(s) that opened it, plus the anchor election READ against the ledger (first-sighting-on-return cases, the coverage-gate drop edges' arc states and generation test, the anchor_arc_age comparison). OBSERVATORY: byte-identical armed. REFUSED (error + disarm) without network.signal_roster. Not fingerprinted. Network mode only.
+        bool   network_ledger_anchor_{false};                      ///< Card SID phase 4b (network.ledger_anchor): a family the coverage gate's drop edge erased and that returns with arcs of the SAME generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting; a NEW-generation return proceeds as today. anchor_arc_age becomes a reader of the ledger's admitted age. SOLVE-AFFECTING when armed. REFUSED (error + disarm) without network.ledger_screens. FINGERPRINTED (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Card SID phase 3 (network.ledger_reentry_no_verdict): `bridge` (default) leaves a no-verdict re-entry to the PASS-B inject and merely counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as UNMEASURABLE, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< HARD exclusion (policy backstop): DROP from the network entirely any station whose receiver antenna still has NO ATX match AFTER the always-on radome→NONE fallback (a genuinely unknown antenna TYPE → fully unmodelled receiver PCO/PCV = a systematic in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. OFF = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; OFF = consensus behaviour.

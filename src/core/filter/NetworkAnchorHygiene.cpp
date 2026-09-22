@@ -88,6 +88,18 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     const bool resume_seed = ctx.carry.anchor_age_resume_seed;
     ctx.carry.anchor_age_resume_seed = false;   // one-shot: the first live epoch only
     const int seed_age = resume_seed ? std::max(min_arc_ep, 1) : 1;
+    // Card SID phase 4 (S2 / B2): the ledger's ADMITTED age is the same quantity
+    // this map counts, and the audit's disposition for the container is READER
+    // (`runs/_msc/sid_audit_report_2026-09-22.md` E.2: "age is ep - ep_state_changed").
+    // S2 COMPARES the two and counts the disagreement; B2 takes the ledger's answer.
+    // ⚠ Both are reachable only while this seam runs at all, which needs
+    // network.eq34_anchor_min_arc_ep, the pin bridge or the fresh-pin ramp armed —
+    // so on a posture with none of them the class has a ZERO DENOMINATOR and the
+    // run-end table says dead wiring rather than agreement.
+    const bool sid_age_read = ctx.roster.armed && config_.networkLedgerScreens();
+    const bool sid_age_use  = sid_age_read && config_.networkLedgerAnchor();
+    const long long sid_now_ep = ctx.arc_ledger.epochIndex();
+    auto& sid_ctr = ctx.counters.sid;
     std::map<std::pair<int, std::string>, int> new_age;
     for (std::size_t i = 0; i < stations.size(); ++i) {
         if (!present[i] || !stations[i].sm) continue;
@@ -101,9 +113,30 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 continue;
             }
             const auto prev = age_map.find({si, amb});
-            new_age[{si, amb}] = prev == age_map.end()
+            const int counted = prev == age_map.end()
                 ? seed_age
                 : std::min(prev->second + 1, kArcAgeCap);
+            new_age[{si, amb}] = counted;
+            if (!sid_age_read) continue;
+            const std::size_t us = amb.find('_');
+            if (us == std::string::npos || us == 0 || us + 1 >= amb.size()) continue;
+            const long long led_age = anchorLedgerArcAge(
+                ctx.arc_ledger,
+                ArcLedger::Key{ si, amb.substr(0, us), amb.substr(us + 1) },
+                sid_now_ep);
+            if (led_age < 0) { ++sid_ctr.age_no_ledger; continue; }
+            ++sid_ctr.age_compared;
+            const int led_clamped = static_cast<int>(
+                std::min<long long>(led_age, kArcAgeCap));
+            if (led_clamped != counted) ++sid_ctr.age_disagree;
+            // B2: the container becomes a READER.  Taken only where the ledger can
+            // answer; an arc it has never admitted keeps the counted value, which is
+            // the conservative direction (the alternative would seed a fresh age on
+            // an arc the estimator has been carrying since before the observatory).
+            if (sid_age_use) {
+                new_age[{si, amb}] = led_clamped;
+                ++sid_ctr.age_from_ledger;
+            }
         }
     }
     ctr.hyg.arcs_tracked += static_cast<long long>(new_age.size());

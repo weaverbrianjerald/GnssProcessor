@@ -1371,7 +1371,14 @@ EpochAction Application::networkPassAHead_(const SyncedEpoch& se,
             return EpochAction::SkipEpoch;
         }
         piv.pstate.epoch_time = se.time;
-        if (!piv.model->computeModels(it->second, piv.pstate, modeled.front())
+        // Card SID phase 4a (S1): the pivot's own elevation-mask / no-model writer.
+        // Reached only on the LEGACY (non-prioritized) datum, where station 0 is
+        // modelled here instead of in the parallel tail; both working bases run the
+        // prioritized datum, so this block is inert there and the tail below carries
+        // the whole population.
+        std::map<std::string, DropReason> piv_drops;
+        if (!piv.model->computeModels(it->second, piv.pstate, modeled.front(),
+                                      ctx.reasons.armed ? &piv_drops : nullptr)
             || modeled.front().empty()) {
             ++n_skipped;
             if (trace) trace << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow)
@@ -1381,6 +1388,12 @@ EpochAction Application::networkPassAHead_(const SyncedEpoch& se,
         }
         piv.mm->ensureNetworkSharedStates(modeled.front(), {}, cbadm_admit);  // allow all pivot phase signals (minus CB-ADM quarantined)
         present.front() = true;
+        for (const auto& [sat, why] : piv_drops) {
+            if (why == DropReason::None) continue;
+            arcReasonExpand(ctx.reasons, ctx.arc_ledger, 0, sat, "",
+                            why == DropReason::BelowMask ? kArcReasonMask
+                                                         : kArcReasonNoModel);
+        }
     }
 
     if (!phase_datum_prioritized)
@@ -1435,6 +1448,16 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
     auto& sta_repairs    = pa.sta_repairs;
     auto& sta_if_resets  = pa.sta_if_resets;
     auto& sta_mw_refloat = pa.sta_mw_refloat;
+    // Card SID phase 4a (S1): the ELEVATION-MASK and NO-MODEL writers.  The refusal
+    // is taken inside computeSatelliteGeometry, which carries no station identity,
+    // so it is captured through the model's own per-satellite drop-reason map and
+    // folded here where the station index is known.  ONE map per station index: the
+    // loop below is OpenMP-parallel, so a shared buffer would race (the same reason
+    // present[] is folded through a per-index char buffer).  Allocated only while
+    // the writers are armed, so an unarmed run pays one bool test.
+    const bool sid_screens = ctx.reasons.armed;
+    std::vector<std::map<std::string, DropReason>> pa_drops(
+        sid_screens ? stations.size() : 0);
 
     #pragma omp parallel for schedule(dynamic) num_threads(n_threads) if(parallel_on)
     for (int i = i_lo; i < n_sta_total; ++i) {
@@ -1443,7 +1466,9 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             auto it = se.by_station.find(st.name);
             if (it == se.by_station.end() || it->second.empty()) continue;
             st.pstate.epoch_time = se.time;
-            if (!st.model->computeModels(it->second, st.pstate, modeled[i])
+            if (!st.model->computeModels(
+                    it->second, st.pstate, modeled[i],
+                    sid_screens ? &pa_drops[static_cast<std::size_t>(i)] : nullptr)
                 || modeled[i].empty())
                 continue;
             // Prioritized: every station (incl. the former pivot, i=0)
@@ -1634,6 +1659,23 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
             log->warn("Network: station '{}' PASS A geometry threw ({}); "
                       "skipping it this epoch", stations[i].name, a_err[i]);
     }
+
+    // Card SID phase 4a (S1): fold the drop reasons, SERIALLY and in station order.
+    // The refusal is per SATELLITE, so it expands to that station's arcs of that
+    // satellite that the admitted lifecycle still calls alive: the brief's rule for
+    // a screen whose identity is coarser than an arc.  A station that threw is left
+    // out on purpose — its whole epoch is missing, which is a station outage and not
+    // a per-satellite screen, and the ledger freezes an absent station's arcs.
+    if (sid_screens)
+        for (int i = i_lo; i < n_sta_total; ++i) {
+            if (!a_ok[i]) continue;
+            for (const auto& [sat, why] : pa_drops[static_cast<std::size_t>(i)]) {
+                unsigned bit = kArcReasonNoModel;
+                if (why == DropReason::BelowMask) bit = kArcReasonMask;
+                else if (why == DropReason::None) continue;
+                arcReasonExpand(ctx.reasons, ctx.arc_ledger, i, sat, "", bit);
+            }
+        }
 
     // --- card SCC: the second code channel's per-epoch bookkeeping (R7) --------
     // (docs/refound/SCC_second_code_channel_2026-09-21.md.)  SERIAL, in station
@@ -2213,6 +2255,7 @@ void Application::networkPassASlipScan_(const SyncedEpoch& se,
 }
 
 void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
+                                            NetworkRunContext& ctx,
                                             NetworkSetupResult& setup,
                                             NetworkRunTraces& traces,
                                             const SlipQcChannel& qc,
@@ -2282,6 +2325,15 @@ void Application::networkAssemblyPrefilter_(const SyncedEpoch& se,
         if (!dropped_sats.empty()) {
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
+                // Card SID phase 4a (S1): the CROSS-STATION OBSERVABILITY gate is a
+                // coverage gate too — the same rule as the phase-bias gate one level
+                // up, applied to the satellite clock — and it is the one that removes
+                // ROWS, so it opens admitted gaps where the phase-bias gate opens
+                // none.  Both share the `gate` bit; the drop-edge counters keep them
+                // separable at the readout.
+                for (const std::string& ds : dropped_sats)
+                    arcReasonExpand(ctx.reasons, ctx.arc_ledger,
+                                    static_cast<int>(i), ds, "", kArcReasonGate);
                 // Remove the dropped satellites' observations so their rows are
                 // not built (and so cannot pin the receiver clock).
                 auto& obs = modeled[i];

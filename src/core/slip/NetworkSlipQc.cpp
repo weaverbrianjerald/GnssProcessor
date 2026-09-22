@@ -2534,6 +2534,25 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 else                                  ++qc_cnt.ledger_reentry_v_unmeas;
             } else {
                 ++qc_cnt.ledger_reentry_no_verdict;
+                // Card SID phase 4a (S1): ATTRIBUTE the no-verdict return.  Phase 3
+                // measured this population (87 of 301 returns in 6 h) and named it a
+                // screen-side decoupling: the modelled row of a signal disappears
+                // while `raw_observed` keeps it and the satellite stays modelled, so
+                // neither raw tier sees a break.  The reason mask stamped on the
+                // ADMITTED GAP that preceded this return says which screen removed
+                // the row.  Read off the arc, not off the step: the mask was written
+                // when the gap opened and has survived it untouched.
+                if (arc_ledger != nullptr) {
+                    if (qc_cnt.ledger_reentry_nv_reason.empty())
+                        qc_cnt.ledger_reentry_nv_reason.assign(kArcReasonCount, 0);
+                    const ArcRecord* ar = arc_ledger->find(
+                        ArcLedger::Key{ i, a.satellite, a.signal });
+                    const unsigned m = ar ? ar->adm_reason_mask : kArcReasonNone;
+                    if (m == kArcReasonNone) ++qc_cnt.ledger_reentry_nv_no_mask;
+                    for (int b = 0; b < kArcReasonCount; ++b)
+                        if (m & (1u << b))
+                            ++qc_cnt.ledger_reentry_nv_reason[static_cast<std::size_t>(b)];
+                }
             }
 
             // The gauge-pinned legacy pivot: its ambiguities are pinned, so a

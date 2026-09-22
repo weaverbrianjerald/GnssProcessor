@@ -6208,6 +6208,20 @@ namespace GnssProcessor {
                               "inject and only counted).", nv);
             }
         }
+        // Card SID phase 4a (section 9 of the same card): the REASON-MASK WRITERS at
+        // every screen that removes a modelled row, a satellite or a station, and
+        // the anchor election READ against the ledger.  Default OFF; ON is an
+        // OBSERVATORY and byte-identical on the solve, which is 4a's own bar.  The
+        // interlock against a missing observatory is raised in the posture block at
+        // the end of this section.
+        network_ledger_screens_ =
+            jval<bool>(json, "network.ledger_screens", "network_ledger_screens", false);
+        // Card SID phase 4b: the election treats a RETURN as a return.  Default OFF;
+        // ARMED IS SOLVE-AFFECTING (the election's memory across a gap changes what
+        // the carried anchor means), so it is graded as a behaviour change and it is
+        // fingerprinted.  Interlock against a missing 4a below.
+        network_ledger_anchor_ =
+            jval<bool>(json, "network.ledger_anchor", "network_ledger_anchor", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // POOL RE-HOST (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest of the
@@ -10367,6 +10381,64 @@ namespace GnssProcessor {
                             "network.cycle_slip.gap_reentry_relevel_unmeasurable then decides)"
                           : "bridge (a no-verdict re-entry is left to the PASS-B inject, as "
                             "today, but COUNTED and EVENTED as ARC arc_reentry verdict=none)");
+        // Card SID phase 4a: the reason-mask writers and the anchor observatory.
+        // REFUSED without the phase-1 observatory: there is no ledger to fold a
+        // reason into and no arc state for the election read to ask about, and a
+        // silent no-op would make an armed run look like it had measured something.
+        if (network_ledger_screens_ && !network_signal_roster_) {
+            log->error("Network producer (card SID phase 4a): network.ledger_screens is armed "
+                       "WITHOUT network.signal_roster, so there is no arc ledger to fold a "
+                       "reason into and no arc state for the anchor read.  DISARMED.  Arm "
+                       "network.signal_roster (the phase-1 observatory, byte-identical on the "
+                       "solve) alongside it.");
+            network_ledger_screens_ = false;
+        }
+        if (network_ledger_screens_)
+            log->info("Network producer (card SID phase 4a): network.ledger_screens is ON — every "
+                      "screen that removes a modelled row, a satellite or a station (the "
+                      "elevation mask, the model's own no-product / no-pair refusals, the network "
+                      "signal allow list, the measurement-admission and DW withholds, the readmit "
+                      "park, the coverage gate, the gross-LOS screen and the slip refloats) "
+                      "records the arcs it removed and its own reason bit into a per-epoch "
+                      "buffer, and the roster's audit pass folds that buffer into the ledger, so "
+                      "an admitted gap carries the reason(s) that opened it and one with no "
+                      "writer carries 'unknown'.  A gross-LOS DE-WEIGHT is recorded as 'deweight' "
+                      "and is never counted as a gap.  The anchor election is READ against the "
+                      "ledger at the same time: a first sighting whose family has arcs in "
+                      "Reentered or Gap is counted and evented, each coverage-gate drop edge "
+                      "reports its arcs' states and the generation test at the family's return, "
+                      "and anchor_arc_age is compared with the ledger's own age.  OBSERVATORY: "
+                      "nothing in the solve reads any of it, so the solve, the wire and every "
+                      "graded trace are byte-identical against an unarmed run.");
+        // Card SID phase 4b: the election acts on the read.  REFUSED without 4a,
+        // whose buffer carries the drop-edge memory and the generation test the
+        // restore decides on.
+        if (network_ledger_anchor_ && !network_ledger_screens_) {
+            log->error("Network producer (card SID phase 4b): network.ledger_anchor is armed "
+                       "WITHOUT network.ledger_screens, so the election has no drop-edge memory "
+                       "and no generation test to decide a restore on.  DISARMED.  Arm "
+                       "network.ledger_screens (the phase-4a observatory) alongside it.");
+            network_ledger_anchor_ = false;
+        }
+        if (network_ledger_anchor_)
+            log->info("Network producer (card SID phase 4b): network.ledger_anchor is ON — a "
+                      "(satellite, signal) family the coverage gate's DROP EDGE erased, and that "
+                      "returns to the anchored union with the previous incumbent still tracking "
+                      "it at the SAME admitted generation, restores that incumbent as the "
+                      "candidate of record instead of being elected afresh as a first sighting.  "
+                      "The election's existing rules still decide: the restored station must "
+                      "track the key, be present, pass the hygiene host test and, under a held "
+                      "S-basis, the minimum-age and quiet rules.  A return whose arcs are NEW "
+                      "generations proceeds exactly as today.  Both outcomes are events "
+                      "(PHASE_ANCHOR reentry_restore / reentry_new) with counters, and "
+                      "anchor_arc_age is derived from the ledger's admitted age.  ⚠ "
+                      "SOLVE-AFFECTING: this changes which station realizes the family's datum "
+                      "after a gate drop, so it is graded as a behaviour change and it is "
+                      "FINGERPRINTED (fresh convergence only).");
+        if (network_ledger_anchor_ && network_phase_datum_min_stations_ <= 1)
+            log->warn("Network producer (card SID phase 4b): network.ledger_anchor is armed with "
+                      "network.phase_datum_min_stations at 1, so the coverage gate never drops a "
+                      "family and the restore has no population.  The knob is INERT here.");
         if (!network_ledger_reentry_
             && network_ledger_reentry_no_verdict_ == LedgerReentryNoVerdict::Refloat)
             log->warn("Network producer (card SID phase 3): "

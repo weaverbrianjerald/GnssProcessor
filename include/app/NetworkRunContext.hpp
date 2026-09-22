@@ -49,6 +49,7 @@
 #include "filter/NetworkCanonicalPairAdmission.hpp" // Card CPA: canonical-pair admission state + counters
 #include "app/SignalRoster.hpp"            // Card SID phase 1: SignalRoster + its counters
 #include "filter/ArcLedger.hpp"            // Card SID phase 1: the arc lifecycle machine
+#include "filter/NetworkAnchorReentry.hpp" // Card SID phase 4: the anchor drop memo / the read
 #include "logging/NetworkRunTraces.hpp" // FlagRate (B8 counters)
 #include "common/PppUtils.hpp"          // eq34_ppp_utils
 
@@ -93,6 +94,11 @@ namespace GnssProcessor {
         /// population comes from the arc ledger's ADMITTED lifecycle.  Read here by
         /// the run-end table alone; the drains take it through @c SlipQcParams.
         bool ledger_reentry{};
+        /// Card SID phase 4 (network.ledger_screens / network.ledger_anchor): the
+        /// reason-mask writers plus the anchor read, and the restore that acts on
+        /// it.  Snapshotted here for the run-end readout, which has no config.
+        bool ledger_screens{};
+        bool ledger_anchor{};
         bool pl_on{};
         double pl_q_amb{};
         int pl_warmup{};
@@ -1715,6 +1721,16 @@ namespace GnssProcessor {
         /// own outcomes), and only while network.signal_roster is armed.
         /// OBSERVATORY: nothing in the solve reads it.
         ArcReentryOutcomeMap sid_reentry_outcome;
+        /// Card SID phase 4 (S2 / B1): the anchor election's own DATUM HISTORY per
+        /// (satellite, signal) family — what each coverage-gate drop edge left
+        /// behind (the incumbent, the epoch, the per-station admitted generations)
+        /// and the last epoch the family held an incumbent.  The election keeps
+        /// neither today, which is why a returning family reads as a first
+        /// sighting.  NOT snapshotted and NOT fingerprinted: a resumed run simply
+        /// has no drop memo, so its first post-resume election is a genuine first
+        /// sighting, which is the honest posture (the same exemption the roster and
+        /// the ledger take).  Untouched unless network.ledger_screens.
+        AnchorReentryState           sid_anchor_reentry;
         /// Card SID phase 3 (R3a): the arcs whose LEVELING CARRY the gap prune
         /// retired at network.phase_leveling_max_gap_s this epoch.  The prune runs
         /// in the harvest seam, which has neither the trace bundle nor the epoch
@@ -3876,6 +3892,12 @@ namespace GnssProcessor {
         /// (station, satellite, signal).  Same exemption and same reason as
         /// @ref roster; advanced by the same single call.
         ArcLedger              arc_ledger;
+        /// Card SID phase 4a (network.ledger_screens): the per-epoch REASON buffer
+        /// every removal screen writes and the roster's audit pass folds into the
+        /// ledger.  Same exemption as @ref arc_ledger: nothing in the solve reads
+        /// it, so it is neither snapshotted nor fingerprinted.  armed == false
+        /// (the default) makes every writer return on its first line.
+        ArcReasonEpoch         reasons;
     };
 
     // ------------------------------------------------------------------

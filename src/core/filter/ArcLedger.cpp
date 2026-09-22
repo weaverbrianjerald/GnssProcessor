@@ -30,6 +30,126 @@ namespace GnssProcessor {
         return "?";
     }
 
+    // =====================================================================
+    // Card SID phase 4 (S1): the REASON vocabulary and the per-epoch buffer
+    // =====================================================================
+
+    const char* arcReasonName(unsigned bit) {
+        switch (bit) {
+        case kArcReasonHorizon:   return "horizon";
+        case kArcReasonMask:      return "mask";
+        case kArcReasonSlip:      return "slip";
+        case kArcReasonGate:      return "gate";
+        case kArcReasonPrune:     return "prune";
+        case kArcReasonAllowlist: return "allowlist";
+        case kArcReasonAdmission: return "admission";
+        case kArcReasonReadmit:   return "readmit";
+        case kArcReasonGross:     return "gross";
+        case kArcReasonDeweight:  return "deweight";
+        case kArcReasonNoModel:   return "nomodel";
+        case kArcReasonUnknown:   return "unknown";
+        default: break;
+        }
+        return "?";
+    }
+
+    int arcReasonIndex(unsigned bit) {
+        for (int i = 0; i < kArcReasonCount; ++i)
+            if (bit == (1u << i)) return i;
+        return -1;
+    }
+
+    std::string arcReasonMaskName(unsigned mask) {
+        std::string out;
+        for (int i = 0; i < kArcReasonCount; ++i) {
+            const unsigned b = 1u << i;
+            if (!(mask & b)) continue;
+            if (!out.empty()) out += "|";
+            out += arcReasonName(b);
+        }
+        return out.empty() ? std::string("-") : out;
+    }
+
+    void arcReasonBeginEpoch(ArcReasonEpoch& buf, long long ep) {
+        buf.late.clear();
+        // The LATE bits (the readmit park, which runs downstream of the fold) are
+        // promoted to their own map and kept for exactly one epoch, which is the
+        // earliest a gap they can explain is able to open.  Everything else is
+        // dropped: an early writer's record has already been folded at its own
+        // epoch, and letting it survive would attribute the next gap to a screen
+        // that did not open it.
+        if (buf.armed)
+            for (const auto& [k, r] : buf.rec) {
+                const unsigned keep = r.bits & kArcReasonLateMask;
+                if (keep != 0u) buf.late[k] = keep;
+            }
+        buf.rec.clear();
+        buf.ep = ep;
+    }
+
+    void arcReasonRecord(ArcReasonEpoch& buf, const ArcLedger::Key& key,
+                         unsigned bit, bool known) {
+        if (!buf.armed) return;
+        const int idx = arcReasonIndex(bit);
+        if (idx < 0) return;
+        ++buf.calls[static_cast<std::size_t>(idx)];
+        if (!known) ++buf.calls_unknown[static_cast<std::size_t>(idx)];
+        ArcReasonRec& r = buf.rec[key];
+        r.bits |= bit;
+        r.ep    = buf.ep;
+    }
+
+    unsigned arcReasonOf(const ArcReasonEpoch& buf, const ArcLedger::Key& key) {
+        unsigned m = kArcReasonNone;
+        const auto it = buf.rec.find(key);
+        if (it != buf.rec.end()) m |= it->second.bits;
+        const auto lt = buf.late.find(key);
+        if (lt != buf.late.end()) m |= lt->second;
+        return m;
+    }
+
+    long long arcReasonExpand(ArcReasonEpoch& buf, const ArcLedger& led,
+                              int station, const std::string& sat,
+                              const std::string& signal, unsigned bit) {
+        if (!buf.armed) return 0;
+        long long n = 0;
+        const auto& arcs = led.arcs();
+        // The key orders on the station index first, then the satellite, so one
+        // station's arcs of one satellite are a contiguous range and the expansion
+        // stays O(arcs of that satellite) rather than O(network).
+        // ⚠ The STATION bound is load-bearing, not tidiness.  `lower_bound` on
+        // (station, sat, "") returns the first key at or after it, which for a
+        // station holding no arc of `sat` is the FIRST KEY OF A LATER STATION — and
+        // if that station does hold `sat`, an unbounded scan would write the bit on
+        // another station's arcs.  The satellite test alone does not catch it,
+        // because the satellite is exactly what matches there.
+        const auto scan = [&](int want_sta) {
+            for (auto it = arcs.lower_bound(ArcLedger::Key{ want_sta, sat, "" });
+                 it != arcs.end(); ++it) {
+                if (std::get<0>(it->first) != want_sta) break;
+                if (std::get<1>(it->first) != sat) break;
+                if (!signal.empty() && std::get<2>(it->first) != signal) continue;
+                if (it->second.adm_state != ArcState::Tracking
+                    && it->second.adm_state != ArcState::Reentered) continue;
+                arcReasonRecord(buf, it->first, bit, true);
+                ++n;
+            }
+        };
+        if (station >= 0) {
+            scan(station);
+        } else {
+            for (auto it = arcs.begin(); it != arcs.end(); ) {
+                const int si = std::get<0>(it->first);
+                scan(si);
+                // Advance to the first key of the next station.
+                it = arcs.lower_bound(ArcLedger::Key{ si + 1, "", "" });
+            }
+        }
+        if (n == 0) ++buf.calls_unknown[static_cast<std::size_t>(
+                std::max(0, arcReasonIndex(bit)))];
+        return n;
+    }
+
     const char* arcReentryOutcomeName(ArcReentryOutcome o) {
         switch (o) {
         case ArcReentryOutcome::None:             return "none";
@@ -186,8 +306,19 @@ namespace GnssProcessor {
     }
 
     void ArcLedger::admitEpoch(const std::set<Key>& admitted,
-                               std::vector<std::pair<Key, ArcStep>>& out) {
+                               std::vector<std::pair<Key, ArcStep>>& out,
+                               const ArcReasonEpoch* reasons) {
         out.clear();
+        // Card SID phase 4 (S1): the fold.  A gap opened at this call takes the
+        // reasons the screens recorded for its arc, narrowed to the bits that can
+        // explain a REMOVAL (a de-weight is not one), and `unknown` when nothing
+        // did.  Unarmed, or with no buffer, the mask stays what phase 3 wrote.
+        const bool fold = reasons != nullptr && reasons->armed;
+        const auto gapReason = [&](const Key& key) -> unsigned {
+            if (!fold) return kArcReasonNone;
+            const unsigned m = arcReasonOf(*reasons, key) & kArcReasonGapMask;
+            return m == 0u ? kArcReasonUnknown : m;
+        };
         // The present set is derived from the admitted rows themselves rather than
         // taken from the caller: the rule that matters is the raw pass's rule (a
         // station that reported nothing must not gap all of its arcs), and on the
@@ -267,6 +398,10 @@ namespace GnssProcessor {
                 a.ep_adm_state_changed = epoch_idx_;
                 a.adm_gap_len_ep       = static_cast<int>(epoch_idx_ - a.ep_last_admitted);
                 s.gap_len_ep           = a.adm_gap_len_ep;
+                // S1: stamp WHY.  The mask survives the whole gap and is still
+                // readable at the re-entry, which is what lets phase 3's no-verdict
+                // population be split by the screen that opened its gap.
+                a.adm_reason_mask      = gapReason(key);
             } else {   // already Gap
                 a.adm_gap_len_ep = static_cast<int>(epoch_idx_ - a.ep_last_admitted);
                 if (horizon_s_ > 0.0 && (t_s_ - a.t_last_admitted_s) > horizon_s_) {

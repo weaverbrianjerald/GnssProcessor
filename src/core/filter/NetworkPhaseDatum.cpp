@@ -259,8 +259,23 @@ void networkElectPhaseAnchors(
         const NetworkInjectState* inject,
         const AnchorCandidacyUsable* cand_usable,
         PhaseHeldBasis* held,
-        PhaseGateDrop* gate_drop) {
+        PhaseGateDrop* gate_drop,
+        AnchorReentry* reentry) {
     const auto& usable_keys = cnd.usable_keys;
+    // Card SID phase 4.  Null (the default) on every unarmed run, so every branch
+    // below that tests it is unreachable and the election is byte-identical; armed
+    // in its OBSERVE half only (S2) it reads and counts and still changes nothing.
+    const bool re_on      = reentry != nullptr && reentry->observe
+                            && reentry->led != nullptr && reentry->state != nullptr;
+    const bool re_restore = re_on && reentry->restore;
+    // Station name -> index, built once per call and only where the read is armed:
+    // the drop memo names its incumbent by NAME (the incumbent map's own key type)
+    // while the ledger keys on the INDEX, and resolving one lookup at a time over
+    // `stations` would make the read O(families x stations).
+    std::map<std::string, int> re_sta_index;
+    if (re_on)
+        for (std::size_t i = 0; i < stations.size(); ++i)
+            re_sta_index[stations[i].name] = static_cast<int>(i);
     // RF-2 — the HELD S-BASIS.  Null (the default) on every unarmed run, so every
     // branch below that tests it is unreachable and the election is byte-identical.
     const bool held_on = held && held->on && held->basis;
@@ -730,6 +745,70 @@ void networkElectPhaseAnchors(
                 first_unusable.clear();
             }
         }
+        // ---- Card SID phase 4 (S2 read, B1 action): A RETURN IS NOT A BIRTH ------
+        // Entered only where the election is about to treat this family as a FIRST
+        // SIGHTING — no incumbent at the previous epoch — which is the exact
+        // predicate the audit named (E.2: "a returning key is a first sighting").
+        // The read runs BEFORE the held-basis rank and the coverage sweeps, so a
+        // restore composes with them rather than overriding a decision they made:
+        // if the restore declines, every branch below runs exactly as it does today.
+        AnchorFirstSighting re_row;
+        bool re_row_live = false;
+        if (re_on && anchor == static_cast<size_t>(-1)
+            && anchor_incumbent.find(amb) == anchor_incumbent.end()) {
+            re_row_live = true;
+            re_row.amb = amb;
+            const std::size_t us2 = amb.find('_');
+            const std::string r_sat = us2 == std::string::npos ? amb : amb.substr(0, us2);
+            const std::string r_sig = us2 == std::string::npos ? std::string{}
+                                                               : amb.substr(us2 + 1);
+            int n_dead_ = 0;
+            anchorReentryFamilyCensus(*reentry->led, r_sat, r_sig,
+                                      re_row.n_tracking, re_row.n_returning, n_dead_);
+            const auto lie = reentry->state->last_incumbent_ep.find(amb);
+            re_row.since_incumbent_ep =
+                lie == reentry->state->last_incumbent_ep.end()
+                    ? -1 : reentry->now_ep - lie->second;
+            const auto memo = reentry->state->drop.find(amb);
+            int restore_i = -1;
+            if (memo != reentry->state->drop.end()) {
+                re_row.prev_anchor = memo->second.prev_anchor;
+                re_row.cls = anchorReentryClassify(*reentry->led, memo->second,
+                                                   r_sat, r_sig, re_sta_index,
+                                                   &restore_i);
+                memo->second.returned = true;
+            }
+            ++reentry->n_first_sighting;
+            if (re_row.n_returning > 0) ++reentry->n_first_sighting_return;
+            // B1.  The restored station is subject to the election's OWN rules, not
+            // to a second set: it must still track the key (which in this census
+            // implies present), must not be the epoch's banned incumbent, must pass
+            // the hygiene host test, and under a held S-basis must pass the
+            // minimum-age and quiet rules.  A same-generation return whose station
+            // fails any of them is COUNTED as refused and falls through to today's
+            // election — never silently pinned anyway.
+            if (re_restore && re_row.cls == AnchorReentryClass::SameGeneration) {
+                const std::size_t ri = static_cast<std::size_t>(restore_i);
+                if (restore_i < 0 || ri >= stations.size()) {
+                    re_row.refused = "no_station";
+                } else if (!usable_keys[ri].count(amb)) {
+                    re_row.refused = "untracked";
+                } else if (banned_sta(ri)) {
+                    re_row.refused = "banned";
+                } else if (!hyg.eligibleHost(ri, amb)) {
+                    re_row.refused = "hygiene";
+                } else if (!basisEligible(ri, amb)) {
+                    re_row.refused = "basis";
+                } else {
+                    anchor = ri;
+                    re_row.restored = true;
+                }
+                if (re_row.restored) ++reentry->n_restore;
+                else                 ++reentry->n_restore_refused;
+            } else if (re_restore && re_row.cls == AnchorReentryClass::NewGeneration) {
+                ++reentry->n_reentry_new;
+            }
+        }
         // RF-2 item 3: THE ELECTION.  "the successor is the tracking station with the
         // HIGHEST ELEVATION among arcs older than min_age and not flagged by any screen
         // within flag_quiet_ep."  Runs only when stickiness did not keep an incumbent,
@@ -1016,6 +1095,13 @@ void networkElectPhaseAnchors(
                 ++tally.fresh_pin_ramps;
             }
         }
+        // Card SID phase 4: the row is completed HERE, where the elected station is
+        // finally known, so an S2 case states who actually took the family rather
+        // than who the read suggested.
+        if (re_row_live) {
+            re_row.station = stations[anchor].name;
+            reentry->first_sightings.push_back(re_row);
+        }
         this_epoch_anchor[amb] = stations[anchor].name;
         new_incumbent[amb]     = stations[anchor].name;
         shared_phase_keys.insert(pbkey);
@@ -1063,9 +1149,28 @@ void networkElectPhaseAnchors(
                 reref_out->insert({p->satellite, p->signal});
                 ev.handled = true;
             }
+            // Card SID phase 4: REMEMBER the edge.  This is the only statement at
+            // which the family's outgoing anchor and its arcs' generations are both
+            // knowable — one line later the incumbent map describes this epoch and
+            // the family is not in it at all, which is precisely why the return
+            // reads as a first sighting today.
+            if (re_on)
+                anchorReentryNoteDrop(*reentry->state, *reentry->led, amb,
+                                      p->satellite, p->signal, ev.prev_anchor,
+                                      ev.n_trackers, reentry->now_ep);
             gate_drop->events.push_back(std::move(ev));
         }
     }
+    // Card SID phase 4: the family's datum history, kept where the election's own
+    // memory is swapped.  A family that holds an incumbent at this epoch stamps
+    // the epoch; the stamp is what lets a later first sighting say HOW LONG the
+    // family has been without one, which is the quantity that separates a
+    // gate-drop return from a genuine new rise.
+    if (re_on)
+        for (const auto& [k, sta] : new_incumbent) {
+            (void)sta;
+            reentry->state->last_incumbent_ep[k] = reentry->now_ep;
+        }
     anchor_incumbent.swap(new_incumbent);
     anchor_pin_target.swap(new_target);
 }
