@@ -83,6 +83,7 @@
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
 #include "products/RinexNavParser.hpp"         // Card 5 (RTF-1): RINEX-nav → LiveEphemerisStore loader
 #include "filter/NetworkEstimator.hpp"
+#include "filter/NetworkClockLevel.hpp"         // card CLV: the code-only level re-base
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // A1/A2: pivot-handover datum-change detector
@@ -2958,6 +2959,11 @@ int Application::runNetwork() {
                            sigma0_adapt, total_pins, vce_wants_cb, vce_wants_pb, dt,
                            datum_changed, changed_consts, n_clock, n_present, n_pb, n_cb,
                            n_dropped_sats, n_adapt);
+        // Card CLV: the code-only level re-base.  After the stash, because it moves the
+        // carry the stash just wrote (and every coupling term the leveling harvest
+        // wrote), and only on a kept epoch, which is every epoch that reaches here.
+        networkClockLevelRebase(ctx, traces, se.time, est, x_s, asm_res, est_index_of,
+                                datum_changed);
         // RF-1 §7.4: drain THIS epoch's buffered carry-state rows.  Placed last inside
         // the bracket because it is the first point after EVERY row source has run —
         // the leveling harvest and the gap prune (SB_LEVELING), the T4 / T3 refloats

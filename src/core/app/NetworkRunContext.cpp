@@ -266,6 +266,13 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
+    // Card CLV: the code-only level re-base.  Resolved against the clock_model
+    // interlock: under the two-state oscillator the clock lives on clock_osc, which the
+    // re-base does not move, so the carried clock and its oscillator would part.
+    k.clv_on           = config_.networkClockLevelCarry() && !k.clk_model_on;
+    k.clv_floor_m      = config_.networkClockLevelSigmaFloorM();
+    k.clv_horizon_s    = config_.networkClockLevelHorizonS();
+    k.clv_ignition_var = config_.getInitialStd().sat_clock * config_.getInitialStd().sat_clock;
     // Card C-GF: ONE resolved predicate that every fold, withdraw and replay site reads.
     //
     // The gauge-free downdate belongs to the CARRY FOLD, not to the Q3 clock anchor —
@@ -995,6 +1002,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
                 || ctx.knobs.cta_stat_proj_prior))
             add(fmt::format("cta:gfstat:{}:{}", ctx.knobs.cta_stat_proj_post ? 1 : 0,
                             ctx.knobs.cta_stat_proj_prior ? 1 : 0));
+        // Card CLV: the level re-base moves the carried clock and phase-bias values (and
+        // every coupling term that references them), so a snapshot written with the
+        // card armed carries a different state than one written without it.
+        // Conditional append, so every pre-card snapshot fingerprint is unchanged.
+        if (ctx.knobs.clv_on)
+            add(fmt::format("clv:{}:{}", ctx.knobs.clv_floor_m, ctx.knobs.clv_horizon_s));
         // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
         // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
         // seeded iono) of the receiver DCB.  The absolute solve is invariant to that

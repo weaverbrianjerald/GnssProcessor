@@ -657,6 +657,18 @@ namespace GnssProcessor {
         /// pools cannot be: they pool per STA / SAT / SIG separately and drop the sign.
         std::ofstream pf_rows_trace;
         const std::filesystem::path pf_rows_trace_path;
+        /// Card CLV (@c network.clock_level_carry, written under @c network.trace_events):
+        /// one row per satellite per kept epoch the level filter acted on:
+        /// @c week,tow,sat,v_level_m2,i_level,n_rows_epoch,e_level_m,d_level_m,event.
+        /// @c v_level_m2 = max(1 / I_L, floor^2) after the update (the level's code-only
+        /// variance), @c i_level the filter's information I_L (1/m^2), @c n_rows_epoch
+        /// the (station) ionosphere-free pairs of the update, @c e_level_m the level
+        /// residual (the satellite's two-way effect in the post-fit ionosphere-free code
+        /// residuals, positive when the clock is high), @c d_level_m the shift applied
+        /// along the level direction, @c event one of arm / break / update.  Trace-class
+        /// and fingerprint-safe.
+        std::ofstream clock_level_trace;
+        const std::filesystem::path clock_level_trace_path;
         /// SPEC_event_harness §24.10 card ZP (@c network.trace_station_block): the
         /// per-station LOCAL-BLOCK audit — one row per station per TRACED epoch (the
         /// first 20 EMITTED epochs, then every 60th) describing

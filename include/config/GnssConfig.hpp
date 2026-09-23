@@ -5188,6 +5188,50 @@ namespace GnssProcessor {
         }
         /// @}
 
+        /// @name Card CLV: the satellite clock LEVEL (docs/refound/CLV_clock_level_2026-09-22.md)
+        /// A shift of satellite s's clock and of every one of its phase biases by the
+        /// same amount (the level direction; the clock enters every observation at -1 and
+        /// a phase bias enters a phase row at +1, so the shift has the SAME sign on both)
+        /// leaves every phase row invariant and moves every code row of s: the level is a
+        /// code-only quantity.  The carried priors state it at phase precision (measured
+        /// on the GPS-only sim baseline: 1.12 m rms datum-free error against truth,
+        /// constant for six hours).  This card estimates the level from the code alone
+        /// and re-bases the carry along the direction; the solve is not loosened.
+        /// SOLVE-AFFECTING and FINGERPRINTED: fresh convergence only.
+        /// @{
+        /// @brief Arm the code-only level re-base (@c network.clock_level_carry).
+        ///
+        /// On every kept epoch, after the stash: the post-fit ionosphere-free code
+        /// residuals of the full-weight code rows (one pair of pin bands per station and
+        /// satellite) are fitted with one level effect per satellite and one offset per
+        /// (station, constellation) (the offsets take what the receiver clocks absorbed;
+        /// the satellite effects sum to zero per constellation, so the datum is
+        /// untouched); a scalar filter per satellite with the code-only information I_L
+        /// turns its effect into a shift d; and the carry is moved by d along the level
+        /// direction: the carried clock and every carried phase bias of the satellite,
+        /// every coupling term that references them, the clock-jump baselines, and the
+        /// emit-side hold (so the wire's clock record moves by d and its phase-bias
+        /// records by d, the phase side unchanged, and the C record declares d as its
+        /// lvl= token).  The filter runs only while the Q3 anchor holds the clock; it is
+        /// restarted when a satellite becomes eligible and when its residual breaks the
+        /// filter's own prediction.  Inert when false (byte-identical).
+        /// @return true when the card is armed.
+        bool   networkClockLevelCarry() const { return network_clock_level_carry_; }
+        /// @brief Floor on the level standard deviation (m, @c network.clock_level_sigma_floor_m).
+        ///
+        /// V_L = max(1 / I_L, floor^2): the filter's information never exceeds
+        /// 1 / floor^2, so its gain never falls below the epoch's information times
+        /// floor^2 and the level keeps following the code's time-correlated error floor.
+        /// @return the floor in metres (default 0.01).
+        double networkClockLevelSigmaFloorM() const { return network_clock_level_sigma_floor_m_; }
+        /// @brief Memory horizon of the level information (s, @c network.clock_level_horizon_s).
+        ///
+        /// I_L decays per epoch by exp(-dt / horizon), so the filter forgets code
+        /// information older than a few horizons and can follow a genuine change.
+        /// @return the horizon in seconds (default 7200).
+        double networkClockLevelHorizonS() const { return network_clock_level_horizon_s_; }
+        /// @}
+
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
          *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
@@ -8650,6 +8694,9 @@ namespace GnssProcessor {
         int    network_clock_anchor_recouple_epochs_{4};   ///< Card Q3: consecutive in-band epochs a decoupled satellite must serve before the anchor re-engages — standing invariant #7's "the RE-COUPLING edge must re-validate or re-seed what it reconnects". The re-engaged fold also RE-SEEDS (its first variance is cp.var + q·Δt off the LOOSE posterior, not the steady-state tight value). INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_mark_{true};           ///< Card Q3: wire-mark the DECOUPLING edge (markSatDiscontinuity → R record + per-sat phase/code/clock counters, the chain Q4 proved end-to-end). A satellite whose clock changed BOTH temporal regime and value must not be integrated across. Unlike CLK-R stage 2 — whose marked population was ~98 % churn and cost the quiet-day consumer — this population is by construction NOT churn (the churn is what the anchor removes), but the rate discipline still applies and the knob exists so a 12 h A/B can bisect hold-vs-marks exactly as CLK-R's did. INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_gauge_free_{false};    ///< Card Q3 §2.1: fold the clock prior with the per-constellation clock GAUGE direction marginalized out (Λ ← Λ − Λu(uᵀΛu)⁻¹uᵀΛ; diagonally this is "anchor each clock to its carried value minus the information-weighted mean", i.e. anchor the DIFFERENCES). Applied to the JOINT dense block, so the clock↔code-bias off-diagonals the C1 carry retains are preserved — only the gauge is removed. A constellation with < 2 carried clocks contributes nothing (its lone key IS the gauge). SOLVE-AFFECTING; part of the anchor's fingerprint. INERT unless network_clock_temporal_anchor_.
+        bool   network_clock_level_carry_{false};          ///< Card CLV (docs/refound/CLV_clock_level_2026-09-22.md): estimate each satellite's clock LEVEL (its clock and every phase bias shifted together, a direction every phase row is blind to) from the post-fit ionosphere-free code alone and re-base the carry along it after every kept epoch; the emit hold follows the shift so the wire's phase side does not move. SOLVE-AFFECTING + FINGERPRINTED. OFF = byte-identical.
+        double network_clock_level_sigma_floor_m_{0.01};   ///< Card CLV: floor (m) on the level standard deviation, V_L = max(1 / I_L, floor^2). INERT unless network_clock_level_carry_.
+        double network_clock_level_horizon_s_{7200.0};     ///< Card CLV: memory horizon (s) of the level filter's information I_L, decayed per epoch by exp(-dt / horizon). INERT unless network_clock_level_carry_.
         NetworkClockAnchorStat network_clock_anchor_gauge_free_stat_{NetworkClockAnchorStat::Auto};  ///< Card Q3 §2.1 BISECTION knob: which denominator the guard (and the census's clk family) standardizes by, INDEPENDENTLY of which prior the fold applied. The gauge-free arm moved the fold AND the denominator together, so its 65 → 3 trip collapse could not be apportioned. `Auto` = follow the fold (byte-identical to every pre-knob arm); `Raw`/`Post`/`Proj` force one. SOLVE-AFFECTING through the trip population; appended to the fingerprint only when it is not `Auto`. INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.

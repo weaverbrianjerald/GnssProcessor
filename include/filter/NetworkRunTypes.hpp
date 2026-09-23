@@ -1604,6 +1604,36 @@ struct ClockAnchorState {
     std::set<std::string> tripped;
 };
 
+/// Card CLV (docs/refound/CLV_clock_level_2026-09-22.md): one satellite's code-only
+/// LEVEL filter.  The level is the direction that moves the satellite clock and every
+/// one of its phase biases by the same amount (+1 on each: the clock enters every
+/// observation at -1 and a phase bias enters a phase row at +1), so no phase row sees
+/// it and its only information is the ionosphere-free code.  Each kept epoch the
+/// filter measures the level error from the post-fit ionosphere-free code residuals
+/// and re-bases the carried state along the direction by its update; the solve itself
+/// is never loosened.
+struct ClockLevelSat {
+    double info{0.0};     ///< I_L: the filter's code-only information about the level (1/m^2), valid at @c t_info; 0 = not armed
+    double t_info{0.0};   ///< continuous-GPS seconds of the last update
+    bool   armed{false};  ///< the filter is running (the Q3 anchor holds the clock and an update has landed since)
+    int    n_pairs{0};    ///< ionosphere-free (station) pairs of the last update
+    double e_last{0.0};   ///< the last update's level residual (m): the satellite's two-way effect, positive when the clock is high
+    double d_last{0.0};   ///< the last shift applied along the level direction (m)
+    double d_sum{0.0};    ///< the accumulated shift since the run start (m)
+    double pending_step{0.0}; ///< the shifts applied since this satellite's last emission (m): declared on its next C record (lvl=) and reset
+    /// Per phase-bias signal: the accumulated shift the emit-side hold follows (m), so
+    /// the wire's phase side does not move with the level.
+    std::map<std::string, double> xfer;
+};
+
+/// Card CLV: run state of the level filter.  Lives in NetworkCarryState.  NOT
+/// snapshotted (three-place-rule exemption, deliberate): the knob is in the resume
+/// fingerprint, the phase-bias hold restarts its generations on a resume anyway, and a
+/// filter that re-arms after a resume starts from the level the resumed carry holds.
+struct ClockLevelState {
+    std::map<std::string, ClockLevelSat> sat;
+};
+
 /// Predict a ClockOsc forward by @p dt with white-FM @p q1 and random-walk-FM @p q2.
 inline ClockOscPred clockOscPredict(const ClockOsc& s, double dt, double q1, double q2) {
     const double q11 = q1 * dt + q2 * dt * dt * dt / 3.0;

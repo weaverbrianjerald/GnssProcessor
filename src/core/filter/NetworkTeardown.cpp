@@ -34,6 +34,7 @@
 #include "filter/NetworkCongruence.hpp"        // station congruence screen (networkCongruenceReport)
 #include "filter/NetworkMdb.hpp"               // Baarda MDB (networkMdbReport — the run-end body lives there)
 #include "filter/NetworkClockAnchor.hpp"       // Card Q3 §3: kCtaWLadder / kCtaELadder for the guard-ladder run-end line
+#include "filter/NetworkClockLevel.hpp"        // card CLV: the level re-base run-end readout
 #include "filter/NetworkRedundancyCensus.hpp"  // redundancy census (kCensusMinPoolRows for the run-end line)
 #include "filter/NetworkPrefitCensus.hpp"      // prefit census (kNetPrefitMinTypeRows / kNetPrefitPinWeight for the run-end line)
 #include "app/NetworkSetupResult.hpp"   // INC-5: setup-phase handoff (setup) + navAvailabilityGpsSeconds
@@ -5575,6 +5576,9 @@ int networkTeardown(
                       t.empty() ? std::string("none") : t);
         }
     }
+    // Card CLV: the level re-base's run-end readout (one line per constellation, the
+    // mechanism's counters, the wire).  Silent unless network.clock_level_carry.
+    networkClockLevelTeardown(ctx, setup.emitter ? &*setup.emitter : nullptr, log);
     if (ctx.knobs.cta_on) {
         // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters
         // ARE the evidence).  `folded_anchored = 0` means the anchor never bound a

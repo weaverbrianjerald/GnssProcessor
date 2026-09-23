@@ -203,6 +203,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkRaim.cpp
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkClockAnchor.cpp
+    src/core/filter/NetworkClockLevel.cpp
     src/core/filter/NetworkFrameDiag.cpp
     src/core/filter/NetworkGrossLos.cpp
     src/core/filter/NetworkStationBlock.cpp
@@ -521,6 +522,7 @@ add_executable(gnss_tests
     tests/test_second_phase_channel.cpp
     tests/test_channel_mode_all.cpp
     tests/test_galileo_network.cpp
+    tests/test_clock_level_carry.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

@@ -565,9 +565,16 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // classified — the census counts only declarations this knob decides.
                 bool value_jump = false;
                 if (fresh) {
-                    const double raw_d = npb.bias_m - last_it->second;
+                    // Card CLV: the satellite's declared level step (the C-record lvl=
+                    // token) is removed first: the clock record moved by the same amount,
+                    // so the phase side did not step.  0 on an unarmed wire, so this is
+                    // the pre-card difference bit for bit.
+                    const double raw_d = (npb.bias_m - last_it->second) - s.level_step_m;
                     const double bar   = discThresholdM(s.sat, signal);
                     const bool   raw_over = std::abs(raw_d) > bar;
+                    if (s.level_step_m != 0.0 && !raw_over
+                        && std::abs(npb.bias_m - last_it->second) > bar)
+                        ++clv_jump_excluded_;
                     if (!disc_jump_test_decommon_) {
                         value_jump = raw_over;
                     } else {

@@ -103,6 +103,16 @@ struct NetworkSatSolution {
     /// corrections at the reference signal (both share the clock term ⇒ ~0.6–0.9);
     /// 0 unless populated.  Serialized as the C-record rho= token.
     double                                  rho{0.0};
+    /// Card CLV (@c network.clock_level_carry): the LEVEL STEP of this satellite since
+    /// its previous emission (m): the code-only level re-base moved its clock record
+    /// AND every one of its phase-bias records by this amount, so the phase side the
+    /// consumer applies (-clock + phase bias) did not move.  Serialized as the C-record
+    /// @c lvl= token (written only when nonzero, so an unarmed wire is byte-identical)
+    /// and read back by NetworkProductReader, because the emitter's phase-bias
+    /// value-jump test removes it from each phase-bias step before testing (the same
+    /// arithmetic in the producer and in a replay, so a replay reproduces every
+    /// declaration).  0 unless the card moved the level.
+    double                                  level_step_m{0.0};
     /// RTF-2 (Card 5): broadcast ephemeris version (IODE, in the IGS-SSR matching
     /// convention) the estimable clock @c clock_c0_m is a delta against, threaded
     /// from the producer emission path in @c brdc_rts mode.  -1 = sp3 mode /
@@ -355,6 +365,13 @@ public:
         PbJumpDecommonClass cls{PbJumpDecommonClass::Both};  ///< Which class this cell fell in.
     };
 
+    /// @brief Card CLV: phase-bias value-jump tests whose raw step exceeded the bar
+    ///        only because of the satellite's declared level step
+    ///        (@ref NetworkSatSolution::level_step_m, the C-record lvl= token), and
+    ///        which the step's removal therefore did not declare.
+    /// @return the run count (0 on an unarmed run).
+    long long clvJumpExcluded() const { return clv_jump_excluded_; }
+
     /// Card JT: the classified cells of the LAST @ref emitToStore call (cleared at the
     /// top of every emit).  Always EMPTY when the knob is off, so an OFF run allocates
     /// nothing and the driver's drain is a no-op.
@@ -573,6 +590,7 @@ private:
     /// of this epoch's emitted biases and @ref last_phase_bias_, so a replay
     /// reproduces it with no extra stream state.
     std::vector<PbJumpDecommonEvent> pb_jump_decommon_events_;
+    long long clv_jump_excluded_{0};   ///< card CLV: see clvJumpExcluded()
     bool   emit_clock_disc_{false};       ///< A2: maintain + stamp the clock disc counter.
     /// RTA-11: staleness horizon (s, PRODUCT time; 0 = off).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time; a key

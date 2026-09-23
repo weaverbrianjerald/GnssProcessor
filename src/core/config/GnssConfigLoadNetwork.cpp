@@ -8977,6 +8977,44 @@ namespace GnssProcessor {
             // against this very knob pair.  It lives in the P3 post-arming
             // re-validation block instead.
         }
+        // Card CLV (docs/refound/CLV_clock_level_2026-09-22.md): the code-only level
+        // re-base.  Solve-affecting and fingerprinted; every knob is inert unless
+        // network.clock_level_carry, so an unarmed run is byte-identical.  The clock_model
+        // interlock is checked in the P3 post-arming block below, where the arming values
+        // are final.
+        network_clock_level_carry_ =
+            jval<bool>(json, "network.clock_level_carry",
+                       "network_clock_level_carry", false);
+        network_clock_level_sigma_floor_m_ =
+            jval<double>(json, "network.clock_level_sigma_floor_m",
+                         "network_clock_level_sigma_floor_m", 0.01);
+        network_clock_level_horizon_s_ =
+            jval<double>(json, "network.clock_level_horizon_s",
+                         "network_clock_level_horizon_s", 7200.0);
+        if (network_clock_level_carry_) {
+            if (!(network_clock_level_sigma_floor_m_ > 0.0)) {
+                log->warn("Network (card CLV): network.clock_level_sigma_floor_m = {:.4f} is not "
+                          "positive; restoring the default 0.01 m (a zero floor would let the "
+                          "filter's gain decay to zero).", network_clock_level_sigma_floor_m_);
+                network_clock_level_sigma_floor_m_ = 0.01;
+            }
+            if (!(network_clock_level_horizon_s_ > 0.0)) {
+                log->warn("Network (card CLV): network.clock_level_horizon_s = {:.1f} is not "
+                          "positive; restoring the default 7200 s.",
+                          network_clock_level_horizon_s_);
+                network_clock_level_horizon_s_ = 7200.0;
+            }
+            log->info("Network producer (card CLV): CLOCK LEVEL RE-BASE ON. After every kept "
+                      "epoch each anchored satellite's level (the clock and every phase bias "
+                      "shifted together; every phase row is blind to it) is estimated from the "
+                      "post-fit ionosphere-free code residuals (a two-way satellite and station "
+                      "fit) by a filter with the code-only information I_L, V_L = max(1 / I_L, "
+                      "{:.3f}^2 m^2), I_L decayed with a {:.0f} s horizon, and the carry is moved "
+                      "along the direction by the update; the emit hold follows, so the wire's "
+                      "phase side does not move.  SOLVE-AFFECTING + FINGERPRINTED: fresh "
+                      "convergence only.",
+                      network_clock_level_sigma_floor_m_, network_clock_level_horizon_s_);
+        }
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
                          "network_phase_datum_hold_sigma_m", 0.0);
@@ -11002,6 +11040,22 @@ namespace GnssProcessor {
                        "so).  The oscillator is a measured NO-GO on this lineage (Hadamard p ≈ 1 "
                        "⇒ white-FM, RWFM undetectable); disarm network.clock_model.",
                        network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
+        }
+        // (d) Card CLV x network.clock_model, post-arming for the same reason as (c): the
+        //     re-base moves the D2 clock carry, which the two-state oscillator replaces, so
+        //     the card resolves itself OFF (NetworkKnobs::clv_on) and says so here.
+        if (network_clock_level_carry_) {
+            if (network_clock_model_)
+                log->warn("Network (card CLV): network.clock_level_carry is armed with "
+                          "network.clock_model ON{}: the satellite clock is on the two-state "
+                          "oscillator, not in the D2 carry the re-base moves, so the card is "
+                          "resolved OFF for this run.",
+                          network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
+            if (!network_clock_temporal_anchor_)
+                log->warn("Network (card CLV): network.clock_level_carry is armed without "
+                          "network.clock_temporal_anchor: the level filter normally arms when the "
+                          "Q3 anchor takes a satellite's clock (the end of its ignition), so on "
+                          "this run it arms at each satellite's first update instead.");
         }
         if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
             log->warn("Network: network.raim_withhold_sigma0 {} (service-armed at 2x "

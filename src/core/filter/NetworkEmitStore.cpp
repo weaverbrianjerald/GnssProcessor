@@ -18,6 +18,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "common/Constants.hpp"
+#include "filter/NetworkClockLevel.hpp"        // card CLV: networkClockLevelDeclare
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkPbHold.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -308,6 +309,12 @@ void networkEmitStore(
     // byte-identical, and between-sat differences are preserved exactly (one
     // shared subtrahend per constellation), so user SD/DD quantities are
     // untouched by construction.  Both knobs OFF ⇒ this block never runs.
+    // Card CLV: stamp each satellite's level step since its previous emission (the
+    // code-only re-base moved its clock and phase biases together) before anything
+    // reads the clock values, so the clock re-base below, the emitter's phase-bias
+    // jump test and the C record's lvl= token all see the same declaration.  No-op
+    // unless network.clock_level_carry.
+    networkClockLevelDeclare(ctx, sol);
     bool clk_reanchor_marked = false;
     const std::set<char>*        ser_consts_use = &serialized_consts;
     const std::set<std::string>* retro_use      = &retro_emit_sats;
@@ -331,6 +338,7 @@ void networkEmitStore(
             e.sat    = s.sat;
             e.c0_m   = s.clock_c0_m;
             e.forced = clkForced(s.sat);
+            e.level_step_m = s.level_step_m;   // card CLV: 0 unless armed
             ce.push_back(std::move(e));
         }
         if (!ce.empty()) {

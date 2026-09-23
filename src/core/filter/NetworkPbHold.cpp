@@ -91,6 +91,16 @@ void networkPbHold(NetworkRunContext& ctx,
 
     for (auto& s : sol.sats) {
         if (s.sat.empty() || s.phase_bias.empty()) continue;
+        // Card CLV (network.clock_level_carry): the satellite's accumulated level shift
+        // per signal.  The re-base moves the carried clock AND every phase bias of the
+        // satellite by the same amount, so the estimator's phase side does not move; a
+        // hold that froze P while C moved would move the wire's phase side instead.
+        // Null on an unarmed run (never read).
+        const std::map<std::string, double>* xfer = nullptr;
+        if (ctx.knobs.clv_on) {
+            const auto lit = ctx.carry.clk_level.sat.find(s.sat);
+            if (lit != ctx.carry.clk_level.sat.end()) xfer = &lit->second.xfer;
+        }
         const unsigned marked  = emitter.pendingMarkChannels(s.sat);
         const bool     coupled = (marked & NetworkProductEmitter::kDiscChanClock)
                                  && (marked & NetworkProductEmitter::kDiscChanPhaseBias);
@@ -98,6 +108,11 @@ void networkPbHold(NetworkRunContext& ctx,
 
         for (auto& [signal, npb] : s.phase_bias) {
             const std::string key = s.sat + "|" + signal;
+            double level_acc = 0.0;   // card CLV: this signal's accumulated level shift
+            if (xfer) {
+                const auto xit = xfer->find(signal);
+                if (xit != xfer->end()) level_acc = xit->second;
+            }
             auto  it    = hold.find(key);
             const bool first = (it == hold.end());
             const bool gap   = !first && max_gap_s > 0.0
@@ -112,6 +127,7 @@ void networkPbHold(NetworkRunContext& ctx,
                 st.generation  = first ? 1u : (it->second.generation + 1u);
                 st.held_m      = npb.bias_m;
                 st.last_emit_s = epoch_s;
+                st.level_ref   = level_acc;   // card CLV: the transfer counts from here
                 if (first) {
                     hold.emplace(key, st);
                     ++ctx.counters.n_pbh_keys;
@@ -139,9 +155,19 @@ void networkPbHold(NetworkRunContext& ctx,
             // DECOUPLING edge: the hold writes.  |estimate - held| is the whole cost,
             // and it is measured on EVERY held emission rather than sampled.
             auto& st = it->second;
-            const double dev = npb.bias_m - st.held_m;
+            // Card CLV: the held value follows the level shift (the satellite's level
+            // step is declared on its C record, see networkClockLevelDeclare, so the
+            // emitter's value-jump test does not read the level as a discontinuity).
+            // OFF: the arithmetic is the pre-card one.
+            double held_emit = st.held_m;
+            if (ctx.knobs.clv_on) {
+                const double level_off = level_acc - st.level_ref;
+                held_emit = st.held_m + level_off;
+                if (level_off != 0.0) ++ctx.counters.clv_held_moved;
+            }
+            const double dev = npb.bias_m - held_emit;
             if (std::isfinite(dev)) ctx.carry.pb_hold_dev_abs_m.push_back(std::abs(dev));
-            npb.bias_m          = st.held_m;
+            npb.bias_m          = held_emit;
             npb.hold_generation = st.generation;
             st.last_emit_s      = epoch_s;
             ++ctx.counters.n_pbh_held_emissions;

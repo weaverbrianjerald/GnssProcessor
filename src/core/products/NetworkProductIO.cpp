@@ -214,6 +214,8 @@ struct LineAssembler {
                         s.sigcc_m = std::stod(f[k].substr(6));
                     } else if (f[k].rfind("rho=", 0) == 0) {     // M4: code/phase correction correlation
                         s.rho = std::stod(f[k].substr(4));
+                    } else if (f[k].rfind("lvl=", 0) == 0) {     // card CLV: declared level step
+                        s.level_step_m = std::stod(f[k].substr(4));
                     }
                     // Unknown key=value tokens are ignored (forward-compatible).
                 }
@@ -674,7 +676,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
     out_ << "# fields in [] are optional (present only when the producing toggle is armed);\n"
             "# 'key=value' tokens are self-describing; unknown keys are ignorable.\n"
             "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed[,datum_consts]\n"
-            "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]]\n"
+            "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]][,lvl=<m>]\n"
             "# B,sat,signal,code_bias_m[,code_disc][,isc=obs]\n"
             "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>][,gen=<n>]\n"
             "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
@@ -787,6 +789,12 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                 if (std::isfinite(s.rho))
                     out_ << ",rho=" << fmt::format("{}", s.rho);
             }
+            // Card CLV: the satellite's level step since its previous emission, the
+            // declaration the phase-bias jump test needs to reproduce the producer's
+            // counters on a replay.  Written ONLY when nonzero, so an unarmed wire is
+            // byte-identical.
+            if (s.level_step_m != 0.0 && std::isfinite(s.level_step_m))
+                out_ << ",lvl=" << fmt::format("{}", s.level_step_m);
             out_ << '\n';
         }
         for (const auto& [signal, bias_m] : s.code_bias_m) {
