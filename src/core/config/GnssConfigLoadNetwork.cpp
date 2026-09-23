@@ -12682,7 +12682,12 @@ namespace GnssProcessor {
                 { QC::DdCarry,           network_carry_invariant_qz_ },
                 { QC::SatClockWfm,       network_clock_model_q1_ },
                 { QC::SatClockRwfm,      network_clock_model_q2_ },
+                { QC::IonoCarry,         network_iono_carry_q_ },
             };
+            // One row per class.  A class without a row keeps its table default and
+            // source in the manifest while the estimator reads the member.
+            static_assert(sizeof(finals) / sizeof(finals[0]) == kNetworkQClassCount,
+                          "finals[] needs one row per NetworkQClass");
             std::string shown;
             for (const auto& entry : finals) {
                 const QC     c           = entry.first;
