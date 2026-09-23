@@ -5,11 +5,11 @@
 - **id:** GAL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Build card, pre-registered 2026-09-22 by the author's decision (the second constellation before GPS L5 and before the family ignition datum of card SID). Galileo E1 and E5a join GPS L1 and L2 on the RF-0hv working posture, the sim first (a clean pilot-channel family at 60 stations against truth, then an emulation of the field's disjoint pilot and combined channel families with an injected inter-family truth), then the field (28 stations on C1C/C5Q, 30 on C1X/C5X, the consumer WTZZ00DEU on C1X/C5X) with the 16-site census. The reading under test: the consumer errors left on the GPS-only posture are geometric and regional (the 0.56 m first hour, the sim's standing +0.045 m Up, the 0.10 to 0.18 m settled errors with standing Up offsets at the Asian, Pacific and high-latitude census sites), and a second constellation at every station addresses them where a third GPS frequency does not.
+- **summary:** BUILT 2026-09-22 (main `787eca5`), NOT ARMED, adoption deferred by the author's decision until the root defect it exposed is fixed: the second constellation runs on both beds with every datum declared (the sim consumer 0.519 0.061 0.037 0.032 0.035 0.026 m against 0.601 0.104 0.096 0.056 0.055 0.049 and its standing Up bias gone; WTZZ00DEU 0.197 0.063 0.032 0.006 0.010 0.009 against 0.560 0.059 0.028 0.030 0.039 0.048; the 16-site census median count 348 to 434.5, 14 sites better and 2 worse), three defects fixed on the way (a 1 ms satellite-clock validity bound dropping three Galileo satellites, C5X code biases erased by the inter-signal verdict loop, the consumer's inter-system bias frozen across a declared clock re-reference); the split emulation's bias recovery FAILS by metres and the cause is posture-wide and older than the card: every satellite's clock level is frozen at an ignition value (1.5 m rms against truth on the GPS-only sim baseline, constant for six hours), section 6.1. Original summary: Build card, pre-registered 2026-09-22 by the author's decision (the second constellation before GPS L5 and before the family ignition datum of card SID). Galileo E1 and E5a join GPS L1 and L2 on the RF-0hv working posture, the sim first (a clean pilot-channel family at 60 stations against truth, then an emulation of the field's disjoint pilot and combined channel families with an injected inter-family truth), then the field (28 stations on C1C/C5Q, 30 on C1X/C5X, the consumer WTZZ00DEU on C1X/C5X) with the 16-site census. The reading under test: the consumer errors left on the GPS-only posture are geometric and regional (the 0.56 m first hour, the sim's standing +0.045 m Up, the 0.10 to 0.18 m settled errors with standing Up offsets at the Asian, Pacific and high-latitude census sites), and a second constellation at every station addresses them where a third GPS frequency does not.
 - **source:** the author's decision of 2026-09-22; [RF-0c](RF-0c_gf_pin_2026-09-15.md) and [RF-0d](RF-0d_per_signal_pin_2026-09-15.md) (the pin and its cross-band rule), [RF-0f](RF-0f_isc_state_2026-09-15.md) (an inter-signal correction on disjoint station sets), [B5D](B5D_band5_code_datum_2026-09-20.md) (the assertion class), [SID](SID_signal_identity_2026-09-22.md) sections 11 and 12 (families and canonical stations), [SCC](SCC_second_code_channel_2026-09-21.md); the retired golden `config/golden/golden_sim_tri_w6.json` (GPS and Galileo triple on the pre-re-founding posture); `docs/SPEC_family_gf_datum.md` (the per-family geometry-free pin, built 2026-08-13 on the retired `code_bias_gf_datum` path, never run on data)
 - **knobs / posture:** `processing.active_systems: ["GPS", "Galileo"]` with `processing.signal_priorities.Galileo` (C1C, C1X, L1C, L1X, C5Q, C5X, L5Q, L5X; E5b left out under `frequency_mode: dual`) on the RF-0hv working bases at main `fdfff99`; every new knob default OFF and byte-identical; nothing armed in the bases by this card
 - **dates in the text:** 2026-09-22
-- **hashes / run dirs:** baseline pair `runs/_rf0hv10_{field,sim}6`; arms `runs/_rap_gal_*`; census keys `gal` and `galg` against `rf3gl2nb`; exe `gnss_processor_gal.exe`
+- **hashes / run dirs:** baseline pair `runs/_rf0hv10_{field,sim}6`; arms `runs/_rap_gal_*` (`_rap_gal_g2b_sim6`, `_rap_gal_g3x2_sim6`, `_rap_gal_g4c_field2`, `_rap_gal_g5_field6`, `_rap_gal_g5s_field6`); census keys `gal`, `galg` (plain wire, confounded), `gals`, `galgs` (contract-bearing wire) against `rf3gl2nb`; exe `gnss_processor_gal.exe` v3 `13b778f0...`; main `787eca5`
 
 ## 1. The decision and the reading it tests
 
@@ -162,3 +162,126 @@ re-runs on the new base with three bands per constellation.
   assertion of 3.2; G3 measures that assertion's cost on the truth bed first.
 - Time: the sim 6 h loop is 169 s and the field 229 s at 20 threads on the GPS-only posture; the
   second constellation is expected to add of the order of half again.
+
+## 6. Result (2026-09-22; Opus build worker; every number re-graded by the manager from `runs/` unless marked as the worker's)
+
+Main `787eca5`. What was already per system on both paths: the inter-system bias as a free
+per-epoch column per station (`StateManager.cpp:292-315`; no process noise on the producer,
+a Kalman state on the consumer), one clock pivot per constellation (`NetworkSbasis.cpp:282-317`;
+the Q3 anchor with the per-constellation median removed, the emitted frame hold per
+constellation), the code and phase bias families per (satellite, signal), the slip detectors
+on the per-system wavelengths (the E1/E5a MW gate is 8 sigma at 1.42 cycles against 1.44 for
+L1/L2), the wire keyed on the satellite id, the consumer's reader. What was GPS-only and is
+built: the geometry-free pin gave the broadcast target only to a (band 1, band 2) pair, so a
+Galileo satellite was pinned at zero while the time-linked anchor of an extra channel would
+have taken BGD, a metre-level inconsistency between the two channel families; the pin now
+takes c times BGD(E1, E5a) for a (band 1, band 5) Galileo pair, run-latched, and the extra-channel
+anchor uses the pair's target. Also built: pin counters and run-end lines per constellation
+(`NetworkMultiGnss`), a loader consistency check between `active_systems` and
+`signal_priorities` (an error for a Galileo list without the system), the per-station receiver
+antenna source line, `closed_loop_isb.csv`, the inter-system bias rows of
+`network_rx_states.csv`, `scripts/rapid_arm.py` with the Galileo frequencies (selftest 86),
+`--systems` on the two wire graders (default output byte-identical), `scripts/gal_grade.py`,
+`GalileoNetworkTest` (15 cases); `gnss_tests` 2600 ran, 2599 passed, 1 known skip;
+`--verify-loader` 0 gaps; golden `--verify` PASS.
+
+Three defects fixed beyond the brief. (1) The satellite-clock validity bound of 1 ms in
+`GnssCorrections.cpp` rejected E05 (+4.75 ms), E11 (+2.91 ms) and E12 (-1.03 ms), so the field
+wire carried 22 Galileo satellites instead of 25; the bound is 0.1 s. The sim fixture was
+generated under the old bound and lacks those three satellites until it is regenerated. (2) The
+inter-signal verdict loop of `NetworkSolveGlue.cpp` ran with `network.sat_isc_state` off and
+erased every C5X code bias from the wire; it is gated on the knob. (3) The consumer's
+inter-system bias froze across a declared per-constellation clock re-reference: the wire
+re-references each constellation's frame once in the run (GPS +1.36 m at 4.71 h on the sim,
+present in the GPS-only baseline and harmless to a one-constellation consumer; Galileo +0.54 m at
+3.34 h), both declared by the E record and the R record. The first sim run diverged to 2.44 m in
+hour 6 for that reason. The existing consumer knob `estimation.clock_disc_isb_reinflate_std`
+(default 0; set to 10 on every Galileo arm from G1b on) lets the bias re-solve; its reset sets
+the variance rather than raising it, recorded as owed.
+
+| gate | measured | verdict |
+| --- | --- | --- |
+| G0 | `products.txt` (comments stripped), `closed_loop_trace.csv`, `network_epoch_status.csv` identical to `runs/_rf0hv10_{field,sim}6` over 2 h on both beds, across the three exe versions, with and without the antenna fallback flag | PASS |
+| G1 (`runs/_rap_gal_g1b_sim2`) | declared 2 = 2 below the cutoff at every epoch; pivots E02 and G01; Galileo pin rows 4 661 at a non-zero BGD and 480 at a broadcast BGD of exactly 0 (E03, E21), 0 fallbacks; inter-system bias at 60 stations, 0 Galileo-only station-epochs; the wire 21 to 22 Galileo satellites per epoch, 22 distinct (the fixture lacks E05, E11, E12), every C, B and P record present | PASS except the 25-satellite count, a fixture limit |
+| G2 (`runs/_rap_gal_g2b_sim6`) | consumer 0.519 0.061 0.037 0.032 0.035 0.026 m against 0.601 0.104 0.096 0.056 0.055 0.049; 587 epochs below 0.1 m against 448; mean Up against truth hours 2 to 6 -0.040 +0.015 -0.028 -0.021 -0.006 m against +0.080 +0.087 +0.047 +0.046 +0.036; clock wire GPS 0.0033 / 0.0029 m against 0.0040 / 0.0030, Galileo 0.0044 / 0.0035; the Galileo code biases against `truth_bias.csv` within-arc rms E C1C 0.0056 and E C5Q 0.0032 against G C1C 0.0055 and G C2W 0.0032 (worker); the consumer's inter-system bias 0.5 to 0.95 m from 8.000 m (worker; section 6.1); GPS gross rows 645 / 0 against 595 / 1, Galileo 399 / 0 | consumer, count, wire PASS; bias truth FAIL by 0.1 mm; inter-system bias FAIL; GPS rows above 3 m FAIL |
+| G3 (`runs/_rap_gal_g3x2_sim6`) | headers verified (30 stations and the consumer on C1X L1X C5X L5X, 30 on the pilot types); the injected constants identical at every station and the consumer (E30 C1X -0.028 m, E08 +0.077 m); the wire's C1X minus C1C against the constants, common mode removed: rms 0.881 0.868 0.869 0.876 0.866 0.596 m by hour, per satellite E30 +3.15, E08 +1.34, E09 -1.04 m with ranges of 0.05 to 0.09 m over hours 2 to 6; C5X minus C5Q rms 0.029 0.028 0.028 0.027 0.027 0.028 m; the consumer 0.299 0.063 0.045 0.035 0.042 0.029 m (599), within 0.010 m of G2 from hour 3; gross rows combined 218 / 1 against pilot 745 / 6; declared 2 = 2 | recovery FAIL for both signals; consumer PASS; rows PASS |
+| G4 (`runs/_rap_gal_g4c_field2`) | family census pilot 28, combined 30; declared 2 = 2 at every epoch; pin rows 5 381 at BGD plus 480 at zero; 4 852 zero-correction assertions on C5X; the wire 24 to 25 Galileo satellites per epoch, 25 distinct; no Galileo row through the second code channel; receiver antenna source 52 exact, 6 on the GPS fallback (JPLM00USA AOAD/M_T NONE, STJO00CAN TWIVC6150 NONE, KOKV00USA ASH701945G_M NONE, SYOG00ATA TRM159900.00 SCIS, PARK00AUS LEIAR25 NONE, SVTL00RUS JAVRINGANT_DM JVDM), WTZZ00DEU exact | PASS |
+| G5 (`runs/_rap_gal_g5_field6`; `_g5s_field6` = the same solve with `network.serialize_sbasis_contract`, byte-identical) | WTZZ00DEU 0.197 0.063 0.032 0.006 0.010 0.009 m against 0.560 0.059 0.028 0.030 0.039 0.048; 623 epochs below 0.1 m against 611; mean Up hours 2 to 6 +0.013 +0.021 -0.003 -0.006 -0.006 m against +0.014 -0.004 -0.024 -0.034 -0.046; clock wire GPS 0.0047 / 0.0029 m against 0.0041 / 0.0028, Galileo (L1X, L5X) 0.0040 / 0.0025; gross rows GPS 168 / 32 against 213 / 32, Galileo 958 / 14 of which C1C 749 (E12 715 rows at DARW00AUS, HKSL00HKG, PARK00AUS and others), C5Q 143, C1X 11, C5X 55; the combined family's records on 24 to 25 satellites per epoch, the pilot family's with 1 826 (C1C) and 2 201 (C5Q) satellite-epoch holes | WTZZ PASS; GPS wire FAIL by 0.0006 m; GPS rows PASS |
+| G5 census, plain wire (keys `gal`, `galg`) | `gal`: median count 248.5 against 348, hours 2 to 6 worse at all 16 sites (median +0.356 m); every site diverges after the two re-references (the WTZZ00DEU replay 0.256 0.085 0.044 0.557 0.595 2.804 against the in-process 0.197 0.063 0.032 0.006 0.010 0.009) | confounded: the replay reader has no clock-discontinuity channel without the S contract |
+| G5 census, contract-bearing wire (keys `gals`, `galgs`) | the WTZZ00DEU replay identical to the in-process consumer; `gals` (GPS and Galileo consumers): median count 434.5 against 348, 14 sites better and 2 worse, hours 2 to 6 better at 10 and worse at 2 (median -0.028 m), hour 1 better at 11 and worse at 4 (median -0.324 m); `galgs` (GPS-only consumers on the same wire): 244, 6 better and 10 worse, hours 2 to 6 3 and 6 (median +0.004 m) | `gals` PASS on every bar; the wire's GPS half costs GPS-only consumers a little |
+| G6 | loop per epoch sim 219 to 544 ms (2.5 times), field 287 to 1 252 ms (4.4 times); carried ambiguities sim 930 to 1 577, field 875 to 1 477; B records per epoch sim 64 to 106, field 96 to 183 (worker) | read |
+
+The seven census sites above 0.1 m, hour-6 p50 and mean Up (m), `rf3gl2nb` to `gals` (worker;
+the `gals` counts re-graded): BADG00RUS 0.183 / -0.095 to 0.122 / -0.073; WUH200CHN 0.157 /
+-0.132 to 0.176 / -0.088; POHN00FSM 0.160 / +0.093 to 0.058 / +0.042; UTQI00USA 0.131 /
++0.088 to 0.085 / +0.045; ANMG00MYS 0.188 / +0.085 to 0.169 / +0.055; KOKB00USA 0.044 / -0.009
+to 0.050 / -0.024; ASCG00SHN 0.104 / -0.085 to 0.073 / -0.054. Counts: POHN00FSM 0 to 323,
+ASCG00SHN 180 to 428, KOKB00USA 125 to 295, UTQI00USA 13 to 108, BADG00RUS 185 to 286,
+ANMG00MYS 204 to 394, WUH200CHN 69 to 103.
+
+**6.1 The reading: the satellite clock level is frozen at an ignition value, posture-wide.**
+G3's recovery failure is not a family datum. On the GPS-only sim baseline `runs/_rf0hv10_sim6`,
+where the a priori clock is the truth, the wire's per-satellite clock error has an rms across
+satellites of 1.29 m at epoch 1, 1.50 at epoch 4, 1.49 at epoch 16, 1.47 at epoch 64 and 1.45 at
+epoch 480 (with the per-epoch median removed: 1.19, 1.47, 1.48, 1.45, 1.46); G16 reads -0.67
+-2.29 -2.96 -3.50 -3.87 m over epochs 1 to 6 and then -3.5 m for the rest of the run, G03 +0.47
+to +2.98 by epoch 8 and +2.97 at hour 6. The per-satellite median ionosphere-free code residual
+over hours 2 to 6 runs from -2.64 to +1.89 m (sd 1.01 m across 32 satellites) and is the same
+hour to hour (G16 -2.53 -2.76 -2.71 -2.63 -2.54 -3.27); the GPS and Galileo sim arm shows the
+same (-2.83 to +1.75 m, sd 1.04), and the field baseline's wire sits 0.85 m rms per satellite
+from the COD clock with the same constancy (code residual medians -2.29 to +0.53 m). Part of
+the sim offset is the datum (the network pins the ionosphere-free combination of C1C and C2W at
+zero where the product's clock datum is P1/P2: the offsets correlate -0.67 with the product's
+own IF(C1C, C2W) bias); the rest is error, and the code residuals prove it: per satellite the
+C1C and C2W residual medians are +0.29 and -0.17 times the clock offset, exactly the pattern of
+a wrong clock level of which the free slant ionosphere absorbs 71 percent per line of sight and
+the code keeps the rest, so the ionosphere levels of every station are wrong per satellite as
+well. The phase is consistent throughout (the ambiguities absorb a constant), which is why the
+float consumer, the within-arc wire instrument and every card since RF-0 never saw it;
+`simnet_grade.py`'s clock residual of 1.75 m rms had been read as a datum.
+
+Twelve config-only arms on the sim base, 2 h, the clock error rms across satellites at epochs
+4 / 16 / 60 / 240 and the code-residual spread in hour 2 (base 1.50 / 1.49 / 1.47 / 1.47, sd
+0.97 m): the Q3 anchor off, its variance floor at 1 m2, its walk at 1e-3 (`_rap_cil_e2`, `_e3`,
+`_e4`): 1.50 / 1.64 / 1.55 / 1.51, sd 1.1 (the anchor is not the cause; it only suppresses the
+walk, 0.003 against 0.008 m, and its removal costs the consumer 0.6 to 1.0 m in hour 1); the
+leveling young-arc inflate, variance floor and level q (`_e5`, `_e6`, `_e7`): 1.36 to 1.46 at
+epoch 240; the float vehicle's birth floors (1 and 4 m2), its process noise and the local-block
+and in-block carry knobs (`_e8`, `_e11`, `_e11b`, `_e12`, `_e13`, `_e14`): byte-identical to the
+base (inert on this posture); the filter's ambiguity q (`_e9`): the level unchanged and the
+consumer destroyed (10.5 m). One lever moves it: `network.phase_leveling_warmup_epochs: 76`
+(`_rap_cil_e10_warm`, the harvest of the ambiguity carry delayed to epoch 76): 1.50 / 1.16 /
+0.80 / 0.78 with the code-residual spread 0.97 to 0.12 m (range -0.18 to +0.37), the remaining
+0.8 m being the datum share. The level therefore converges as the code accumulates for as long
+as the ambiguities solve free, and freezes at whatever value it holds on the epoch the carry
+begins (the default: 6 emitted epochs, when the single-epoch code solves put it 1.5 m rms off).
+Card RF-IGN measured the same lever on the field golden. The mechanism is the one the float
+vehicle's design note names (RF-1 section 1.3: the carried priors count the level's information
+as phase-precise, "the level freezes at K_eff = (B+1)/(B-1) epochs", 3 for two bands): the
+carried satellite phase bias and ambiguities hold the (clock, phase bias) level direction at
+phase stiffness, so the code rows' level information never reaches the clock. Delaying the
+harvest is not the fix (it costs the consumer 2.1 and 0.61 m in hours 1 and 2 and the wire's
+walk 0.12 to 0.18 m); the fix is an honest level variance under the carry, the next card.
+It surfaces with two constellations: a second channel family with a free ionosphere-free level
+absorbs the clock error into its code biases while the pinned family carries it in residuals
+(G3; E12's 715 gross C1C rows on the field), and the consumer's inter-system bias reconciles two
+constellations' frozen levels (G2). The wire's code corrections are wrong per satellite at the
+metre level for any code-based user, on the GPS-only posture as well. The author's decision of
+2026-09-22: fix this root before adoption.
+
+**6.2 Owed from this card** (the author chose to fix the roots before continuing):
+the frozen clock level (6.1); the replay reader's clock-discontinuity channel gated on
+`serialize_sbasis_contract` (a declaration gated on an output option, the product-legend
+lesson; every multi-constellation replay needs it today); the consumer's inter-system bias
+reset that sets the variance and can shrink it (`StateManager.cpp:1703-1705`); the
+group-delay latch on the first navigation record (E21's first record is 0 while the later ones
+are -0.23 to -2.3 ns; the largest within-day spread is 0.698 m on E24); the sim fixture without
+E05, E11 and E12 (regenerating it under the corrected bound moves every sim baseline); the
+Galileo yaw law (nominal yaw steering only; eclipses handled by dropping the satellite); the
+BeiDou group-delay pair rule; the GPS clock wire 0.0041 to 0.0047 m on the field, unattributed;
+two archived GPS-only configs that carry a Galileo list and are now refused by the consistency
+check (`config/test_suite/ppp_rtk_network_global_5min_gpsonly.json`,
+`config/archive/test_suite/_sdewl_probe_gps10.json`); post-fit rows touching only the clock
+column written without a signal. Adoption of the two constellations, with
+`estimation.clock_disc_isb_reinflate_std` and `network.serialize_sbasis_contract` on the
+consumer and wire side, waits on 6.1.

@@ -207,9 +207,12 @@ record the program is re-founding **on**.
   the float vehicle (concentration gap +0.283 against a bar of 0.10, 57 % of fractions
   within 0.15 cycle against 30 % uniform, bands still uniform); a lane design
   decision is owed, observatory first.
-- [GAL](refound/GAL_gps_galileo_dual_2026-09-22.md): open (pre-registered 2026-09-22 by the
-  author's decision: GPS and Galileo dual frequency before L5 and before the family ignition
-  datum, sim first), Galileo E1 and E5a beside GPS L1 and L2 on the RF-0hv posture: every roster
+- [GAL](refound/GAL_gps_galileo_dual_2026-09-22.md): open (BUILT 2026-09-22, main 787eca5, NOT
+  ARMED: both beds run with every datum declared, the sim consumer better in every hour and its
+  standing Up bias gone, WTZZ00DEU at 0.006 to 0.010 m in hours 4 to 6, the census 348 to 434.5;
+  three defects fixed on the way; the split emulation exposes a posture-wide root, every
+  satellite's clock level frozen at an ignition value, 1.5 m rms on the GPS-only sim baseline,
+  which the author chose to fix before adoption), Galileo E1 and E5a beside GPS L1 and L2 on the RF-0hv posture: every roster
   station and every census site tracks Galileo, in two disjoint channel families (28 pilot, 30
   combined, WTZZ00DEU combined); the satellite-side inter-family truth is 0.05 m sd (COD OSB);
   gates: byte-identity, the pilot family on the sim against truth, a sim emulation of the split
