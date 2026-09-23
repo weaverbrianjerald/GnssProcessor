@@ -225,6 +225,13 @@ record the program is re-founding **on**.
   22-arm ladder finds no single knob and one lever (the free-ambiguity era converges it at the
   code's rate); design: the border carry inflated along each satellite's level direction by the
   code-only level variance, `network.clock_level_carry`.
+- [OWD](refound/OWD_owed_defects_2026-09-22.md): open (pre-registered 2026-09-22, the author's
+  direction to fix the mistakes card GAL uncovered before continuing), GAL's owed list less the
+  clock level (card CLV): the S contract line on every wire, naming the run's own product files,
+  and an undeclared replay refused (`network.replay_allow_undeclared_wire`); every state-manager
+  re-inflation raises and never shrinks; the group delay latched as the processing window's
+  median healthy record; one admission door (`processing.active_systems`); post-fit rows named
+  by signal; the BeiDou pair rule, the sim fixture, the Galileo yaw law and health sequenced.
 
 ---
 
