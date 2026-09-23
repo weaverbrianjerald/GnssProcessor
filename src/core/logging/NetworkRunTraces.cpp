@@ -165,6 +165,17 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                 log->warn("Network: failed to open closed-loop per-satellite trace {}",
                           cls_path.string());
         }
+        // Card GAL: the consumer's inter-system bias, only when a second
+        // constellation is active (a GPS-only consumer has no such state).
+        if (networkMultiGnssActive(config_)) {
+            const std::filesystem::path cli_path = log_dir_ / "closed_loop_isb.csv";
+            cl_isb_trace.open(cli_path);
+            if (cl_isb_trace)
+                cl_isb_trace << "week,tow,system,isb_m,isb_std_m,clock_m\n";
+            else
+                log->warn("Network: failed to open closed-loop inter-system bias trace {}",
+                          cli_path.string());
+        }
     }
 
     if (nc.trace_slip_events) {
@@ -2213,7 +2224,8 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
 
 void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                                                 const NetworkServiceCounters& counters,
-                                                std::size_t n_synced, double loop_ms) {
+                                                std::size_t n_synced, double loop_ms,
+                                                const std::string& extra_member) {
     const auto& n_emitted                    = counters.n_emitted;
     const auto& n_skipped                    = counters.n_skipped;
     const auto& n_gate_withheld              = counters.n_gate_withheld;
@@ -2281,6 +2293,9 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"carry_gap_2_30\":" << counters.sid.carry_gap_2_30 << ','
                << "\"carry_gap_2_30_answered\":" << counters.sid.carry_gap_2_30_answered
                << "},"
+               // Card GAL: the inter-system bias census, present only when a second
+               // constellation is active (an empty member writes nothing).
+               << (extra_member.empty() ? std::string() : extra_member + ",")
                << fmt::format("\"loop_ms\":{:.1f}", loop_ms)
                << "}\n";
     }
@@ -2407,6 +2422,7 @@ void NetworkRunTraces::closeAll() {
     if (vtec_sh_trace.is_open()) vtec_sh_trace.close();
     if (cl_trace) cl_trace.close();
     if (cl_sat_trace.is_open()) cl_sat_trace.close();   // card CST
+    if (cl_isb_trace.is_open()) cl_isb_trace.close();   // card GAL
     if (if_slip_trace.is_open()) if_slip_trace.close();
     if (raim_trace.is_open()) raim_trace.close();
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();

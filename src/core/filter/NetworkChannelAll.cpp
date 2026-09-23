@@ -56,7 +56,10 @@ void networkChannelAllEpoch(NetworkRunContext& ctx, const GnssConfig& config_,
                             const std::vector<NetStation>& stations,
                             const std::vector<std::vector<PppObservation>>& modeled,
                             const std::vector<bool>& present) {
-    if (!config_.networkChannelModeAll()) return;   // not active: one flag test
+    // Card GAL: the census also runs on a single-channel posture when a second
+    // constellation is active, so its families can be read per constellation (the
+    // run-end line is then card GAL's; the three phase-6b lines stay under `all`).
+    if (!config_.networkChannelModeAll() && !networkMultiGnssActive(config_)) return;
     auto& C = ctx.counters.channel_all;
     ++C.epochs;
 

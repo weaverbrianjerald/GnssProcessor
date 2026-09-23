@@ -5563,6 +5563,17 @@ int networkTeardown(
                   config_.networkClockDiscGapJumpM() > 0.0
                       ? fmt::format("ON at {:.2f} m", config_.networkClockDiscGapJumpM())
                       : std::string("off — a stale return is an UNTESTED first sighting"));
+        // Card GAL: the same tallies per constellation, when a second one is active.
+        if (networkMultiGnssActive(config_)) {
+            std::string t;
+            for (const auto& [c, k] : clk_rebase_engine.constCounters())
+                t += fmt::format("{}{}: {} row(s), sum |mu| {:.2f} m, max |A_c| {:.2f} m, "
+                                 "{} leash re-anchor(s), {} step mark(s)",
+                                 t.empty() ? "" : " | ", c, k.rows, k.sum_abs_mu,
+                                 k.max_abs_acc, k.reanchors, k.marks);
+            log->info("Network (card GAL, CLOCK FRAME HOLD per constellation): [{}].",
+                      t.empty() ? std::string("none") : t);
+        }
     }
     if (ctx.knobs.cta_on) {
         // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters
@@ -5994,7 +6005,8 @@ int networkTeardown(
                   n_perconst_partial_epochs, n_perconst_diffuse_published);
 
     // L15 end-of-run manifest record (body relocated to NetworkRunTraces, INC-4).
-    traces.writeRunManifestComplete(nc, ctx.counters, synced.size(), loop_ms);
+    traces.writeRunManifestComplete(nc, ctx.counters, synced.size(), loop_ms,
+                                    networkMultiGnssManifestJson(ctx, config_));
 
     // --- B6 (P1-1): serialized-contract round-trip self-check --------------------
     // Close the writer (flush the header), read it back, and cross-check the parsed
@@ -6378,6 +6390,11 @@ int networkTeardown(
     // widening is not active.
     networkChannelAllRunEnd(ctx, config_, log,
                             slip_qc.counters.gap_reentry_extra_channel);
+    // Card GAL: the second-constellation lines (inter-system bias, the clock
+    // S-basis per constellation, the geometry-free datum per constellation, the
+    // family census on a single-channel posture, the clock anchor per
+    // constellation).  Silent unless a constellation other than GPS is active.
+    networkMultiGnssRunEnd(ctx, config_, log);
     // Card SID phase 5a run-end (filter/NetworkLedgerEmit.cpp): the emitter's
     // bookkeeping against the ledger, both generation classes with their
     // denominators, the first-sighting split, and the declared roster's own wire

@@ -193,6 +193,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkSecondCodeScope.cpp
     src/core/filter/NetworkSecondPhaseScope.cpp
     src/core/filter/NetworkChannelAll.cpp
+    src/core/filter/NetworkMultiGnss.cpp
     src/core/filter/NetworkPhaseDatum.cpp
     src/core/filter/NetworkChainDatum.cpp
     src/core/filter/NetworkAnchorHygiene.cpp
@@ -519,6 +520,7 @@ add_executable(gnss_tests
     tests/test_network_second_code_scope.cpp
     tests/test_second_phase_channel.cpp
     tests/test_channel_mode_all.cpp
+    tests/test_galileo_network.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

@@ -280,6 +280,38 @@ public:
     /// 0.33–0.36 and the E6 member at ~0.30, which 0.3 would flicker on.
     static constexpr double kSbasisAttrSpan = 0.25;
 
+    /// Card GAL (R3): what the latched broadcast group delay says about ONE
+    /// satellite's geometry-free pin pair.  The four cases are the four counters of
+    /// the RF-0c run-end line, now decided in one place so that the pair pin and the
+    /// time-linked extra-channel anchor cannot disagree about a satellite's target.
+    enum class SatGfTargetKind : std::uint8_t {
+        BroadcastHit,    ///< The pair is one the group delay describes and the value is non-zero.
+        BroadcastZero,   ///< The pair is described and the navigation message broadcasts exactly 0.
+        Missing,         ///< The pair is described but the satellite has no navigation record.
+        NoGroupDelay,    ///< The pair is not one the latched group delay describes: target 0.
+    };
+
+    /// Card GAL (R3): the absolute geometry-free target of one satellite's pin pair.
+    struct SatGfTarget {
+        double          target_m{0.0};                          ///< Metres; 0 unless @c kind is @c BroadcastHit.
+        SatGfTargetKind kind{SatGfTargetKind::NoGroupDelay};    ///< Which of the four cases applied.
+    };
+
+    /// Card GAL (R3 iii): per-constellation geometry-free datum counters.  Each
+    /// field mirrors the @ref CodeBiasDatumRows counter of the same meaning.
+    struct SatGfConstCounts {
+        int rows{0};           ///< Pair rows folded (@ref CodeBiasDatumRows::n_sat_gf_rows).
+        int tgd_hits{0};       ///< Pair rows at a non-zero broadcast group delay.
+        int tgd_zero{0};       ///< Pair rows whose satellite broadcasts exactly 0.
+        int tgd_missing{0};    ///< Pair rows whose satellite had no navigation record.
+        int pair_no_gd{0};     ///< Pair rows whose pair the latched group delay does not describe.
+        int extra_rows{0};     ///< Extra-channel rows (@ref CodeBiasDatumRows::n_sat_gf_extra_rows).
+        int isc_zero{0};       ///< Extra rows asserting a zero inter-signal correction.
+        int sameband_free{0};  ///< Same-band columns left estimable.
+        int carried{0};        ///< Rows (pair and extra) carried at the previous solved value.
+        int anchored{0};       ///< Rows (pair and extra) anchored at the absolute target.
+    };
+
     /// Result of @ref buildCodeBiasDatumRows: stacked W6 gauge rows for the driver
     /// to fold via NetworkEstimator::addSharedConstraintRows at
     /// @ref kCodeBiasGaugeWeight (and mirror into the RAIM-replay cap channel).
@@ -296,7 +328,7 @@ public:
         int n_sat_gf_tgd_hits{0};  ///< RF-0c / `broadcast_tgd`: of those rows, the ones pinned at a NON-ZERO `c*T_GD` from the navigation message.
         int n_sat_gf_tgd_zero{0};  ///< RF-0c / `broadcast_tgd`: rows whose satellite HAS a navigation record but broadcasts `T_GD = 0` exactly — physically pinned, numerically identical to `zero`.  Separated from the fallbacks so "the constellation says zero" never reads as "we could not find a value".
         int n_sat_gf_tgd_missing{0}; ///< RF-0c / `broadcast_tgd`: rows whose satellite had NO navigation record — fell back to a zero target.
-        int n_sat_gf_pair_not_l1l2{0}; ///< RF-0c / `broadcast_tgd`: rows whose ionosphere-free pin pair is not an (L1, L2) band pair, so the broadcast T_GD does not describe it — fell back to a zero target rather than assert a delay for a pair the navigation message never referenced.
+        int n_sat_gf_pair_not_l1l2{0}; ///< RF-0c / `broadcast_tgd`: rows whose ionosphere-free pin pair is not a pair the latched broadcast group delay describes (@ref broadcastGroupDelayDescribesPair: (L1, L2) for GPS and every constellation but Galileo, (E1, E5a) for Galileo since card GAL), so no broadcast value applies: fell back to a zero target rather than assert a delay for a pair the navigation message never referenced.  The name predates card GAL and is kept for the log and trace readers that key on it.
         int n_sat_gf_extra_rows{0};   ///< RF-0d: EXTRA per-signal geometry-free rows, one per registered code column beyond the ionosphere-free pair whose band differs from the reference.  These are what make a sparse channel's level (GPS C2X) a DATUM rather than a quantity the few stations tracking it happen to determine.
         int n_sat_gf_isc_zero{0};     ///< RF-0d / `broadcast_tgd`: extra rows that asserted an inter-signal correction of ZERO because RINEX navigation carries no ISC for GPS (only T_GD).  Counted because the assertion is invisible on the wire — it is the part of a "broadcast" datum that the navigation message does not actually state.
         int n_sat_gf_sameband_free{0};///< RF-0d: registered columns DELIBERATELY left unpinned — a channel in the SAME band as the reference has no geometry-free combination against it (the divisor is zero) and its difference is a pure ISC, observable without any ionosphere at any coverage.  Pinning it would discard estimable content.
@@ -319,6 +351,11 @@ public:
         /// carry map, and two views of one truth drift apart.  Empty unless the knob is
         /// armed, so the emit prep's withholding loop is never entered otherwise.
         std::set<std::string> extra_band_held;
+        /// Card GAL (R3 iii): the geometry-free datum counters above, split per
+        /// constellation letter ("G", "E", ...).  Filled on the same branches as the
+        /// global counters, so the per-constellation sums equal them exactly.  Empty
+        /// when @c network.sat_gf_datum is off.
+        std::map<std::string, SatGfConstCounts> sat_gf_by_const;
     };
 
     /// FAMILY-GF (docs/SPEC_family_gf_datum.md §3.1): a receiver channel FAMILY tag.
@@ -345,6 +382,54 @@ public:
      *         start emitting rows (§7's allow-list, enforced here rather than at the
      *         call site).
      */
+    /**
+     * @brief Card GAL (R3): does the latched broadcast group delay describe this pair?
+     *
+     * The navigation message carries ONE group delay per satellite that the setup
+     * latches (@c KeplerianEphemeris::tgd0): T_GD for GPS and QZSS, which the
+     * IS-GPS-200 single-frequency corrections reference to the (L1, L2) pair, and
+     * BGD(E1, E5a) for Galileo (ORBIT-6 field 3 of the RINEX record, carried by the
+     * I/NAV and the F/NAV message alike), whose Galileo ICD corrections
+     * d_E1 = c*BGD and d_E5a = c*(f_E1/f_E5a)^2*BGD have an ionosphere-free
+     * combination of exactly zero and a geometry-free combination of exactly c*BGD,
+     * the same identity T_GD satisfies on (L1, L2).  The rule is therefore:
+     *  - Galileo ('E'): the pair (band 1, band 5) and nothing else;
+     *  - every other constellation: the pair (band 1, band 2), the RF-0c rule
+     *    unchanged (for BeiDou that band-digit test does not name the pair its
+     *    TGD1 describes; see card GAL's owed list).
+     * A pair outside the rule gets a zero target and its own counter.
+     *
+     * @param sat   RINEX satellite id ("G05", "E11").
+     * @param sig1  The pin pair's first (band-1) code signal.
+     * @param sig2  The pin pair's second code signal.
+     * @return @c true iff the latched group delay describes @p sig1 / @p sig2.
+     */
+    static bool broadcastGroupDelayDescribesPair(const std::string& sat,
+                                                 const std::string& sig1,
+                                                 const std::string& sig2);
+
+    /**
+     * @brief Card GAL (R3): the absolute geometry-free target of one satellite.
+     *
+     * The single rule the pair pin and the time-linked extra-channel anchor both
+     * read, so that an extra channel of a satellite is never anchored at a value
+     * its pair was not pinned at (before card GAL a Galileo C5X column was anchored
+     * at c*BGD while its (C1C, C5Q) pair sat at zero, which asserts C5X minus C5Q
+     * equal to about 0.79 c*BGD, metres).  Order of the tests, and therefore the
+     * counters, is the RF-0c order: the pair rule first, then the navigation
+     * record, then a broadcast value of exactly zero.
+     *
+     * @param sat              RINEX satellite id.
+     * @param sig1             The pin pair's first code signal.
+     * @param sig2             The pin pair's second code signal.
+     * @param sat_gf_target_m  The run-latched c*T_GD / c*BGD per satellite, metres.
+     * @return The target and which of the four cases applied.
+     */
+    static SatGfTarget satGfBroadcastTarget(const std::string& sat,
+                                            const std::string& sig1,
+                                            const std::string& sig2,
+                                            const std::map<std::string, double>& sat_gf_target_m);
+
     static ChannelFamily channelFamilyOf(const std::string& constellation,
                                          const std::string& signal);
 

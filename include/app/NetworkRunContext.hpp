@@ -49,6 +49,7 @@
 #include "filter/NetworkCanonicalPairAdmission.hpp" // Card CPA: canonical-pair admission state + counters
 #include "app/SignalRoster.hpp"            // Card SID phase 1: SignalRoster + its counters
 #include "filter/NetworkChannelAll.hpp"  // Card SID phase 6b: the all-channel census
+#include "filter/NetworkMultiGnss.hpp"   // Card GAL: the second-constellation telemetry
 #include "filter/ArcLedger.hpp"            // Card SID phase 1: the arc lifecycle machine
 #include "filter/NetworkAnchorReentry.hpp" // Card SID phase 4: the anchor drop memo / the read
 #include "filter/NetworkLedgerEmit.hpp"    // Card SID phase 5a: the emitter read + the declared roster
@@ -3545,6 +3546,17 @@ namespace GnssProcessor {
         /// class is measure-only, and the struct stays empty unless
         /// `processing.channel_mode: all` is active on the network path.
         NetworkChannelAllCounters channel_all;
+        /// Card GAL (docs/refound/GAL_gps_galileo_dual_2026-09-22.md): the
+        /// second-constellation telemetry (inter-system bias, clock S-basis per
+        /// constellation, the non-GPS-only station-epochs, the anchor per
+        /// constellation).  Measure-only; stays empty unless a constellation other
+        /// than GPS is active on the network path.
+        NetworkMultiGnssCounters mgnss;
+        /// Card GAL (R3 iii): the RF-0c / RF-0d geometry-free datum counters split
+        /// per constellation letter, accumulated from
+        /// @c NetworkSbasis::CodeBiasDatumRows::sat_gf_by_const beside the global
+        /// counters.  Read only by the card GAL run-end line.
+        std::map<std::string, NetworkSbasis::SatGfConstCounts> sat_gf_by_const;
         /// COMMON-BAND SCOPE CENSUS (network.cycle_slip.common_band_scope,
         /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and,
         /// like the MW admission census above, collected KNOB-INDEPENDENTLY —

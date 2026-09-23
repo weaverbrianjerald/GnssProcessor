@@ -239,9 +239,11 @@ def parse_bia(path, doy_key, systems=('G',)):
 # ----------------------------------------------------------------------------
 # census
 # ----------------------------------------------------------------------------
-def collect_raw(epochs, clk, osb, t_lo=None, t_hi=None):
+def collect_raw(epochs, clk, osb, t_lo=None, t_hi=None, systems=('G',)):
     """Raw per-epoch X per kind before any de-meaning, plus the event bookkeeping and counters.
-    raw[kind][key][t] = x ; disc[kind][key][t] = record disc ; ev[sat][t] = (clk_disc, retro, datum_changed)."""
+    raw[kind][key][t] = x ; disc[kind][key][t] = record disc ; ev[sat][t] = (clk_disc, retro, datum_changed).
+    `systems` (card GAL): the constellation letters kept; a C record of any other letter is
+    counted as non_gps_C (the pre-card name), so the default reproduces the GPS-only census."""
     raw = {k: defaultdict(dict) for k in KINDS + ('phase_spec', 'clk_full')}
     disc = {k: defaultdict(dict) for k in KINDS}
     ev = defaultdict(dict)
@@ -259,11 +261,12 @@ def collect_raw(epochs, clk, osb, t_lo=None, t_hi=None):
         for s in {k[0] for k in ep['P']} | {k[0] for k in ep['B']}:
             if s not in ep['C']:
                 cnt['bias_rows_without_C'] += 1
-        dchg = ep['datum_changed'] and (not ep['consts'] or 'G' in ep['consts'])
         have = {}
         for s, (c0, c1, cdisc) in ep['C'].items():
-            if s[0] != 'G':
+            if s[0] not in systems:
                 cnt['non_gps_C'] += 1; continue
+            # the E-line datum flag names the constellations whose clock datum moved
+            dchg = ep['datum_changed'] and (not ep['consts'] or s[0] in ep['consts'])
             code_clk, kind = clk_lookup(clk, s, tabs)
             if code_clk is None:
                 no_clk_sat[s] += 1; cnt['C_without_CODE_clock'] += 1; continue
@@ -301,13 +304,22 @@ def sig_of(key):
     return key[1] if isinstance(key, tuple) else ''
 
 
+def grp_of(key):
+    """Card GAL: the common-mode group of a key, (constellation letter, signal).  The
+    clock common mode is per constellation (each has its own gauge) and a signal name
+    such as C1C exists in more than one constellation; on a single-system census this
+    partition is the per-signal one it always was."""
+    sat = key[0] if isinstance(key, tuple) else key
+    return (sat[:1], sig_of(key))
+
+
 def common_mode(raw_kind, tows, method):
     """cm[sig][t].  'median': per-epoch median over satellites present (the pre-registered form).
     'diffmedian': cm(t) = cm(t_prev) + median over satellites present at both epochs of dX (integrated),
     so a rotating satellite set cannot move the common-mode estimate."""
-    groups = defaultdict(lambda: defaultdict(dict))   # sig -> t -> {key: x}
+    groups = defaultdict(lambda: defaultdict(dict))   # (const, sig) -> t -> {key: x}
     for key, ser in raw_kind.items():
-        g = groups[sig_of(key)]
+        g = groups[grp_of(key)]
         for t, x in ser.items():
             g[t][key] = x
     cm = {}
@@ -334,7 +346,7 @@ def common_mode(raw_kind, tows, method):
 def demean(raw_kind, disc_kind, cm):
     series = {}
     for key, ser in raw_kind.items():
-        c = cm[sig_of(key)]
+        c = cm[grp_of(key)]
         series[key] = sorted((t, x - c[t], disc_kind.get(key, {}).get(t)) for t, x in ser.items())
     return series
 
@@ -445,12 +457,13 @@ def resolve_code_products(seed_json, data_root_override=None):
 
 
 def run_census(run_dir, clk, osb, label, t_lo=None, t_hi=None, hours=None, out_dir=None,
-               step_thresh=0.25, min_n=2):
+               step_thresh=0.25, min_n=2, systems=('G',)):
     epochs, meta = parse_products(os.path.join(run_dir, 'products.txt'))
     if not epochs:
         print(f'!! {label}: no epochs parsed'); return None
     t0 = epochs[0]['tow'] if t_lo is None else t_lo
-    raw, disc, ev, cnt, missing_bia, no_clk_sat, tows = collect_raw(epochs, clk, osb, t_lo, t_hi)
+    raw, disc, ev, cnt, missing_bia, no_clk_sat, tows = collect_raw(epochs, clk, osb, t_lo, t_hi,
+                                                                     systems)
     if hours is None:
         hours = list(range(int((tows[-1] - t0) // 3600) + 1))
     res = {'label': label, 'S': meta['S'], 'cnt': dict(cnt), 'missing_bia': dict(missing_bia),
@@ -574,7 +587,21 @@ def main():
     ap.add_argument('--min-n', type=int, default=2, help='minimum arc length (epochs) entering the pooled stats')
     ap.add_argument('--out', default=None, help='directory for per-arc CSVs and summary JSON (optional)')
     ap.add_argument('--data-root', default=None)
+    ap.add_argument('--systems', default='G',
+                    help='card GAL: comma list of constellation letters; the census runs once per '
+                         'letter, restricted to it (default G, the pre-card output)')
     a = ap.parse_args()
+    systems = [s.strip() for s in a.systems.split(',') if s.strip()]
+    if systems == ['G']:
+        return census_main(a, ('G',), '')
+    for sy in systems:
+        print(f'\n########## card GAL: census for constellation {sy} ##########')
+        census_main(a, (sy,), '_' + sy)
+
+
+def census_main(a, systems, suffix):
+    """The pre-card main body, for the constellation letters `systems`; `suffix` is
+    appended to every run label (empty for the default GPS-only census)."""
     P = a.project
     runs = a.run or ['runs/evseed_field6h_v8', 'runs/evseed_field6h_v8fp2']
     wruns = a.window_run or ['runs/evseed_field6h_v8', 'runs/evseed_field6h_v8fp2', 'runs/evleg_cert_null_v8']
@@ -587,19 +614,21 @@ def main():
     print('  producer enable_code_phase_bias (seed.json model_corrections):', cfg.get('model_corrections', {}).get('enable_code_phase_bias'))
     if not clk_paths or not bia_path:
         sys.exit('CODE products not found')
-    clk, nclk = parse_clk(clk_paths)
-    osb, sigs = parse_bia(bia_path, doy_key)
-    print(f'  parsed {nclk} GPS AS records for {len(clk)} satellites; {len(osb)} GPS OSB entries valid on {doy_key}, signals {sorted(sigs)}')
+    clk, nclk = parse_clk(clk_paths, systems)
+    osb, sigs = parse_bia(bia_path, doy_key, systems)
+    sysname = 'GPS' if tuple(systems) == ('G',) else '+'.join(systems)
+    print(f'  parsed {nclk} {sysname} AS records for {len(clk)} satellites; {len(osb)} {sysname} OSB entries valid on {doy_key}, signals {sorted(sigs)}')
 
     results = {}
     for r in runs:
-        lab = os.path.basename(r.rstrip('/\\'))
-        results[lab] = run_census(os.path.join(P, r), clk, osb, lab, out_dir=a.out, step_thresh=a.step, min_n=a.min_n)
+        lab = os.path.basename(r.rstrip('/\\')) + suffix
+        results[lab] = run_census(os.path.join(P, r), clk, osb, lab, out_dir=a.out, step_thresh=a.step, min_n=a.min_n,
+                                  systems=systems)
     t_lo, t_hi = a.window_tow, a.window_tow + 30 * (a.window_n - 1)
     for r in wruns:
-        lab = 'win_' + os.path.basename(r.rstrip('/\\'))
+        lab = 'win_' + os.path.basename(r.rstrip('/\\')) + suffix
         run_census(os.path.join(P, r), clk, osb, lab, t_lo=t_lo, t_hi=t_hi, hours=[0], out_dir=a.out,
-                   step_thresh=a.step, min_n=a.min_n)
+                   step_thresh=a.step, min_n=a.min_n, systems=systems)
 
     for lab, res in results.items():
         if res is None:

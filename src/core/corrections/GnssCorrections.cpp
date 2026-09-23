@@ -397,7 +397,20 @@ namespace GnssProcessor {
             : SatelliteClockInterpolationMode::Linear;
 
         constexpr double MAX_WINDOW     = 3600.0;
-        constexpr double MAX_CLOCK_BIAS = 1e-3;
+        // Validity bound on a tabulated clock sample.  It exists to reject
+        // NON-PHYSICAL values (the SP3 bad-clock sentinel 999999.999999 us is
+        // about 1 s), not large but real offsets.  Card GAL: it was 1e-3 s, a
+        // GPS-centric bound (GPS satellite clocks are steered to within 1 ms of
+        // system time).  Galileo's are not: on DOY-129 every CLK node of E05
+        // (+4.75 ms), E11 (+2.91 ms) and E12 (-1.03 ms) failed it, this function
+        // returned 0 (post-processing has no live broadcast store to fall back
+        // to), and the three satellites were modelled against a ZERO clock and
+        // were absent from the network's modelled set and from the simulator's
+        // fixture all day.  0.1 s is the final sanity bound
+        // getSatelliteClockCorrection already applies.  Byte-identical wherever
+        // every sample is below 1 ms (every GPS satellite of the DOY-129
+        // products: the largest is G17 at 0.708 ms).
+        constexpr double MAX_CLOCK_BIAS = 1e-1;
         constexpr size_t LAGRANGE_POINTS = 9;
 
         if (satellite.empty()) {

@@ -197,6 +197,21 @@ public:
 
     const Counters& counters() const { return counters_; }
 
+    /// Card GAL: the frame-hold tallies of @ref Counters that are per constellation
+    /// by construction (the accumulator, the μ vote and the leash are all keyed on
+    /// the constellation letter), split by that letter for the multi-constellation
+    /// run-end line.  Filled on the same branches as @ref Counters, so the sums over
+    /// letters equal the global values.
+    struct ConstCounters {
+        long long rows{0};         ///< entries processed.
+        long long marks{0};        ///< stage-2 step marks.
+        long long reanchors{0};    ///< stage-1 leash re-anchors.
+        double    sum_abs_mu{0.0}; ///< Σ|μ| drained into this constellation's accumulator (m).
+        double    max_abs_acc{0.0};///< max |A_c| reached (m).
+    };
+    /// Per-constellation tallies (letter -> @ref ConstCounters).
+    const std::map<char, ConstCounters>& constCounters() const { return const_counters_; }
+
     /// Test seam: the current frame accumulator A_c (m) for a constellation
     /// letter (0.0 when the constellation has no frame state yet).
     double frameAccForTest(char constellation) const {
@@ -219,6 +234,7 @@ private:
 
     Config    cfg_;
     Counters  counters_;
+    std::map<char, ConstCounters> const_counters_;   ///< card GAL: per-constellation tallies.
     std::map<char, double>          acc_;   ///< constellation -> frame accumulator A_c (m).
     std::map<std::string, KeyState> prev_;  ///< sat -> previous emitted (held-frame) value.
 };

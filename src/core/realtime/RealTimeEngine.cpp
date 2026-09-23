@@ -704,4 +704,18 @@ double RealTimeEngine::getTroposphereZwd() const {
     return ppp_state_.troposphere_zwd;
 }
 
+std::map<std::string, std::pair<double, double>> RealTimeEngine::getSystemTimeOffsets() const {
+    std::map<std::string, std::pair<double, double>> out;
+    if (!state_manager_) return out;
+    const auto& isb = state_manager_->getSystemTimeOffsetStates();
+    if (isb.empty()) return out;
+    const Eigen::VectorXd x = state_manager_->getStateVector();
+    for (const auto& [sys, idx] : isb) {
+        if (idx >= static_cast<size_t>(x.size())) continue;
+        const double var = state_manager_->getStateVariance(static_cast<int>(idx));
+        out[sys] = { x(static_cast<Eigen::Index>(idx)), var > 0.0 ? std::sqrt(var) : 0.0 };
+    }
+    return out;
+}
+
 } // namespace GnssProcessor

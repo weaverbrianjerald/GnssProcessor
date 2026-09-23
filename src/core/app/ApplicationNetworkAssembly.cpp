@@ -5241,6 +5241,11 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
                       st.name, ex.what());
             pdDropEvent(st, R, "dropped");            // RF-PD: name the null column
+            // Card GAL (R2): a station whose epoch holds rows of a non-GPS system and
+            // no GPS row has its receiver clock and inter-system bias collinear, so
+            // this rejection is structural.  Counted here, at the one drop site.
+            if (i < modeled.size() && networkStationNonGpsOnly(modeled[i]))
+                ++ctx.counters.mgnss.nongps_only_pd_drops;
             present[i] = false;
             continue;
         }

@@ -1020,6 +1020,27 @@ namespace GnssProcessor {
         return false;
     }
 
+    std::string Antenna::receiverAtxFrequencySource(const std::string& signal, System system,
+                                                    std::string* out_key) const {
+        if (out_key) out_key->clear();
+        const std::string atx_freq = signalToAtxFrequencyKey(signal, system);
+        if (atx_freq.empty()) return "none";
+        const AntennaData* rx_entry = findReceiverAntennaEntry(
+            rinex_parser_.getReceiverAntennaType(), /*warn_on_ambiguity=*/false);
+        if (!rx_entry) return "none";
+        const auto& mc = config_.getModelCorrections();
+        const std::string key = pickReceiverAtxFrequencyKey(
+            rx_entry->pco, atx_freq, mc.enable_atx_frequency_fallback,
+            mc.enable_receiver_cross_system_atx_fallback,
+            [](const Eigen::Vector3d& v) { return v.allFinite(); });
+        if (out_key) *out_key = key;
+        if (key.empty()) return "none";
+        if (key == atx_freq) return "exact";
+        // Same constellation letter: the in-system frequency chain supplied it.
+        if (key.front() == atx_freq.front()) return "same_system";
+        return "cross_system";
+    }
+
     bool Antenna::hasReceiverAntennaMatch() const {
         // Same matching the correction path runs (rinex_parser_.getReceiverAntennaType()
         // → findReceiverAntennaEntry, with the opt-in substitution fallback), but with

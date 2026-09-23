@@ -547,6 +547,12 @@ LAM_NL = C_MS / (F1_HZ + F2_HZ)                         # 0.106891 m
 # An EQUAL-CYCLE step (N cycles on both bands) has d2/d1 = lam2/lam1 and leaks
 # exactly N * lam_NL into the IF combination:  a*lam1 - b*lam2 == lam_NL.
 
+# Card GAL: the R3 grade per constellation.  The graded pair is the constellation's
+# dual pair (GPS L1 / L2, Galileo E1 / E5a) with its own ionosphere-free weights;
+# the de-common is per (epoch, constellation), because each constellation's clock
+# common mode is its own gauge.  (band digit of the second signal, f1, f2).
+R3_PAIRS = {"G": (2, F1_HZ, F2_HZ), "E": (5, 1575.42e6, 1176.45e6)}
+
 
 def band_of(sig):
     """RINEX phase obs code -> band digit ('L1W'->1, 'L2W'->2)."""
@@ -961,9 +967,10 @@ def load_truth_bias_sim(run):
     return osb, fx, f"sim fixture truth_bias.csv ({len(osb)} (sat,signal) rows)"
 
 
-def load_osb_bia(run):
+def load_osb_bia(run, systems=("G",)):
     """Field truth: the COD MGX OSB .BIA, parsed exactly as
-    scripts/wire_vs_code_census.py:parse_bia (ProductParser column offsets, ns->m)."""
+    scripts/wire_vs_code_census.py:parse_bia (ProductParser column offsets, ns->m).
+    `systems` (card GAL): the constellation letters kept, default GPS alone."""
     ap = os.path.join(run, "arm.json")
     root = year = doy = None
     src, typ = "COD", "FIN"
@@ -1005,7 +1012,7 @@ def load_osb_bia(run):
             end = line[49:63].strip()
             unit = line[64:68].strip()
             bias = line[69:90].strip()
-            if station or not prn or prn[0] != "G" or unit != "ns":
+            if station or not prn or prn[0] not in systems or unit != "ns":
                 continue
             sig = obs2 if obs2 else obs1
             try:
@@ -1048,12 +1055,26 @@ def arc_rms(series, hmin, tow0, gap_s=120.0):
     return rms, d_rms, n_arc, npt
 
 
-def r3_section(run, d, eps, out, bed, truth_path):
-    """R3: IF-level wire-vs-truth grade of the clock, the phase bias, and their sum."""
+def r3_section(run, d, eps, out, bed, truth_path, systems=("G",)):
+    """R3: IF-level wire-vs-truth grade of the clock, the phase bias, and their sum.
+
+    Card GAL: one grade per constellation in `systems` (default GPS alone, whose output
+    is unchanged); with more than one the section header names the constellation."""
+    for sy in systems:
+        lab = bed if len(systems) == 1 else f"{bed} [system {sy}]"
+        r3_one(run, d, eps, out, lab, truth_path, sy)
+    return 0
+
+
+def r3_one(run, d, eps, out, bed, truth_path, sy="G"):
+    """R3 for one constellation letter `sy` (the pre-card body, per constellation)."""
+    band2, f1_hz, f2_hz = R3_PAIRS.get(sy, R3_PAIRS["G"])
+    if_a = f1_hz ** 2 / (f1_hz ** 2 - f2_hz ** 2)
+    if_b = f2_hz ** 2 / (f1_hz ** 2 - f2_hz ** 2)
     out.append(hdr(f"R3  TRUTH GRADE AT THE IF LEVEL -- {bed}"))
     osb, src, note = load_truth_bias_sim(run)
     if osb is None:
-        osb, src, note = load_osb_bia(run)
+        osb, src, note = load_osb_bia(run, (sy,))
     out.append(f"truth source: {note}")
     if osb is None:
         out.append("R3 NOT RUN.")
@@ -1074,12 +1095,15 @@ def r3_section(run, d, eps, out, bed, truth_path):
     out.append("so every movement of e_pb is wire movement.")
 
     wclk, wpb = load_wire_series(run)
+    # Card GAL: this constellation's records only (a no-op on a single-system wire).
+    wclk = {k: v for k, v in wclk.items() if k[0][:1] == sy}
+    wpb = {k: v for k, v in wpb.items() if k[0][:1] == sy}
     if not wclk or not wpb:
         out.append("R3 NOT RUN -- products.txt carried no C/P records.")
         return 0
     osb_sigs = {k[1] for k in osb}
     b1s = sorted({s for (_, s, _) in wpb if band_of(s) == 1})
-    b2s = sorted({s for (_, s, _) in wpb if band_of(s) == 2})
+    b2s = sorted({s for (_, s, _) in wpb if band_of(s) == band2})
     # Prefer the signal the CONSUMER actually applies (the field wire emits L1C
     # and L1W while the consumer tracks L1W; grading L1C would measure a channel
     # the consumer never reads).
@@ -1118,7 +1142,7 @@ def r3_section(run, d, eps, out, bed, truth_path):
                 n_miss["truth_osb"] += 1
                 continue
             e_clk = -wclk[(sat, t)]
-            e_pb = IF_A * (p1 - o1) - IF_B * (p2 - o2)
+            e_pb = if_a * (p1 - o1) - if_b * (p2 - o2)
             row[sat] = (e_clk, e_pb, e_clk + e_pb)
         if len(row) < 3:
             continue
@@ -1150,7 +1174,7 @@ def r3_section(run, d, eps, out, bed, truth_path):
             if p1 is None or p2 is None or o1 is None or o2 is None:
                 continue
             ec = -wclk[(sat, t)]
-            ep = IF_A * (p1 - o1) - IF_B * (p2 - o2)
+            ep = if_a * (p1 - o1) - if_b * (p2 - o2)
             raws["e_clk"][sat][t] = ec
             raws["e_pb"][sat][t] = ep
             raws["e_phi"][sat][t] = ec + ep
@@ -1243,6 +1267,9 @@ def main():
     ap.add_argument("--eps2", type=float, default=0.02,
                     help="second threshold for the repeated key tables")
     ap.add_argument("--sign", action="store_true", help="print the sign note and exit")
+    ap.add_argument("--systems", default="G",
+                    help="card GAL: comma list of constellation letters the R3 grade runs "
+                         "for, one section each (default G, the pre-card output)")
     args = ap.parse_args()
     if args.sign:
         print(SIGN_NOTE)
@@ -1278,7 +1305,8 @@ def main():
         r1_section(m, eps, out, bed)
         r1b_section(m, eps, out, bed)
         r2_section(d, e, idx, anchor, eps, out, bed)
-        r3_section(run, d, eps, out, bed, args.truth)
+        r3_section(run, d, eps, out, bed, args.truth,
+                   tuple(s.strip() for s in args.systems.split(",") if s.strip()))
         print("\n".join(out))
         return 0
 

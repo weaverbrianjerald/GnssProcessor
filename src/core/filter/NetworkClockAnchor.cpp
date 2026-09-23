@@ -148,12 +148,15 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
             ++ctx.counters.cta_floor_hits;
         }
         ++ctx.counters.cta_folded_anchored;
+        // Card GAL: the same count per constellation letter (run-end readout only).
+        ++ctx.counters.mgnss.anchor_folds_anchored[sat.substr(0, 1)];
     } else {
         // LOOSE folds at the LEGACY rate over the LEGACY dt — exactly the pre-card
         // behaviour.  That is what bounds a decoupled satellite (standing
         // invariant #7): it is not unconstrained, it is on the carry the existing
         // clock_runaway_check monitor already polices.
         ++ctx.counters.cta_folded_loose;
+        ++ctx.counters.mgnss.anchor_folds_loose[sat.substr(0, 1)];   // card GAL
     }
 
     st.t_last          = pl_now_s;
@@ -182,6 +185,7 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     st.in_band  = 0;
     if (!was_anchored) return false;   // already LOOSE: not an edge, nothing to mark
     ctx.carry.clk_anchor.tripped.insert(sat);
+    ++ctx.counters.mgnss.anchor_trips[sat.substr(0, 1)];   // card GAL: per constellation
     // READMIT continuity: a trip this soon after a clock SEED is the data rejecting the
     // seeded pre-gap realization — invariant #7's mark-if-moved, attributed and counted.
     std::string seed_tag;

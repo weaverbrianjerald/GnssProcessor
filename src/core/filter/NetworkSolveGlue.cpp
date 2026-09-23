@@ -450,6 +450,15 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
             ctx.counters.n_isc_observed += static_cast<std::size_t>(cbd.n_isc_observed);
             ctx.counters.n_isc_pinned   += static_cast<std::size_t>(cbd.n_isc_pinned);
+            // Card GAL (R3 iii): the same counters per constellation letter.
+            for (const auto& [cst, g] : cbd.sat_gf_by_const) {
+                auto& a = ctx.counters.sat_gf_by_const[cst];
+                a.rows += g.rows;              a.tgd_hits += g.tgd_hits;
+                a.tgd_zero += g.tgd_zero;      a.tgd_missing += g.tgd_missing;
+                a.pair_no_gd += g.pair_no_gd;  a.extra_rows += g.extra_rows;
+                a.isc_zero += g.isc_zero;      a.sameband_free += g.sameband_free;
+                a.carried += g.carried;        a.anchored += g.anchored;
+            }
             // B5D: the three extra-band dispositions, and the sum-to-zero level
             // re-references (invariant #7's decoupling edge) the freed channels now have.
             ctx.counters.n_extra_band_free    += static_cast<std::size_t>(cbd.n_extra_band_free);
@@ -470,16 +479,29 @@ if (config_.estimateNetworkSatCodeBias() && !registered_code_keys.empty()) {
             // one truth drift apart.
             ctx.carry.this_epoch_isc_obs.clear();
             ctx.carry.this_epoch_isc_pinned.clear();
-            for (const auto& [sat, sig] : registered_code_keys) {
-                const auto pit = this_epoch_if_pin_real.find(sat);
-                if (pit == this_epoch_if_pin_real.end()) continue;
-                const std::string& sig1 = pit->second.first;
-                const std::string& sig2 = pit->second.second;
-                if (sig == sig1 || sig == sig2) continue;
-                if (sig.size() < 2 || sig2.size() < 2 || sig[1] != sig2[1]) continue;
-                (isc_bridged.count(sat + "|" + sig) ? ctx.carry.this_epoch_isc_obs
-                                                    : ctx.carry.this_epoch_isc_pinned)
-                    .insert(sat + "|" + sig);
+            // Card GAL: the verdicts exist only under network.sat_isc_state, as RF-0f and
+            // the NetworkSolPrep erase site document ("both sets are empty unless the knob
+            // is armed").  Before card GAL this loop ran with the knob OFF as well, where
+            // isc_bridged is empty by construction, so EVERY companion on the pin pair's
+            // second band was classed as pinned and ERASED from the wire: a Galileo C5X
+            // column beside the (C1C, C5Q) pair, which the RF-0d rules pin at the pair's
+            // own target and which the combined-channel consumer needs, never reached
+            // it.  With the knob OFF the RF-0d rule stands (the column is pinned, the
+            // assertion is counted in n_sat_gf_isc_zero, and the bias is emitted).  On
+            // the GPS dual posture no band-2 companion is registered (C2W is every
+            // station's latch), so GPS alone is byte-identical.
+            if (config_.getNetworkConfig().sat_isc_state) {
+                for (const auto& [sat, sig] : registered_code_keys) {
+                    const auto pit = this_epoch_if_pin_real.find(sat);
+                    if (pit == this_epoch_if_pin_real.end()) continue;
+                    const std::string& sig1 = pit->second.first;
+                    const std::string& sig2 = pit->second.second;
+                    if (sig == sig1 || sig == sig2) continue;
+                    if (sig.size() < 2 || sig2.size() < 2 || sig[1] != sig2[1]) continue;
+                    (isc_bridged.count(sat + "|" + sig) ? ctx.carry.this_epoch_isc_obs
+                                                        : ctx.carry.this_epoch_isc_pinned)
+                        .insert(sat + "|" + sig);
+                }
             }
         }
         if (within_epoch_armed) {

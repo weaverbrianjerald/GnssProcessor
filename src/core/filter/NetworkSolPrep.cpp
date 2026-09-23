@@ -1060,6 +1060,11 @@ NetworkSolPrepResult networkSolPrep(
     // (gate withhold, solve failure, σ̂0 withhold) leaves the baseline
     // untouched, so the change re-detects — and re-skips the old-datum
     // carries — every epoch until one emits in the new datum.
+    // Card GAL: record the realized clock pivots per constellation at the one site
+    // the handover baseline advances, BEFORE last_pivot is merged, so a handover is
+    // counted between emitted products.  Returns on its first line unless a
+    // constellation other than GPS is active.
+    networkMultiGnssNotePivots(ctx, config_, plan.clock_pivot, last_pivot);
     prev_pivot = plan.clock_pivot;
     // A1: merge-update the persistent last-ever pivot map (never erase a
     // constellation) so a later vanish-return with a different pivot is caught.

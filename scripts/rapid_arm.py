@@ -93,6 +93,18 @@ An op on a phase type is given in metres and applied in cycles.  Every draw is k
 on (seed, station, satellite), so the same spec gives the same file in every arm.
 `draws` prints those constants without writing a file, so an injected truth can be
 compared against what a wire carries.
+
+Ops act IN SPEC ORDER on the names the file has at that point (card GAL): a record
+op (bias, slip, drift, strip, dropslip) that follows a `relabel` finds the column
+under its NEW name, exactly as one that follows a `clone` finds the cloned column.
+So `relabel;sys=E;from=C1C;to=C1X` then `bias;sys=E;types=C1X;per=sat` injects the
+constant on the relabelled column.  Every op of one file must name the same `sys=`
+(the file is rewritten against that system's type block); mixing G and E ops on one
+station in one arm is refused rather than silently applied to the wrong block.
+Galileo (`sys=E`): FREQ carries E1, E5a, E5b, E6 and E5 (AltBOC), so a phase op on
+an E type is converted to cycles with the Galileo carrier.  The `family:` selector
+reads the GPS header block; select Galileo stations with `every:N`, `first:N` or a
+name list.
 """
 import argparse
 import concurrent.futures as cf
@@ -115,7 +127,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\",
 RUNS = ROOT + "/runs"
 LABEL = "SYS / # / OBS TYPES"
 C = 299792458.0
-FREQ = {"G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6}}
+FREQ = {"G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6},
+        # Card GAL: Galileo E1, E5a, E5b, E6 and the E5 (AltBOC) centre, MHz * 1e6.
+        "E": {"1": 1575.42e6, "5": 1176.45e6, "7": 1207.14e6, "6": 1278.75e6,
+              "8": 1191.795e6}}
 IIF = "G03 G06 G08 G09 G10 G24 G25 G26 G27 G30 G32".split()
 III = "G04 G11 G14 G18 G23 G28".split()
 SATSETS = {"IIF": set(IIF), "III": set(III), "L5": set(IIF + III)}
@@ -274,6 +289,21 @@ def station_selected(name, idx, codes, sel):
     return name in sel.split(",")
 
 
+def file_selected(op, idx, name, codes):
+    """Does `op` apply to the file of station `name` (index `idx`, -1 = the consumer)?
+
+    The consumer is reached only with `consumer=1`, and then by `all`, by a
+    `family:` selector it satisfies, or by its NAME in a station list (card GAL's
+    `stations=SZZ000SIM;consumer=1`).  A roster station is reached by
+    `station_selected`, never through the consumer flag.
+    """
+    if idx == -1:
+        return op["consumer"] == "1" and (op["stations"] == "all" or op["stations"].startswith(("family:",))
+                                          and station_selected(name, 0, codes, op["stations"])
+                                          or name in op["stations"].split(","))
+    return station_selected(name, idx, codes, op["stations"])
+
+
 def draw(seed, *key):
     return random.Random("|".join([str(seed)] + [str(k) for k in key]))
 
@@ -371,6 +401,11 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
         if op["op"] == "ecc":
             lines = apply_ecc_header(lines, ecc_hen(op))
     system = ops[0]["sys"]
+    # Card GAL: one file is rewritten against ONE system's type block, so every op
+    # that reaches it must name that system (an `ecc` op is header-only and has none).
+    mixed = sorted({op["sys"] for op in ops if op["op"] != "ecc"} - {system})
+    assert not mixed, (src, "every op of one file must name the same sys= (the file is "
+                       "rewritten against the first op's type block)", system, mixed)
     i, codes, blk = read_header(lines, system)
     assert codes, (src, "no type block for", system)
     n_holes = 0
@@ -413,10 +448,15 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                        "sat_sigma": float(op.get("sat_sigma", 0.05 if phase else 0.0))})
     work = codes + [c["to"] for c in clones]
     new_codes, drop = list(work), set()
+    # Card GAL: the names each op SEES, in spec order.  A relabel renames the column
+    # for every LATER op (header and record ops alike), the way a clone adds one; an
+    # op before it still sees the old name.  With no relabel `names` IS `work`, so
+    # every earlier spec produces the file it always produced.
+    names = list(work)
     for op in ops:
         # A WINDOWED strip never touches the header: the types exist outside the window.
         if op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None:
-            drop |= set(match_types(work, op["types"]))
+            drop |= set(match_types(names, op["types"]))
         if op["op"] == "primaryonly":
             prio = op.get("_prio") or []
             for b in op.get("bands", "12"):
@@ -425,16 +465,18 @@ def rewrite_rinex(src, dst, ops, station, hours=None):
                 if cand:
                     drop |= {k for k, c in enumerate(work) if c[1] == b and c[2] != cand[0][2]}
         if op["op"] == "relabel":
-            for k in match_types(work, op["from"]):
-                new_codes[k] = "".join(t if t != "?" else c for t, c in zip(op["to"], work[k]))
+            for k in match_types(names, op["from"]):
+                names[k] = "".join(t if t != "?" else c for t, c in zip(op["to"], names[k]))
+                new_codes[k] = names[k]
+        if op["op"] not in ("relabel", "holes", "primaryonly", "clone", "ecc") \
+                and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None):
+            op["_idx"] = match_types(names, op["types"])
+            op["_win"] = op_window(op)
     keep = [k for k in range(len(work)) if k not in drop]
     out = lines[:blk[0]] + type_block(system, [new_codes[k] for k in keep]) + lines[blk[1]:i]
     width = 3 + 16 * len(codes)
     rec_ops = [op for op in ops if op["op"] not in ("relabel", "holes", "primaryonly", "clone", "ecc")
                and not (op["op"] == "strip" and op["sats"] == "all" and op_window(op) is None)]
-    for op in rec_ops:
-        op["_idx"] = match_types(work, op["types"])
-        op["_win"] = op_window(op)
     state, sod, tow = {}, 0.0, None
     while i < len(lines):
         ln = lines[i]
@@ -586,16 +628,7 @@ def cmd_make(a):
             files.append((-1, cons["name"], cons["rinex_path"], cons))
         for idx, name, path, node in files:
             _, codes, _ = read_header(open(path, "r", encoding="ascii", errors="replace").read().split("\n"), "G")
-            mine = []
-            for op in ops:
-                if idx == -1:
-                    ok = op["consumer"] == "1" and (op["stations"] == "all" or op["stations"].startswith(("family:",))
-                                                    and station_selected(name, 0, codes, op["stations"])
-                                                    or name in op["stations"].split(","))
-                else:
-                    ok = station_selected(name, idx, codes, op["stations"])
-                if ok:
-                    mine.append(dict(op))
+            mine = [dict(op) for op in ops if file_selected(op, idx, name, codes)]
             if mine:
                 dst = f"{rd}/rinex/{os.path.basename(path)}"
                 n_holes += rewrite_rinex(path, dst, mine, name, hours=(a.hours + 0.05) if a.hours else None)
@@ -1055,6 +1088,80 @@ def cmd_selftest(_):
     rewrite_rinex(src, d + "/p5.rnx", [parse_op("clone;from=C1C;to=C1W;noise=0;seed=7")], "AAAA")
     chk(abs(col7(open(d + "/p5.rnx").read().split("\n")[5]) - 2.0e7) < 1e-6,
         "a noiseless code clone stays an exact copy (no constants)")
+    # 15: card GAL, Galileo ops.  A relabel on the E block renames only the E types;
+    #     a LATER per-satellite bias on the relabelled name lands on that column with
+    #     one constant per satellite, identical at every station and equal to what
+    #     `draws` prints; an op BEFORE the relabel still sees the old name; a phase op
+    #     on an E type converts with the Galileo carrier; ops naming two systems for
+    #     one file are refused; and the consumer is reached by name with consumer=1.
+    he = [hdr[0], hdr[1], "E    4 C1C L1C C5Q L5Q".ljust(60) + LABEL, hdr[3]]
+    ebody = []
+    for e in range(3):
+        ebody.append(f"> 2024 05 08 00 {e:02d} 00.0000000  0  3")
+        ebody += [rec("G03", [2.0e7, 2.0e7, 2.0e7, 1.0e8, 0.8e8, 0.7e8]),
+                  rec("E02", [2.3e7, 1.2e8, 2.3e7, 0.9e8]),
+                  rec("E07", [2.4e7, 1.3e8, 2.4e7, 0.95e8])]
+    open(d + "/ge.rnx", "w", newline="\n").write("\n".join(he + ebody) + "\n")
+    gal_ops = [parse_op("relabel;sys=E;from=C1C;to=C1X"), parse_op("relabel;sys=E;from=L1C;to=L1X"),
+               parse_op("relabel;sys=E;from=C5Q;to=C5X"), parse_op("relabel;sys=E;from=L5Q;to=L5X"),
+               parse_op("bias;sys=E;types=C1X;per=sat;sigma=0.05;seed=71"),
+               parse_op("bias;sys=E;types=C5X;per=sat;sigma=0.05;seed=72")]
+    rewrite_rinex(d + "/ge.rnx", d + "/ge_a.rnx", [dict(o) for o in gal_ops], "AAAA")
+    rewrite_rinex(d + "/ge.rnx", d + "/ge_b.rnx", [dict(o) for o in gal_ops], "BBBB")
+    ga = open(d + "/ge_a.rnx").read().split("\n")
+    chk(ga[1] == he[1], "an E op leaves the G type block untouched")
+    chk(ga[2].startswith("E    4 C1X L1X C5X L5X") and ga[2][60:].strip() == LABEL,
+        f"E relabel header {ga[2]!r}")
+    chk([x for x in ga if x.startswith("G03")] == [b for b in ebody if b.startswith("G03")],
+        "an E op leaves the G records untouched")
+
+    def ecol(line, k):
+        return float(line.ljust(3 + 16 * 4)[3 + 16 * k:3 + 16 * k + 14])
+
+    e02 = [x for x in ga if x.startswith("E02")]
+    e07 = [x for x in ga if x.startswith("E07")]
+    b1_02 = [ecol(x, 0) - 2.3e7 for x in e02]
+    b5_02 = [ecol(x, 2) - 2.3e7 for x in e02]
+    b1_07 = [ecol(x, 0) - 2.4e7 for x in e07]
+    chk(len(b1_02) == 3 and max(b1_02) - min(b1_02) < 1e-6 and abs(b1_02[0]) > 1e-4,
+        f"a per-satellite C1X constant, the same every epoch {b1_02}")
+    chk(abs(b1_02[0] - b1_07[0]) > 1e-4, f"the C1X constant differs by satellite {b1_02[0]} {b1_07[0]}")
+    chk(abs(b5_02[0] - b1_02[0]) > 1e-4, f"C1X and C5X draw independent constants {b1_02[0]} {b5_02[0]}")
+    chk([ecol(x, 1) for x in e02] == [1.2e8] * 3 and [ecol(x, 3) for x in e02] == [0.9e8] * 3,
+        "the phase columns carry no code bias")
+    chk(abs(b1_02[0] - draw("71", 0, "bias", "E02").gauss(0.0, 0.05)) < 1e-3,
+        "the C1X constant is the draws key (op index 0)")
+    chk(abs(b5_02[0] - draw("72", 1, "bias", "E02").gauss(0.0, 0.05)) < 1e-3,
+        "the C5X constant is the draws key (op index 1)")
+    gb = open(d + "/ge_b.rnx").read().split("\n")
+    chk([x for x in gb if x.startswith("E")] == [x for x in ga if x.startswith("E")],
+        "a per-satellite constant is the same at every station")
+    rewrite_rinex(d + "/ge.rnx", d + "/ge_c.rnx",
+                  [parse_op("bias;sys=E;types=C1C;per=sat;sigma=0.05;seed=71"),
+                   parse_op("relabel;sys=E;from=C1C;to=C1X")], "AAAA")
+    gc = open(d + "/ge_c.rnx").read().split("\n")
+    chk(gc[2].startswith("E    4 C1X L1C C5Q L5Q")
+        and abs(ecol([x for x in gc if x.startswith("E02")][0], 0) - 2.3e7 - b1_02[0]) < 1e-3,
+        "an op before the relabel sees the old name")
+    rewrite_rinex(d + "/ge.rnx", d + "/ge_d.rnx",
+                  [parse_op("bias;sys=E;types=L5Q;per=sat;sigma=0.05;seed=9")], "AAAA")
+    gd = [x for x in open(d + "/ge_d.rnx").read().split("\n") if x.startswith("E02")]
+    m5 = draw("9", 0, "bias", "E02").gauss(0.0, 0.05)
+    chk(abs((ecol(gd[0], 3) - 0.9e8) - m5 * FREQ["E"]["5"] / C) < 2e-3,
+        f"an E phase op converts metres with the E5a carrier {ecol(gd[0], 3) - 0.9e8} vs {m5}")
+    try:
+        rewrite_rinex(d + "/ge.rnx", d + "/ge_e.rnx",
+                      [parse_op("relabel;sys=E;from=C1C;to=C1X"), parse_op("strip;types=?5?")], "AAAA")
+        chk(False, "ops naming two systems for one file must be refused")
+    except AssertionError as ex:
+        chk("same sys=" in str(ex), f"mixed systems refused {ex}")
+    cons_op = parse_op("relabel;sys=E;from=C1C;to=C1X;stations=SZZ000SIM;consumer=1")
+    every2 = parse_op("relabel;sys=E;from=C1C;to=C1X;stations=every:2")
+    chk(file_selected(cons_op, -1, "SZZ000SIM", []), "the consumer is reached by name with consumer=1")
+    chk(not file_selected(every2, -1, "SZZ000SIM", []), "every:N does not reach the consumer")
+    chk(not file_selected(cons_op, 2, "S03000SIM", []), "a consumer op does not reach a roster station")
+    chk(file_selected(every2, 2, "S03000SIM", []) and not file_selected(every2, 29, "S30000SIM", []),
+        "every:2 selects the even roster indices")
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

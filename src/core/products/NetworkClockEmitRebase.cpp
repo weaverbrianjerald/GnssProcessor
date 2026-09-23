@@ -28,6 +28,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
 
     for (auto& [cst, group] : by_const) {
         double& acc = acc_[cst];   // value-inits to 0 on first sight
+        ConstCounters& cc = const_counters_[cst];   // card GAL: per-constellation tallies
 
         // --- μ vote: median innovation of fresh, unforced keys against the
         //     previous EMITTED values.  Computed regardless of which stages are
@@ -59,6 +60,8 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
             acc += mu;
             counters_.sum_abs_mu += std::abs(mu);
             if (std::abs(acc) > counters_.max_abs_acc) counters_.max_abs_acc = std::abs(acc);
+            cc.sum_abs_mu += std::abs(mu);
+            if (std::abs(acc) > cc.max_abs_acc) cc.max_abs_acc = std::abs(acc);
             if (cfg_.leash_m > 0.0 && std::abs(acc) > cfg_.leash_m) {
                 // Re-anchor to the solve frame: raw passthrough for the whole
                 // constellation this epoch, accumulator cleared.  The caller
@@ -66,6 +69,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
                 reanchor = true;
                 acc = 0.0;
                 ++counters_.reanchors;
+                ++cc.reanchors;
                 reanchored.insert(cst);
             }
         }
@@ -75,6 +79,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
         //     covers the consumer) and the step test is skipped wholesale.
         for (Entry* e : group) {
             ++counters_.rows;
+            ++cc.rows;
             const auto   it       = prev_.find(e->sat);
             const bool   have     = (it != prev_.end());
             const bool   stale    = have && cfg_.max_gap_s > 0.0
@@ -91,6 +96,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
                     e->marked = true;
                     e->step_m = dev;
                     ++counters_.marks;
+                    ++cc.marks;
                 }
             } else if (!reanchor && have && stale && !e->forced && cfg_.jump_test
                        && cfg_.gap_jump_m > 0.0) {

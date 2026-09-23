@@ -385,6 +385,19 @@ public:
     /// Get the current ZWD estimate (meters).
     double getTroposphereZwd() const;
 
+    /**
+     * @brief Card GAL: the receiver inter-system bias per non-GPS system.
+     *
+     * Reads the Kalman state and its variance (the consumer carries the bias as a
+     * state with the @c filter.process_noise.system_time_offset_q random walk).
+     * Measure-only; nothing here touches the filter.
+     *
+     * @return System name ("Galileo") -> (value in metres, formal standard
+     *         deviation in metres).  Empty when only GPS is active or before the
+     *         state manager exists.
+     */
+    std::map<std::string, std::pair<double, double>> getSystemTimeOffsets() const;
+
     /// Get the full PPP state.
     const PppState& getState() const { return ppp_state_; }
 

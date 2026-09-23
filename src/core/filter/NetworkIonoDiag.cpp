@@ -186,6 +186,16 @@ void networkIonoDiag(
                 want.push_back({ "CB", key, static_cast<int>(idx),
                                  static_cast<Eigen::Index>(hit->second) });
             }
+            // Card GAL: the receiver INTER-SYSTEM BIAS, one row per non-GPS system whose
+            // column is in this station's block this epoch (kind ISB, key = the system
+            // name).  A GPS-only run allocates no such state, so it writes no such row.
+            for (const auto& [sys, idx] : stations[i].sm->getSystemTimeOffsetStates()) {
+                if (idx == std::numeric_limits<size_t>::max()) continue;
+                const auto hit = h2l.find(static_cast<int>(idx));
+                if (hit == h2l.end() || hit->second < 0) continue;
+                want.push_back({ "ISB", sys, static_cast<int>(idx),
+                                 static_cast<Eigen::Index>(hit->second) });
+            }
             if (want.empty()) continue;
             std::vector<Eigen::Index> cols;
             cols.reserve(want.size());

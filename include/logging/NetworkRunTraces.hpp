@@ -396,6 +396,13 @@ namespace GnssProcessor {
         /// seam via @ref writeConsumerSatRows.
         std::ofstream cl_sat_trace;
 
+        /// Card GAL: the closed-loop consumer's receiver inter-system bias per
+        /// non-GPS system (closed_loop_isb.csv; opened only when the held-out
+        /// consumer is armed AND a constellation other than GPS is active, so a
+        /// GPS-only run opens nothing).  One row per (epoch, system), stamped with
+        /// the same (week, tow) as @ref cl_trace.
+        std::ofstream cl_isb_trace;
+
         /// Always-on per-epoch estimability/service trace (P1-rotated).
         std::ofstream trace;
         const std::filesystem::path trace_path;
@@ -869,9 +876,13 @@ namespace GnssProcessor {
 
         /// L15 end-of-run manifest record (JSONL, APPEND — a crashed run keeps
         /// the startup record).  No-op unless nc.write_run_manifest.
+        /// @param extra_member Card GAL: an optional JSON member ("key":{...}) written
+        ///        before `loop_ms`; EMPTY (the default) writes nothing, so every
+        ///        caller that does not pass one produces the historical record.
         void writeRunManifestComplete(const NetworkConfig& nc,
                                       const NetworkServiceCounters& counters,
-                                      std::size_t n_synced, double loop_ms);
+                                      std::size_t n_synced, double loop_ms,
+                                      const std::string& extra_member = std::string());
 
         /// P1 size-based rotation of the three unbounded service CSVs — called
         /// once per processed epoch BEFORE the epoch's rows land.  OFF

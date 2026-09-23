@@ -49,6 +49,42 @@ std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
     return { first, std::string{} };
 }
 
+bool NetworkSbasis::broadcastGroupDelayDescribesPair(const std::string& sat,
+                                                     const std::string& sig1,
+                                                     const std::string& sig2) {
+    if (sig1.size() < 2 || sig2.size() < 2) return false;
+    const char b1 = sig1[1];
+    const char b2 = sig2[1];
+    // Galileo: the latched value is BGD(E1, E5a), which describes (E1, E5a) only.
+    // A Galileo (E1, E5b) pair (a triple-frequency posture) would need the second
+    // group delay, BGD(E1, E5b), which the setup does not latch: target zero there.
+    if (!sat.empty() && sat.front() == 'E') return b1 == '1' && b2 == '5';
+    // Every other constellation: the RF-0c band-digit rule, unchanged.
+    return b1 == '1' && b2 == '2';
+}
+
+NetworkSbasis::SatGfTarget NetworkSbasis::satGfBroadcastTarget(
+    const std::string& sat, const std::string& sig1, const std::string& sig2,
+    const std::map<std::string, double>& sat_gf_target_m) {
+    SatGfTarget t;
+    if (!broadcastGroupDelayDescribesPair(sat, sig1, sig2)) {
+        t.kind = SatGfTargetKind::NoGroupDelay;
+        return t;
+    }
+    const auto it = sat_gf_target_m.find(sat);
+    if (it == sat_gf_target_m.end()) {
+        t.kind = SatGfTargetKind::Missing;
+        return t;
+    }
+    if (it->second == 0.0) {
+        t.kind = SatGfTargetKind::BroadcastZero;   // physically pinned, numerically zero
+        return t;
+    }
+    t.kind     = SatGfTargetKind::BroadcastHit;
+    t.target_m = it->second;
+    return t;
+}
+
 NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
     const std::string& constellation, const std::string& signal) {
     // Raw RINEX-3 code observable, "C<band><attribute>"; the attribute is signal[2]
@@ -829,22 +865,43 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                 } catch (...) { srow.setZero(); s_ok = false; }
                 if (s_ok && srow.cwiseAbs().sum() > 0.0) {
                     double target = 0.0;
+                    // Card GAL (R3 iii): the same branches, counted per constellation.
+                    SatGfConstCounts& gcc =
+                        out.sat_gf_by_const[NetworkSbasis::constellationOf(sat)];
                     if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
-                        // The pair must be (band 1, band 2) for T_GD to describe it.
-                        const bool l1l2 = sig1.size() >= 2 && sig2.size() >= 2 &&
-                                          sig1[1] == '1' && sig2[1] == '2';
-                        const auto tit = sat_gf_target_m.find(sat);
-                        if (!l1l2) {
+                        // The pair must be one the latched group delay describes: (band 1,
+                        // band 2) for GPS (T_GD), (band 1, band 5) for Galileo (BGD(E1,
+                        // E5a), card GAL).  The rule and its order of tests live in
+                        // satGfBroadcastTarget, which the extra-channel anchor below
+                        // reads too, so the two can never disagree about a satellite.
+                        const SatGfTarget gt =
+                            NetworkSbasis::satGfBroadcastTarget(sat, sig1, sig2,
+                                                                sat_gf_target_m);
+                        switch (gt.kind) {
+                        case SatGfTargetKind::NoGroupDelay:
                             ++out.n_sat_gf_pair_not_l1l2;
-                        } else if (tit == sat_gf_target_m.end()) {
+                            ++gcc.pair_no_gd;
+                            break;
+                        case SatGfTargetKind::Missing:
                             ++out.n_sat_gf_tgd_missing;
-                        } else if (tit->second == 0.0) {
+                            ++gcc.tgd_missing;
+                            break;
+                        case SatGfTargetKind::BroadcastZero:
                             ++out.n_sat_gf_tgd_zero;   // broadcast says zero: still physical
-                        } else {
-                            target = tit->second;
+                            ++gcc.tgd_zero;
+                            break;
+                        case SatGfTargetKind::BroadcastHit:
+                            target = gt.target_m;
                             ++out.n_sat_gf_tgd_hits;
+                            ++gcc.tgd_hits;
+                            break;
                         }
                     }
+                    // Card GAL (R3 ii): the ABSOLUTE target of this satellite, kept
+                    // before the time link below replaces the value with the carried
+                    // one, because the extra-channel anchor at a first sighting must
+                    // assert exactly what this pair was pinned at.
+                    const double abs_target = target;
                     // RF-0e e2: TIME-LINK the geometry-free row.  RF-0c/RF-0d re-assert
                     // the absolute target every epoch while the IF pins beside them are
                     // CHANGE pins under code_datum_time_linked (:722-735) — two families
@@ -858,13 +915,16 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         if (prevCb(sat, sig1, p1) && prevCb(sat, sig2, p2)) {
                             target = (p2 - p1) / mu2_minus_mu1;
                             ++out.n_sat_gf_carried;
+                            ++gcc.carried;
                         } else {
                             ++out.n_sat_gf_anchored;   // first sighting: absolute
+                            ++gcc.anchored;
                         }
                     }
                     rows.push_back(std::move(srow));
                     zs.push_back(target);
                     ++out.n_sat_gf_rows;
+                    ++gcc.rows;
                     sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig1]
                         .insert(sat);
                     sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sig2]
@@ -909,6 +969,7 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                         const double mu_k = (f1 * f1) / (fk * fk);
                         if (std::abs(mu_k - 1.0) <= 1e-12) {
                             ++out.n_sat_gf_sameband_free;   // ISC stays estimable
+                            ++gcc.sameband_free;
                             continue;
                         }
                         // --- RF-0f: the band-2 same-band companion -------------------
@@ -1043,18 +1104,31 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
                                 if (prevCb(sat, sig1, q1) && prevCb(sat, sk, qk)) {
                                     k_target = (qk - q1) / (mu_k - 1.0);
                                     ++out.n_sat_gf_carried;
+                                    ++gcc.carried;
                                 } else {
-                                    k_target = (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd
-                                                && sat_gf_target_m.count(sat))
-                                                   ? sat_gf_target_m.at(sat) : 0.0;
+                                    // Card GAL (R3 ii): the first-sighting anchor asserts
+                                    // the target the PAIR was pinned at (abs_target, from
+                                    // satGfBroadcastTarget), never the latched value
+                                    // unconditionally.  Before card GAL this read
+                                    // sat_gf_target_m with no pair check, so a Galileo
+                                    // C5X column was anchored at c*BGD while its (C1C,
+                                    // C5Q) pair sat at zero.  For a GPS (L1, L2) pair the
+                                    // two expressions are the same number on every branch
+                                    // (hit, broadcast zero, missing record), so GPS alone
+                                    // is byte-identical.
+                                    k_target = abs_target;
                                     ++out.n_sat_gf_anchored;
+                                    ++gcc.anchored;
                                 }
                             }
                             rows.push_back(std::move(krow));
                             zs.push_back(k_target);
                             ++out.n_sat_gf_extra_rows;
-                            if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd)
+                            ++gcc.extra_rows;
+                            if (sat_gf_datum == NetworkSatGfDatum::BroadcastTgd) {
                                 ++out.n_sat_gf_isc_zero;
+                                ++gcc.isc_zero;
+                            }
                             sat_gf_pinned[NetworkSbasis::constellationOf(sat) + "|" + sk]
                                 .insert(sat);
                         }

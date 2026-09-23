@@ -886,6 +886,17 @@ void networkEmitStore(
                          << ar_gate << ','
                          << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
             }
+            // Card GAL: the consumer's receiver inter-system bias, same stamp as the
+            // row above.  The stream is open only with a second constellation active.
+            if (traces.cl_isb_trace.is_open()) {
+                const double clk = consumer->getClockBias();
+                for (const auto& [sys, vs] : consumer->getSystemTimeOffsets())
+                    traces.cl_isb_trace << se.time.week << ','
+                                        << fmt::format("{:.3f}", se.time.tow) << ',' << sys
+                                        << ',' << fmt::format("{:.4f}", vs.first) << ','
+                                        << fmt::format("{:.4f}", vs.second) << ','
+                                        << fmt::format("{:.4f}", clk) << '\n';
+            }
             // Card CST: the per-SATELLITE twin of the row above.  The engine
             // harvested its own epoch at the processEpoch tail (traceConsumerSat_);
             // this seam only moves the buffer to the stream NetworkRunTraces owns,

@@ -4110,6 +4110,56 @@ namespace GnssProcessor {
             return false;
         }
 
+        // --- Card GAL (R1): Galileo admission consistency -----------------------
+        // The producer admits a constellation through ONE door and gives it a
+        // receiver inter-system bias through ANOTHER: signal selection admits a
+        // Galileo observation whenever processing.signal_priorities has a Galileo
+        // list (PppModel's canonical decision and selectSignals), while the station
+        // state manager allocates the Galileo inter-system bias only for a system in
+        // processing.active_systems.  The network path does not filter observations
+        // by active_systems, so the two halves must agree:
+        //  - a Galileo list WITHOUT Galileo active builds Galileo rows with no
+        //    inter-system bias column, and every station's GPS receiver clock absorbs
+        //    both systems (the Galileo clock common mode then leaks into the GPS
+        //    clocks and every Galileo row carries the full inter-system bias as a
+        //    residual).  That is a wrong model, so it is refused;
+        //  - Galileo active WITHOUT a list admits no Galileo signal at all; each
+        //    station still holds an inter-system bias state that no row touches (the
+        //    assembly drops the structurally-zero column), so the run is a GPS run
+        //    that says it is not.  That is a configuration that does nothing, so it
+        //    is a warning naming the consequence.
+        // The mirror of the GLONASS pair of checks above.
+        {
+            const bool gal_active =
+                std::find(active_systems_.begin(), active_systems_.end(), "Galileo")
+                != active_systems_.end();
+            const bool gal_listed = signal_priorities_.count("Galileo") != 0;
+            if (gal_listed && !gal_active) {
+                log->error("Network (card GAL): processing.signal_priorities has a 'Galileo' "
+                           "list but 'Galileo' is not in processing.active_systems.  The "
+                           "producer would admit Galileo observations with NO inter-system "
+                           "bias column, so every station's GPS receiver clock would absorb "
+                           "both systems.  Add 'Galileo' to active_systems, or remove the "
+                           "Galileo priority list.");
+                return false;
+            }
+            if (gal_active && !gal_listed)
+                log->warn("Network (card GAL): 'Galileo' is in processing.active_systems but "
+                          "processing.signal_priorities has no 'Galileo' list, so NO Galileo "
+                          "signal is admitted: every station carries an inter-system bias "
+                          "state that no observation reaches, and the run is a GPS run.  Add "
+                          "a Galileo priority list (for example C1C, C1X, L1C, L1X, C5Q, C5X, "
+                          "L5Q, L5X) or remove Galileo from active_systems.");
+            if (gal_active && gal_listed)
+                log->info("Network (card GAL): Galileo ACTIVE with a priority list of {} "
+                          "signal(s): each station carries a Galileo inter-system bias "
+                          "(a free per-epoch local column), the Galileo satellite clock "
+                          "common mode is closed by its own pivot satellite, and under "
+                          "network.sat_gf_datum = broadcast_tgd the (E1, E5a) pin pair is "
+                          "targeted at c*BGD(E1, E5a) from the navigation message.",
+                          signal_priorities_.at("Galileo").size());
+        }
+
         // --- POST-RESOLUTION trace-inertness warnings -------------------------
         // Both of these judge whether an armed trace has any state to write, and
         // both USED to sit beside their own parse in loadNetworkObservabilityAndSnapshot_

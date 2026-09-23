@@ -297,6 +297,19 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Card GAL (R6): the route the receiver antenna correction of a signal
+         *        takes to an ATX frequency (forwards to Antenna).
+         * @param signal  RINEX observation code.
+         * @param system  GNSS system of the observation.
+         * @param out_key [out, optional] The ATX frequency key used, empty when none.
+         * @return "exact", "same_system", "cross_system" or "none".
+         */
+        std::string receiverAtxFrequencySource(const std::string& signal, System system,
+                                               std::string* out_key = nullptr) const {
+            return antenna_.receiverAtxFrequencySource(signal, system, out_key);
+        }
+
+        /**
          * @brief Whether the receiver antenna resolved only via the always-on
          *        type-preserving radome→NONE fallback (Tier 1).
          *

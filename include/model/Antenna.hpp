@@ -229,6 +229,28 @@ namespace GnssProcessor {
 		bool hasReceiverAtxEntry(const std::string& signal, System system) const;
 
 		/**
+		 * @brief Card GAL (R6): the ROUTE by which the receiver antenna correction of a
+		 *        signal resolves to an ATX frequency.
+		 *
+		 * Runs exactly the resolution @c getAntennaCorrection() runs for the receiver
+		 * PCO (the same matching, the same in-system frequency chain under
+		 * @c enable_atx_frequency_fallback, the same receiver-only cross-system chain
+		 * under @c enable_receiver_cross_system_atx_fallback) and names which step
+		 * supplied the key.  Measure-only.
+		 *
+		 * @param signal  RINEX observation code (e.g. "L1C", "C5X").
+		 * @param system  GNSS system of the observation.
+		 * @param out_key [out, optional] The ATX frequency key the correction uses
+		 *                ("E01", "G05", ...), empty when none resolves.
+		 * @return "exact" (the requested key), "same_system" (an in-system frequency
+		 *         substitute), "cross_system" (the nearest GPS band), or "none" (no
+		 *         entry resolves: the receiver correction of the signal is ZERO).  An
+		 *         antenna TYPE unknown to the ANTEX also answers "none".
+		 */
+		std::string receiverAtxFrequencySource(const std::string& signal, System system,
+		                                       std::string* out_key = nullptr) const;
+
+		/**
 		 * @brief Whether the RINEX receiver antenna type matched an ATX model entry.
 		 *
 		 * Runs the same receiver-antenna matching as getAntennaCorrection()

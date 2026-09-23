@@ -665,6 +665,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the network because their receiver antenna TYPE is unknown to the loaded
     // ANTEX even after the radome→NONE fallback (unmodelled receiver PCO/PCV).
     std::vector<std::string> excluded_unmodeled_antenna_stations;
+    // Card GAL (R6): per active constellation with a priority list, the route each
+    // station's receiver correction takes on the two lowest bands of that list
+    // ("exact", "same_system", "cross_system", "none"), collected for one summary
+    // line.  Filled only when a constellation other than GPS is active, so a
+    // GPS-only setup log is unchanged.  system -> route -> station names.
+    const bool atx_src_on = networkMultiGnssActive(config_);
+    std::map<std::string, std::map<std::string, std::vector<std::string>>> atx_src_by_sys;
     // --- Card UPO (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4) -------
     // Marker → antenna-reference-point reduction of the roster's configured
     // coordinates.  Read in BOTH knob states (standing invariant #4: an OFF run
@@ -845,6 +852,57 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 log->warn("Network: station '{}' receiver antenna {}", cfg.name, detail);
                 radome_fallback_stations.push_back(cfg.name);
             }
+        }
+
+        // Card GAL (R6): the receiver ATX frequency SOURCE per active constellation,
+        // on the two lowest bands of its priority list (the dual pair: GPS 1 and 2,
+        // Galileo 1 and 5).  A station whose route is not "exact" on some band gets
+        // its own line; every station lands in the summary.  Measure-only.
+        if (rx_corr_on && atx_src_on) {
+            std::string rx_ant = parser->getReceiverAntennaType();
+            const auto last = rx_ant.find_last_not_of(" \t\r\n");
+            rx_ant = (last == std::string::npos) ? std::string{} : rx_ant.substr(0, last + 1);
+            std::string per_sys;
+            bool any_not_exact = false;
+            for (const std::string& sys_name : config_.getActiveSystems()) {
+                const auto pit = config_.getSignalPriorities().find(sys_name);
+                if (pit == config_.getSignalPriorities().end()) continue;
+                std::set<char> bands;
+                for (const std::string& s : pit->second)
+                    if (s.size() >= 2 && (s[0] == 'C' || s[0] == 'L')) bands.insert(s[1]);
+                const System sys = sys_name == "GPS"     ? System::GPS
+                                 : sys_name == "Galileo" ? System::Galileo
+                                 : sys_name == "BeiDou"  ? System::BeiDou
+                                 : sys_name == "GLONASS" ? System::GLONASS
+                                 : sys_name == "QZSS"    ? System::QZSS
+                                 : sys_name == "SBAS"    ? System::SBAS
+                                                         : System::Unknown;
+                if (sys == System::Unknown) continue;
+                std::string worst = "exact";
+                std::string band_txt;
+                int n_band = 0;
+                for (const char b : bands) {
+                    if (n_band++ >= 2) break;
+                    std::string key;
+                    const std::string sig = std::string("L") + b + "C";
+                    const std::string route = st.model->receiverAtxFrequencySource(sig, sys, &key);
+                    band_txt += fmt::format("{}band {} {}{}", band_txt.empty() ? "" : ", ", b,
+                                            route, key.empty() ? std::string() : " (" + key + ")");
+                    if (route == "none") worst = "none";
+                    else if (route == "cross_system" && worst != "none") worst = "cross_system";
+                    else if (route == "same_system" && worst == "exact") worst = "same_system";
+                }
+                if (worst != "exact") any_not_exact = true;
+                atx_src_by_sys[sys_name][worst].push_back(cfg.name);
+                per_sys += fmt::format("{}{}: {}", per_sys.empty() ? "" : " | ", sys_name, band_txt);
+            }
+            if (any_not_exact)
+                log->warn("Network (card GAL, receiver ATX source): station '{}' antenna '{}' "
+                          "does not resolve every band exactly: {}.  'cross_system' borrows "
+                          "the nearest GPS band (model_corrections."
+                          "enable_receiver_cross_system_atx_fallback); 'none' leaves the "
+                          "receiver correction of that band at ZERO.",
+                          cfg.name, rx_ant.empty() ? "<none in RINEX header>" : rx_ant, per_sys);
         }
 
         // Phase-leveling T0 (Increment 2): a persistent per-station MW + GF
@@ -1039,6 +1097,23 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         for (size_t i = 0; i < v.size(); ++i) { if (i) s += ", "; s += v[i]; }
         return s;
     };
+    // Card GAL (R6): the receiver ATX source summary per constellation: the route
+    // of each station's WORST band (exact < same_system < cross_system < none).
+    for (const auto& [sys_name, by_route] : atx_src_by_sys) {
+        std::string t;
+        for (const char* route : { "exact", "same_system", "cross_system", "none" }) {
+            const auto it = by_route.find(route);
+            const std::size_t n = (it == by_route.end()) ? 0 : it->second.size();
+            t += fmt::format("{}{} {}", t.empty() ? "" : "; ", route, n);
+            if (n > 0 && std::string(route) != "exact")
+                t += " [" + joinNames(it->second) + "]";
+        }
+        log->info("Network (card GAL, receiver ATX source, {}): per station, the route of "
+                  "its worst band on the dual pair: {}.  (cross-system fallback {}.)",
+                  sys_name, t,
+                  config_.getModelCorrections().enable_receiver_cross_system_atx_fallback
+                      ? "ARMED" : "off");
+    }
     // Tier 1 (always-on radome→NONE): report the stations whose receiver PCO/PCV
     // came from the radome-agnostic NONE calibration (mm-level) — matched, not
     // dropped, but worth a single summary so the substitution is visible.

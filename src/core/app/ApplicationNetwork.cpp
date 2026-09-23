@@ -2842,6 +2842,11 @@ int Application::runNetwork() {
         // stations' own state maps, all final at this point.  Measure-only, and it
         // returns on its first line unless the widening is active.
         networkChannelAllEpoch(ctx, config_, stations, modeled, present);
+        // Card GAL: the second-constellation census (inter-system bias columns,
+        // satellites per constellation, the non-GPS-only station-epochs), here for the
+        // same reason as the census above: `present` is final.  Measure-only, and it
+        // returns on its first line unless a constellation other than GPS is active.
+        networkMultiGnssEpoch(ctx, config_, stations, modeled, present);
         subEnd(SB_ROSTER);
         // SPEC_day129_frame_guards P1-3/P1-4: trigger instrumentation.  BEFORE the
         // stash/status block, because the epoch-status row written there reads the
