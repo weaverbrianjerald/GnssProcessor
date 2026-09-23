@@ -648,6 +648,10 @@ posture call stays in the verdict section of the card that reached it.
 
 - [status/OPEN_ITEMS.md](status/OPEN_ITEMS.md) — every owed / open item the corpus
   names, each with the card and section that is its evidence.
+- [status/OPEN_ITEMS_A_current_program.md](status/OPEN_ITEMS_A_current_program.md):
+  section A of that register (the current program), in its own file since 2026-09-22.
+- [status/OPEN_ITEMS_A_before_2026-09-20.md](status/OPEN_ITEMS_A_before_2026-09-20.md):
+  the section A rows whose bold lead-in is last dated before 2026-09-20.
 
 ---
 
