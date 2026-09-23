@@ -4,12 +4,12 @@
 
 - **id:** OWD
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Build card, pre-registered 2026-09-22 by the author's direction to fix the mistakes card GAL uncovered before continuing (the list of its section 6.2, card CLV taking the frozen clock level). Five code fixes: the product S contract line written on every wire, naming the product files in force during the run, and a replay of a wire without one refused unless asked for (O1); every variance re-inflation of the state manager raises and never shrinks, with a raised/kept counter each, and a GPS clock re-reference re-inflates every allocated inter-system bias (O2); the broadcast group delay latched as the processing window's median healthy record instead of the file's first record (O3); one admission door for constellations, `processing.active_systems` (O4); post-fit rows that name the observation's signal (O5). Sequenced with a written rule: the BeiDou group-delay pair rule (O6), the sim fixture regeneration and the Galileo yaw law (O7), health on the network path. Located without a fix: the GPS clock wire 0.0041 to 0.0047 m with Galileo (O8), a slow per-satellite clock drift of millimetres in no station class. Measured before the build: the contract knob changes the product header only (343 100 identical body lines on card GAL's pair); the decided latch reproduces the first record at all 110 satellites on both beds' 00:00 windows and would differ by up to 0.698 m on a run starting at 18:00; both clock pivots of the field day are eclipsed, and their eclipse is the once-per-run constellation re-reference.
+- **status:** closed
+- **summary:** CLOSED 2026-09-23 (section 5): BUILT (`d64c230` on main `e47b267`), every pre-registered gate passes and the products are byte-identical on both beds, 2 h and 6 h (the records with the header reported apart; epoch status, post-fit residuals and the clock wire identical). O1: the S line is on every wire and names the day's own orbit and clock files; a replay of a wire without one exits with an error unless `network.replay_allow_undeclared_wire` (`runs/_rap_owd_refuse_anmg`); the WTZZ00DEU replay of the new wire writes a closed-loop trace byte-identical to the in-process consumer's, where the legacy replay differs at 168 epochs by up to 0.0032 m; the 16-site census on the new wire (keys `owd`, `owdf`) equals `rf3gl2nb` in every site's count and in the across-site median of every hour, each site's hourly median within 0.002 m and the positions within 0.0041 m. O2: every re-inflation keeps a larger variance; the producer counts 0 raised and 0 kept on every run (byte-identical by construction on this posture), each consumer 4 kept (census sites and closed loops), the positions within 0.0001 m; the legacy replay (keys `owdleg`, `owdlegf`) reproduces the recorded key's discontinuity channel at 16 of 16 sites. O3: the window latch equals the first record at every processed satellite (6 h: 97 on the window rule, 13 with no healthy record, none differing); a same-value rule keeps the first record's bits, because the merged navigation file prints 29 of the 32 GPS values with different last digits and that alone moved the field products by up to 3.4e-5 m. O4: one door for the network sync and the consumer replay (1 537 822 field observations of inactive systems removed); the two archived GPS-only configs load with a warning. O5: all 3 019 unnamed post-fit rows named. Cost: 277.50 against 317.79 ms per epoch, not slower. Sequenced, the author's decisions (section 4): O6, O7, health on the network path. Original summary: Build card, pre-registered 2026-09-22 by the author's direction to fix the mistakes card GAL uncovered before continuing (the list of its section 6.2, card CLV taking the frozen clock level). Five code fixes: the product S contract line written on every wire, naming the product files in force during the run, and a replay of a wire without one refused unless asked for (O1); every variance re-inflation of the state manager raises and never shrinks, with a raised/kept counter each, and a GPS clock re-reference re-inflates every allocated inter-system bias (O2); the broadcast group delay latched as the processing window's median healthy record instead of the file's first record (O3); one admission door for constellations, `processing.active_systems` (O4); post-fit rows that name the observation's signal (O5). Sequenced with a written rule: the BeiDou group-delay pair rule (O6), the sim fixture regeneration and the Galileo yaw law (O7), health on the network path. Located without a fix: the GPS clock wire 0.0041 to 0.0047 m with Galileo (O8), a slow per-satellite clock drift of millimetres in no station class. Measured before the build: the contract knob changes the product header only (343 100 identical body lines on card GAL's pair); the decided latch reproduces the first record at all 110 satellites on both beds' 00:00 windows and would differ by up to 0.698 m on a run starting at 18:00; both clock pivots of the field day are eclipsed, and their eclipse is the once-per-run constellation re-reference.
 - **source:** [GAL](GAL_gps_galileo_dual_2026-09-22.md) section 6.2 (the list) and 6.1; [CLV](CLV_clock_level_2026-09-22.md) section 5
-- **knobs / posture:** new `network.replay_allow_undeclared_wire` (bool, default false: a replay of a wire without an S contract line is refused); `network.serialize_sbasis_contract` accepted and inert (the S line is unconditional), pinned true on both goldens; the re-inflation fix has no knob (a defect fix); the RF-0hv working bases at main `53cd382` at pre-registration (the build base is recorded at close)
-- **dates in the text:** 2026-09-22
-- **hashes / run dirs:** baseline pair `runs/_rf0hv10_{field,sim}6`; census key `rf3gl2nb`; card GAL's `runs/_rap_gal_g5_field6` and `_g5s_field6`; arms `runs/_rap_owd_*`; exe `gnss_processor_owd.exe` (reference `gnss_processor_owd_ref.exe`)
+- **knobs / posture:** new `network.replay_allow_undeclared_wire` (bool, default false: a replay of a wire without an S contract line is refused); `network.serialize_sbasis_contract` accepted and inert (the S line is unconditional), pinned true on both goldens; the re-inflation fix has no knob (a defect fix); the RF-0hv working bases at main `53cd382` at pre-registration (the build base is recorded at close); the build base main `e47b267`, the code commit `d64c230`; the goldens regenerated with the pin (`--verify` PASS, 62 armed, 6 documented exceptions)
+- **dates in the text:** 2026-09-22, 2026-09-23
+- **hashes / run dirs:** baseline pair `runs/_rf0hv10_{field,sim}6`; census key `rf3gl2nb`; card GAL's `runs/_rap_gal_g5_field6` and `_g5s_field6`; arms `runs/_rap_owd_*`; exe `gnss_processor_owd.exe` (reference `gnss_processor_owd_ref.exe`); result (section 5): final exe sha256 `2c0e9d8f087c912f59bc731f36bd488036e989c5ee1bed9dc04368551f053eef`, G1b exe `836a8ea486fad7602a937d02b5efe4e0cb1ff21eef3309d18e91878531ab962e` (`gnss_processor_owd_g1b.exe`), reference `e75a62590171803fab85253e1d7c3df8f2901e3d0240ebe6eb2d26effdf682d1`; 2 h arms `runs/_rap_owd_{ref,g0,g1,g1b}_{sim,field}2`; 6 h `runs/_rap_owd_{field,sim}6` (G1b exe) and `runs/_rap_owd_{field,sim}6f` (final exe); census keys `owd` / `owdf` (the new wire), `owdleg` / `owdlegf` (the recorded wire, this build), `owdref` (the recorded wire, the reference build); refusal arms `runs/_rap_owd_refuse_anmg` and `_rap_owd_refuse_anmg_f`
 
 ## 1. The defects, as measured (read-only survey of main `53cd382`, 2026-09-22)
 
@@ -195,3 +195,183 @@ health 63 in every record of the day and is the GPS clock pivot until its eclips
 unhealthy all day and on the Galileo wire (1 440 clock records in
 `runs/_rap_gal_g5s_field6/products.txt`). O3 latches such satellites from all their records, so
 their datum stays where it is until this decision.
+
+## 5. Result (built 2026-09-22, graded 2026-09-23)
+
+The code commit is `d64c230` on main `e47b267` (card CLV's code). The build went in the
+pre-registered stages, each a Release executable: the reference, `e47b267` before the first edit
+(`gnss_processor_owd_ref.exe`, sha256 `e75a62590171803fab85253e1d7c3df8f2901e3d0240ebe6eb2d26effdf682d1`); G0's O1, O2, O4 and O5 (sha256 prefix
+`dddb69165ccd1555`); G1b, with O3 (`836a8ea486fad7602a937d02b5efe4e0cb1ff21eef3309d18e91878531ab962e`, kept as `gnss_processor_owd_g1b.exe`); and the final build
+(`gnss_processor_owd.exe`, sha256 `2c0e9d8f087c912f59bc731f36bd488036e989c5ee1bed9dc04368551f053eef`), which adds O4's door to the consumer replay after G2
+found that the replay no longer received the live feed (5.3, 5.6). The final build's 6 h runs
+`runs/_rap_owd_{field,sim}6f` are byte-identical to G1b's `runs/_rap_owd_{field,sim}6` in every
+output file compared (`products.txt`, `network_epoch_status.csv`, `closed_loop_trace.csv`,
+`network_pf_rows.csv`, `network_contract_check.csv`): the network path is the same in both. The
+full Debug suite on the final code runs 2 637 tests from 331 suites: 2 636 pass and 1 skips
+(`FixtureSmokeTest.Sp3HeaderTimeConversionMatches`, the fixture gate), against 2 609 from 327 on
+card CLV's build. Four suites are new, 28 cases: `UndeclaredWireAdmission` 7,
+`ReinflateNeverShrinks` 10, `ActiveSystemAdmission` 3, `GroupDelayLatch` 8. Two tests changed:
+the state-manager re-inflation tests of `tests/test_filter_core.cpp` now exercise the raise
+path, and card GAL's refusal test is now `GalileoListWithoutGalileoActiveIsIgnored`.
+`scripts/config_posture_check.py --verify-loader` reports 0 coverage gaps. The 2 h arms copy the
+goldens as committed at `e47b267` (reference and candidate on the same bytes, only the run paths
+changed); the 6 h arms copy the regenerated goldens (5.4). The grader of section 3 serves every
+consumer number below.
+
+**5.1 G0 (O1, O2, O4, O5): PASS.** `runs/_rap_owd_ref_{sim,field}2` against
+`runs/_rap_owd_g0_{sim,field}2`:
+
+| | sim | field |
+| --- | --- | --- |
+| product records (`#` and `S` lines removed) | 45 821 lines, identical | 59 194 lines, identical |
+| header | v1 to v2 with one S line: a-priori `COD0MGXFIN_20241290000_01D_05M_ORB.SP3+COD0MGXFIN_20241290000_01D_30S_CLK.CLK`; `network_contract_check.csv` PASS | the same |
+| `network_epoch_status.csv` | identical | identical |
+| `network_pf_rows.csv` | 473 620 rows; no other column differs; 0 empty signals | 539 635 rows; no other column differs; 1 041 empty signals filled, 0 left |
+| `pf_rows_no_signal`, `pf_rows_sig_relabel` | 0, 0 | 0, 0 |
+| removed at the door (O4) | 100 276 (Galileo) | 511 579 (BeiDou 220 172, GLONASS 125 958, Galileo 120 545, QZSS 16 496, SBAS 28 408) |
+| producer re-inflations | every counter 0 raised, 0 kept (60 stations) | the same (58 stations) |
+| consumer re-inflations (closed loop) | code bias 0 raised, 4 kept; every other kind 0 | code bias 2 raised, 4 kept; every other kind 0 |
+| `closed_loop_trace.csv` | `n_sats` at all 240 epochs (the consumer's feed now holds the admitted systems only, O4: 16 to 10 at the first epoch); the 3D error at 5 epochs and east, north, up at 1 to 2, each by 0.0001 m (from TOW 259530); 0.601 0.104 m in hours 1 and 2 and 53 of 240 below 0.1 m on both | `n_sats` at all 240 epochs (46 to 12 at the first epoch); the 3D error at 10 epochs and east, north, up at 11, 10, 21, each by 0.0001 m (from TOW 259410); 0.560 0.059 m and 131 of 240 on both |
+| teardown round-trip self-check | 0.18 s (240 epochs, 1 491 911 bytes) | 0.19 s (1 946 459 bytes) |
+
+The producer's ionosphere counter, the one re-inflation section 1 found in the producer, is 0
+raised and 0 kept on both beds, as is every other producer counter: under O2 the producer is
+byte-identical by construction on this posture. The inter-system bias rule is inert on GPS-only
+runs, which allocate no inter-system bias (0 raised, 0 kept on every consumer).
+
+**5.2 G1 (O3): PASS, after one correction.** The first build of the rule
+(`runs/_rap_owd_g1_{sim,field}2`) was not byte-identical: the merged navigation file
+(`BRDC00IGS_R_20241290000_01D_MN.rnx`) prints the unchanged T_GD of 29 of the 32 GPS satellites
+with different last digits (at most 4e-20 s apart, 1.2e-11 m), the median picked a representation
+other than the first record's, and the products moved: field clock records by up to 3.4e-5 m
+(7 596 of 7 597 records), code biases 2.6e-5 m, phase biases 1.5e-5 m; sim 1.1e-8, 3.2e-10 and
+2.3e-7 m. The rule now keeps the first record's exact bits when the latched value equals it
+within 1e-12 s (one broadcast step is 0.233 ns; test `RepresentationNoiseKeepsTheFirstRecordsBits`).
+With it, `runs/_rap_owd_g1b_{sim,field}2` equal G0 byte for byte on both beds: product records,
+header, `network_epoch_status.csv`, `closed_loop_trace.csv`, `network_pf_rows.csv`. The latch
+lines (`logs/main_log.log`):
+
+| run | window (TOW) | window rule / in force at the start / no healthy record | set aside: I/NAV, outside | differ from the first record |
+| --- | --- | --- | --- | --- |
+| `_rap_owd_g1b_field2` | [259200, 266400) | 95 / 2 / 13 | 7 342, 3 807 | 0 |
+| `_rap_owd_g1b_sim2` | [259230, 266430) | 97 / 0 / 13 | 7 342, 3 812 | 1: J02, -0.1396 m |
+| `_rap_owd_field6f` | [259200, 280800) | 97 / 0 / 13 | 7 342, 3 120 | 0 |
+| `_rap_owd_sim6f` | [259230, 280830) | 97 / 0 / 13 | 7 342, 3 120 | 0 |
+
+The 6 h windows read exactly as pre-registered. The 2 h windows differ in two details: on the
+field, G03 and G25 have no record whose clock epoch lies in [00:00, 02:00) (their records sit at
+23:59:44 and 02:00) and take the record in force at the start, the same value; on the sim, whose
+window starts at 00:00:30, J02 (a QZSS satellite the GPS-only run does not process, unhealthy all
+day) has two records inside, 01:00 at 1.863 ns and 02:00 at 1.397 ns, a one-record excursion (the
+03:00 record is 1.863 again), and the low median of two is the lower. On a window that holds two
+records, one odd record decides the latch. The 13 satellites without a healthy record are C35 C48
+C50 C56 C58 C62 E14 E18 G01 J02 J03 J04 J07; C29, E03 and E21 latch exactly 0; unhealthy records
+set aside: 0.
+
+**5.3 G2: PASS.** The 6 h runs of the regenerated goldens against the baseline pair (the final
+build's runs; G1b's are byte-identical to them):
+
+| | field: `_rap_owd_field6f` / `_rf0hv10_field6` | sim: `_rap_owd_sim6f` / `_rf0hv10_sim6` |
+| --- | --- | --- |
+| product records | 176 055 lines, identical (`scripts/check_solve_identity.py`: records identical, header reported apart; CLK, CB and PB identical) | 136 246 lines, identical (the same checks) |
+| `network_epoch_status.csv` | identical | identical |
+| consumer p50 by hour, epochs below 0.1 m | 0.560 0.059 0.028 0.030 0.039 0.048 m, 611 of 720, on both | 0.601 0.104 0.096 0.056 0.055 0.049 m, 448 of 720, on both |
+| `closed_loop_trace.csv` | `n_sats` at every epoch (O4); the 3D error at 10 of 720 epochs, each by 0.0001 m (TOW 259410 to 262230); consumer code bias 69 raised, 4 kept | `n_sats` at every epoch; the 3D error at 6 of 720, each by 0.0001 m (TOW 259530 to 267570); 7 raised, 4 kept |
+| clock wire, hours 2 to 6 (all / tracked arcs) | 0.0041 / 0.0028 m on both | 0.0040 / 0.0030 m on both |
+| gross code rows above 3 m / 10 m | 213 / 32 on both (of 900 016) | 595 / 1 on both (of 704 618) |
+| `network_pf_rows.csv` | 1 593 647 rows; 3 019 empty signals filled (section 1's 32 code and 2 987 phase rows), 0 left; no other column differs | 1 409 236 rows; nothing to fill; no other column differs |
+| removed at the door (O4) | 1 537 822 (BeiDou 662 539, GLONASS 370 202, Galileo 369 145, QZSS 50 270, SBAS 85 666) | 298 960 (Galileo) |
+| producer re-inflations | every counter 0 | every counter 0 |
+
+The sim 6 h run was owed by the card's condition (the G0 build moved the sim consumer by
+0.0001 m at 5 epochs), not by O3, which changed no processed satellite's datum.
+
+The census. Every key replays the same 16 sites (`runs/_msc/site_list.json`) plus WTZZ00DEU on the
+recorded key's own base arm, `runs/_rf0hv9_field6/arm.json` (`runs/_msc/scripts/msc_replay_set.py`):
+`owd` replays the new wire (`runs/_rap_owd_field6/products.txt`, the records identical to the
+recorded wire, the S line added); `owdleg` replays the recorded key's wire
+(`runs/_rap_rf3b_gl_nobound/products.txt`, no S line) with `network.replay_allow_undeclared_wire`;
+`owdref` replays it with the reference executable, to separate this card's change from everything
+committed since the recorded key was made. `owd` and `owdleg` ran on G1b's build and again on the
+final build as `owdf` (on `runs/_rap_owd_field6f/products.txt`) and `owdlegf`: every replay's
+position columns are identical between the two builds, the discontinuity lines too, and the
+final build's door changes `n_sats` only (12 239 rows over the 17 replays; 48 505 to 152 755
+observations of inactive systems removed per site).
+
+| key | median p50 by hour (m) | median count | against `rf3gl2nb` |
+| --- | --- | --- | --- |
+| `rf3gl2nb` (recorded) | 0.670 0.169 0.104 0.077 0.092 0.070 | 348.0 | |
+| `owdref` | the same | 348.0 | the discontinuity lines and the traces byte-identical at 16 of 16 sites |
+| `owdleg`, `owdlegf` | the same | 348.0 | the ordered discontinuity lines identical at 16 of 16 sites (the legacy-path proof); the 3D error differs at 15 sites in 149 epochs, each by 0.0001 m |
+| `owd`, `owdf` | the same | 348.0 | the 3D error differs at 15 sites in 2 102 epochs, at most 0.0041 m (BADG00RUS, TOW 259410) |
+
+The median column is the across-site median of each hour's p50 (`msc_pair.py`); each site's own
+hourly p50 moves by up to 0.00195 m on the new wire (22 of 96 site-hours, the largest at DAV100ATA
+in hour 1) and by up to 0.0001 m on the recorded wire (2 of 96). Every site's count is the same
+in all six keys: CHTI00NZL 499, SCRZ00BOL 398,
+ANMG00MYS 204, QUIN00USA 583, HARB00ZAF 358, POHN00FSM 0, DAV100ATA 339, BADG00RUS 185, STPM00SPM
+581, ASCG00SHN 180, CEDU00AUS 357, KOKB00USA 125, UTQI00USA 13, ARHT00ATA 562, WUH200CHN 69,
+BAKE00CAN 504. The consumer re-inflations per site, code bias raised on the new wire / the
+recorded wire (the same in both builds), with 4 kept at every site and every other kind 0 raised
+and 0 kept (`logs/rt_engine.log`): ANMG00MYS 71 / 71, ARHT00ATA 29 / 14, ASCG00SHN 16 / 16,
+BADG00RUS 74 / 71, BAKE00CAN 45 / 43, CEDU00AUS 13 / 13, CHTI00NZL 6 / 6, DAV100ATA 26 / 14,
+HARB00ZAF 24 / 21, KOKB00USA 19 / 12, POHN00FSM 26 / 22, QUIN00USA 18 / 13, SCRZ00BOL 13 / 13,
+STPM00SPM 8 / 8, UTQI00USA 73 / 70, WTZZ00DEU 69 / 68, WUH200CHN 77 / 74.
+
+Reading the keys together: the build of `e47b267` reproduces the recorded key byte for byte, so
+every difference of `owdleg` is this card's, and the only consumer-side change that moves a
+position on a GPS-only replay is O2's kept rule (CHTI00NZL keeps 4 and its positions are still
+identical). `owd` against `owdleg` is the S line alone: the replay now builds the producer's
+emitter from it (`logs/main_log.log`: threshold 0.0500 m, the code-jump and clock channels on)
+and receives the clock-discontinuity channel (6 to 75 clock lines per site); no site's count
+moves. At WTZZ00DEU, the wire's own closed-loop station, the final build's replay of the new wire
+writes a `closed_loop_trace.csv` byte-identical to the in-process consumer's of
+`_rap_owd_field6f`, while the legacy replay differs from it at 168 epochs by up to 0.0032 m
+(`owdlegf`; 0.0031 m on the reference build). That is O1's purpose, met: a replay is the
+consumer the producer ran.
+
+The refusal: `runs/_rap_owd_refuse_anmg` (G1b's build) and `runs/_rap_owd_refuse_anmg_f` (the
+final build), ANMG00MYS on `runs/_rf0hv10_field6/products.txt` without the knob, exit 1
+(`exitcode.txt`), write no trace, and log the error that names the missing S line, its
+consequence and the two remedies (`logs/main_log.log`).
+
+**5.4 Goldens and G3: PASS.** The manifest pins `network.serialize_sbasis_contract: true` on both
+current goldens and drops its exception; `scripts/make_golden_config.py --verify` passes with 62
+armed in regime and 6 documented exceptions on each; each golden's diff is the knob line, the
+comma above it and the two provenance lines. G3: `ActiveSystemAdmission.ArchivedGpsOnlyConfigsLoadWithTheWarning`
+loads `config/test_suite/ppp_rtk_network_global_5min_gpsonly.json` and
+`config/archive/test_suite/_sdewl_probe_gps10.json`; both load, each with the warning that its
+'Galileo' list (100 signals, the attribute string expanded over five bands and four observation
+types) is ignored because Galileo is not in `processing.active_systems`.
+
+**5.5 Cost: PASS (not slower).** `_rap_owd_field6f`, run alone on the final build, spends
+199 797.8 ms in the epoch loop over 720 epochs, 277.50 ms per epoch (G1b's `_rap_owd_field6`:
+278.30), against 228 805.8 ms and 317.79 ms on `runs/_rf0hv10_field6`; the sim, also alone,
+216.53 against 234.57 ms. The difference is not claimed as a gain: the 2 h field arms measure
+339.34 (reference), 345.16 (G0) and 317.52 ms per epoch (G1b), and G0 and G1b differ only in the
+setup-time latch, so the spread on this machine is at least 8 percent. The teardown self-check
+re-reads the whole wire in 0.39 s (field, 720 epochs, 5 788 668 bytes) and 0.41 s (sim,
+4 435 835 bytes).
+
+**5.6 Found on the way.**
+
+1. The solve's sensitivity to input bits (not fixed): a change of at most 1.2e-11 m in the
+   group-delay pins (5.2) moved the field wire by up to 3.4e-5 m. Byte identity is therefore a
+   statement about the exact bits of every input value, and any rule that recomputes an input
+   must reproduce them. Unattributed.
+2. O4's first build stripped the in-process consumer's feed but not the replay's own one-station
+   sync, so the replay's observation vector stopped being the live feed that
+   `ApplicationConsumerReplay.cpp` states it reuses the synchronizer to reproduce; it showed as
+   `n_sats`, 46 in the replay against 12 in process at WTZZ00DEU's first epoch. The final build
+   applies the same door in the replay (fixed; no position moved). Every closed-loop trace written from this build
+   on counts only the admitted systems in `n_sats`, so a byte comparison with a trace written
+   before it sets that column aside.
+3. The four kept consumer re-inflations fall in the first two hours in both closed loops (the 2 h
+   arms count the same four as the 6 h runs), consistent with section 1's reading: the receiver
+   code-bias state starts at 10 m and a declared step requests 0.25 m2.
+
+**5.7 Verdict.** Every pre-registered bar passes, with the two details of 5.2 on the 2 h
+windows. The fixes have no knob and are in force from `d64c230`; the goldens pin the S line.
+The card closes. Owed, the author's decisions (section 4): O6, the BeiDou pair rule; O7, the sim
+fixture regeneration and the Galileo yaw law; health on the network path. O8 stays as section 1
+left it.

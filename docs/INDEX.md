@@ -225,7 +225,7 @@ record the program is re-founding **on**.
   22-arm ladder finds no single knob and one lever (the free-ambiguity era converges it at the
   code's rate); design: the border carry inflated along each satellite's level direction by the
   code-only level variance, `network.clock_level_carry`.
-- [OWD](refound/OWD_owed_defects_2026-09-22.md): open (pre-registered 2026-09-22, the author's
+- [OWD](refound/OWD_owed_defects_2026-09-22.md): CLOSED 2026-09-23, BUILT `d64c230` (section 5: every gate passes and the products are byte-identical on both beds; a replay of the new wire is the in-process consumer; the census counts equal at 16 of 16 sites; sequenced O6, O7 and health; pre-registered 2026-09-22, the author's
   direction to fix the mistakes card GAL uncovered before continuing), GAL's owed list less the
   clock level (card CLV): the S contract line on every wire, naming the run's own product files,
   and an undeclared replay refused (`network.replay_allow_undeclared_wire`); every state-manager
