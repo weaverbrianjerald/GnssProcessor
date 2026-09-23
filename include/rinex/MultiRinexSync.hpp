@@ -112,6 +112,34 @@ namespace GnssProcessor {
         /// Access the synchronized epoch vector populated by @c synchronize().
         const std::vector<SyncedEpoch>& getSyncedEpochs() const { return synced_; }
 
+        /**
+         * @brief Card OWD (O4): keep only the observations of the ACTIVE systems.
+         *
+         * The network producer's single admission door for constellations.  The RINEX
+         * parser keeps every system and the network admits an observation by its signal
+         * priority list, while the receiver inter-system bias is allocated by
+         * @c processing.active_systems; stripping the inactive systems once, right after
+         * the sync, makes the two agree for every downstream reader of the synced epochs
+         * (the model, the admission censuses, the closed-loop consumer feed).  Station
+         * keys stay in place even when a station's vector empties, so "a station with no
+         * usable observation this epoch" reads as it did before.
+         *
+         * @param epochs The synced epochs, filtered in place.
+         * @param active The active system names (@c processing.active_systems: "GPS",
+         *               "Galileo", "GLONASS", "BeiDou", "QZSS", "SBAS").
+         * @return The number of observations removed per system name (systems with
+         *         removals only; empty when every observation was already active).
+         */
+        static std::map<std::string, std::size_t> retainSystems(
+            std::vector<SyncedEpoch>& epochs, const std::vector<std::string>& active);
+
+        /// Card OWD (O4): @ref retainSystems applied to this instance's synced epochs.
+        /// @param active The active system names.
+        /// @return The number of observations removed per system name.
+        std::map<std::string, std::size_t> retainSystems(const std::vector<std::string>& active) {
+            return retainSystems(synced_, active);
+        }
+
         /// Access the parsed RINEX header for a station (by name).
         const RinexHeader& headerOf(const std::string& station) const;
 

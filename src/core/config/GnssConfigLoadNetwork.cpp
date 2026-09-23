@@ -2954,12 +2954,24 @@ namespace GnssProcessor {
         if (network_config_.trace_ssr_consumer)
             log->info("Network: consumer-side SSR trace ENABLED — the SSR consumer writes "
                       "ssr_consumer_trace.csv (age, clk-applied, URA R-inflation, disc counters).");
-        network_config_.serialize_sbasis_contract =
-            jval<bool>(json, "network.serialize_sbasis_contract", "serialize_sbasis_contract", false);
-        if (network_config_.serialize_sbasis_contract)
-            log->info("Network: S-basis contract serialization ENABLED — product header carries the "
-                      "S-basis declaration, a-priori orbit/clock product identity, and phase-bias "
-                      "discontinuity threshold (v2 'S' line) for consumer cross-check.");
+        // Card OWD (O1): the S contract line is part of every wire, so the key is accepted
+        // (older configs load) and inert; the field reads the realized posture.
+        if (jhas(json, "network.serialize_sbasis_contract", "serialize_sbasis_contract"))
+            log->info("Network (card OWD): network.serialize_sbasis_contract = {} is INERT — the "
+                      "S-basis contract line (declaration, a-priori orbit/clock product identity, "
+                      "the replay emitter's discontinuity parameters) is written on every product "
+                      "header, because a consumer replay rebuilds its emitter from it.",
+                      jval<bool>(json, "network.serialize_sbasis_contract",
+                                 "serialize_sbasis_contract", false) ? "true" : "false");
+        network_config_.serialize_sbasis_contract = true;
+        network_config_.replay_allow_undeclared_wire =
+            jval<bool>(json, "network.replay_allow_undeclared_wire",
+                       "replay_allow_undeclared_wire", false);
+        if (network_config_.replay_allow_undeclared_wire)
+            log->warn("Network (card OWD): network.replay_allow_undeclared_wire ON — a consumer "
+                      "replay of a product file WITHOUT an S contract line runs anyway, with the "
+                      "DEFAULT emitter (no clock-discontinuity channel): a legacy leg graded on "
+                      "purpose, not a product-quality measurement.");
     }
 
     // =================================================================
@@ -4118,11 +4130,13 @@ namespace GnssProcessor {
         // state manager allocates the Galileo inter-system bias only for a system in
         // processing.active_systems.  The network path does not filter observations
         // by active_systems, so the two halves must agree:
-        //  - a Galileo list WITHOUT Galileo active builds Galileo rows with no
-        //    inter-system bias column, and every station's GPS receiver clock absorbs
+        //  - a Galileo list WITHOUT Galileo active built Galileo rows with no
+        //    inter-system bias column, and every station's GPS receiver clock absorbed
         //    both systems (the Galileo clock common mode then leaks into the GPS
         //    clocks and every Galileo row carries the full inter-system bias as a
-        //    residual).  That is a wrong model, so it is refused;
+        //    residual).  Card GAL refused it; since card OWD the network admits by
+        //    active_systems (the sync strips the inactive systems), so any list of an
+        //    inactive system is ignored with a warning instead;
         //  - Galileo active WITHOUT a list admits no Galileo signal at all; each
         //    station still holds an inter-system bias state that no row touches (the
         //    assembly drops the structurally-zero column), so the run is a GPS run
@@ -4134,14 +4148,21 @@ namespace GnssProcessor {
                 std::find(active_systems_.begin(), active_systems_.end(), "Galileo")
                 != active_systems_.end();
             const bool gal_listed = signal_priorities_.count("Galileo") != 0;
-            if (gal_listed && !gal_active) {
-                log->error("Network (card GAL): processing.signal_priorities has a 'Galileo' "
-                           "list but 'Galileo' is not in processing.active_systems.  The "
-                           "producer would admit Galileo observations with NO inter-system "
-                           "bias column, so every station's GPS receiver clock would absorb "
-                           "both systems.  Add 'Galileo' to active_systems, or remove the "
-                           "Galileo priority list.");
-                return false;
+            // Card OWD (O4): the network admits observations by processing.active_systems
+            // (the synced epochs are stripped of every inactive system right after the sync,
+            // ApplicationNetworkSetup), so a priority list for an inactive system is IGNORED
+            // rather than admitted without its inter-system bias.  The former refusal made
+            // two archived GPS-only configs unloadable.  One warning per ignored list.
+            for (const auto& [sys, list] : signal_priorities_) {
+                if (std::find(active_systems_.begin(), active_systems_.end(), sys)
+                    != active_systems_.end())
+                    continue;
+                log->warn("Network (card OWD): processing.signal_priorities has a '{}' list "
+                          "({} signal(s)) but '{}' is not in processing.active_systems: the list "
+                          "is IGNORED — the network admits observations by active_systems, so "
+                          "no {} observation reaches the solve.  Add '{}' to active_systems to "
+                          "use it, or remove the list.",
+                          sys, list.size(), sys, sys, sys);
             }
             if (gal_active && !gal_listed)
                 log->warn("Network (card GAL): 'Galileo' is in processing.active_systems but "
@@ -10803,11 +10824,6 @@ namespace GnssProcessor {
      */
     void GnssConfig::loadNetworkContractHardening_(const nlohmann::json& json,
                                                    const std::shared_ptr<spdlog::logger>& log) {
-        // Alias preamble: the body below reads the driver local it was written
-        // against.  network_service_mode_ is written once, at the top of the
-        // section, and never again — so this is the value the un-split code saw.
-        const bool service_mode = network_service_mode_;
-
         // RTA-3/RTA-4/RTA-5/RTA-11: product wire/contract hardening for late joiners
         // and producer restarts.  All default OFF ⇒ store and file byte-identical.
         network_emit_generation_id_ =
@@ -10841,20 +10857,13 @@ namespace GnssProcessor {
                       "C/B/P records gain optional trailing post-emit counter fields so a "
                       "late-joining/tail reader reconstructs counters without a full replay "
                       "(reader adopts present values, replay recompute kept as a self-check).");
-        if (network_contract_rebroadcast_s_ > 0.0) {
-            if (network_config_.serialize_sbasis_contract)
-                log->info("Network producer (RTA-5): S-contract re-broadcast ON — a CURRENT S line "
-                          "(refreshed realized pivots) every {:.0f} s of product time and on any "
-                          "datum-change emit.", network_contract_rebroadcast_s_);
-            // P4: warn suppressed under service_mode — the bundle arms
-            // serialize_sbasis_contract in the arming block below, so the
-            // "inert" claim would be false by the end of the load.
-            else if (!service_mode)
-                log->warn("Network: network.contract_rebroadcast_s {} is set but "
-                          "network.serialize_sbasis_contract is OFF — there is no S contract to "
-                          "re-broadcast, so the knob is inert.  Enable serialize_sbasis_contract.",
-                          network_contract_rebroadcast_s_);
-        }
+        // Card OWD (O1): the S contract is part of every wire, so a re-broadcast always has a
+        // contract to repeat (the former "inert without serialize_sbasis_contract" warning is
+        // gone with the option it described).
+        if (network_contract_rebroadcast_s_ > 0.0)
+            log->info("Network producer (RTA-5): S-contract re-broadcast ON — a CURRENT S line "
+                      "(refreshed realized pivots) every {:.0f} s of product time and on any "
+                      "datum-change emit.", network_contract_rebroadcast_s_);
     }
 
     // =================================================================

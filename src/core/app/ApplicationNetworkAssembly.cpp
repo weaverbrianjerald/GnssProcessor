@@ -3339,6 +3339,10 @@ EpochAction Application::networkPassB_(const SyncedEpoch& se,
             // for the post-solve slant-iono back-substitution (viz trace).
             std::map<int, int>& h2local = R.h2local;
             networkSplitStation_(st, est, em, R.A_s, R.A_r, R.w, R.y, h2local);
+            // Card OWD (O5): the observation's own signal of every data row, for the post-fit
+            // row writer (row-aligned with em.H: the invariant the demotion blocks of
+            // networkSplitStation_ rely on).  Trace-only: nothing in the solve reads it.
+            if (config_.getNetworkConfig().trace_postfit_rows) R.row_sig = em.signal_types;
 
             // --- CG-INC-0, station congruence screen (docs/SPEC_redundancy_census.md)
             // Retain the per-row POSITION PARTIAL that networkSplitStation_ just

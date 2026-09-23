@@ -4,9 +4,11 @@
 An OUTPUTS-only knob (an emission filter, a trace, a legend) must leave the
 estimator untouched.  Two gotchas this encodes:
 
-  * product files must be compared with ``^#`` lines STRIPPED -- a legend or
-    banner delta is not a wire regression, and a whole-file hash false-positives
-    on it;
+  * product files must be compared on their RECORDS only -- the ``#`` legend and
+    banner lines and the ``S`` contract lines are header, not wire content, and a
+    whole-file hash false-positives on them (card OWD made the S line part of every
+    wire, so a pre-OWD run against a post-OWD run differs in the header alone).  The
+    header is hashed and reported separately;
   * ``network_solution.csv`` CLK/CB values come straight from the solve and must
     match to the digit, whereas PB values are re-based at EMIT and are exactly
     what an emission filter is allowed to change.  Comparing all three together
@@ -28,15 +30,33 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def data_hash(products: Path) -> str | None:
-    """MD5 of a product file's non-comment lines."""
+    """MD5 of a product file's RECORDS: every line that is neither a ``#`` legend or
+    banner line nor an ``S`` contract line (card OWD: the S line is header)."""
     if not products.is_file():
         return None
     h = hashlib.md5()
     with products.open("rb") as fh:
         for raw in fh:
-            if not raw.startswith(b"#"):
+            if not raw.startswith(b"#") and not raw.startswith(b"S,"):
                 h.update(raw)
     return h.hexdigest()
+
+
+def header_digest(products: Path) -> str | None:
+    """The header, reported apart from the records: the banner, the number of S
+    contract lines and an MD5 over the ``#`` and ``S`` lines."""
+    if not products.is_file():
+        return None
+    h = hashlib.md5()
+    banner, n_s = "", 0
+    with products.open("rb") as fh:
+        for raw in fh:
+            if raw.startswith(b"#") or raw.startswith(b"S,"):
+                h.update(raw)
+                if raw.startswith(b"# gnss_network_product") and not banner:
+                    banner = raw.decode("ascii", "replace").strip("# \r\n")
+                n_s += raw.startswith(b"S,")
+    return f"{banner or 'no banner'}, {n_s} S line(s), md5 {h.hexdigest()}"
 
 
 def compare_kind(a: Path, b: Path, kind: str) -> str:
@@ -61,10 +81,15 @@ def main() -> None:
     a, b = (REPO / args.run_a, REPO / args.run_b)
 
     ha, hb = data_hash(a / "products.txt"), data_hash(b / "products.txt")
-    print(f"products.txt data-line MD5 (comments stripped):")
+    print(f"products.txt record MD5 (the # lines and the S contract lines excluded):")
     print(f"  {a.name}: {ha}")
     print(f"  {b.name}: {hb}")
-    print(f"  => {'IDENTICAL' if ha and ha == hb else 'DIFFER (expected if the knob is an EMISSION filter)'}\n")
+    print(f"  => {'IDENTICAL' if ha and ha == hb else 'DIFFER (expected if the knob is an EMISSION filter)'}")
+    ga, gb = header_digest(a / "products.txt"), header_digest(b / "products.txt")
+    print(f"products.txt header, reported apart (a header difference is not a solve difference):")
+    print(f"  {a.name}: {ga}")
+    print(f"  {b.name}: {gb}")
+    print(f"  => {'same' if ga == gb else 'differs'}\n")
 
     for kind in ("CLK", "CB", "PB"):
         print(" ", compare_kind(a, b, kind))

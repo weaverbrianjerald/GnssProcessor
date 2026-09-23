@@ -1115,6 +1115,13 @@ struct StationAssembly {
     Eigen::VectorXd  w, y;                 ///< Per-row information weights + innovations.
     int              np{0};                ///< Pivot ambiguity pins folded in (pivot only).
     std::map<int,int> h2local;             ///< H-column -> A_r-column map (back-substitute the slant-iono nuisance for the viz trace).
+    /// Card OWD (O5): the observation's OWN signal of each data row [0, H.rows()) — the
+    /// measurement's @c signal_types, row-aligned with H by the assembly's invariant; rows
+    /// appended later (datum pins, ionosphere ties, coupling rows) have none.  Filled only
+    /// under @c network.trace_postfit_rows (the only reader is the post-fit row writer, which
+    /// used to name a row's signal from the first labelled column and so wrote an empty
+    /// signal for a row whose only shared column is the clock).
+    std::vector<std::string> row_sig;
     std::string      err;                  ///< Diagnostic (mismatch detail or exception text).
     // Phase-leveling carry (Increment 1) — built in PASS B, consumed serially.
     std::vector<Eigen::Index> carry_cols;  ///< A_r columns receiving a carried prior (ASCENDING — determinism).

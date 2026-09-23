@@ -260,6 +260,27 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         log->error("Network: failed to synchronise epochs across stations");
         return 1;
     }
+    // Card OWD (O4): the network's ONE admission door for constellations.  The parser keeps
+    // every system and the model admits an observation by its signal priority list, while
+    // each station's inter-system bias is allocated by processing.active_systems; an
+    // inactive system with a priority list would enter the rows with no bias column (the
+    // loader used to refuse the combination).  Stripping the inactive systems here, before
+    // any reader of the synced epochs runs, makes the two doors one.
+    {
+        const std::map<std::string, std::size_t> removed =
+            sync.retainSystems(config_.getActiveSystems());
+        std::string active, what;
+        std::size_t n_removed = 0;
+        for (const std::string& sys : config_.getActiveSystems())
+            active += (active.empty() ? "" : ", ") + sys;
+        for (const auto& [sys, n] : removed) {
+            what += fmt::format("{}{} {}", what.empty() ? "" : ", ", sys, n);
+            n_removed += n;
+        }
+        log->info("Network (card OWD): admission by processing.active_systems [{}] — {} "
+                  "observation(s) of inactive systems removed from the synced epochs{}{}.",
+                  active, n_removed, what.empty() ? "" : ": ", what);
+    }
     const auto& synced = sync.getSyncedEpochs();
     if (synced.empty()) {
         log->error("Network: zero synchronised epochs — check epoch_sync_tolerance_s "
@@ -267,6 +288,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         return 1;
     }
     log->info("Network: multi-station sync complete — {} synchronised epochs", synced.size());
+    // Card OWD: the processing window, with the epoch loop's own bounds (the start offset
+    // skip at ApplicationNetwork's fast-forward, the max-duration cutoff after it).  The
+    // group-delay latch takes the navigation records in force during it and the S contract
+    // names the product files in force during it.
+    setup.window_t0_s = TimeUtils::continuousGpsSeconds(synced.front().time)
+                      + config_.networkStartOffsetHours() * 3600.0;
+    setup.window_t1_s = config_.getMaxDuration() > 0.0
+                      ? setup.window_t0_s + config_.getMaxDuration()
+                      : TimeUtils::continuousGpsSeconds(synced.back().time) + 1.0;
 
     // --- Phase 3: products + cache for geometry -----------------------------
     product_parser_->loadProducts();
@@ -473,23 +503,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             }
             const std::vector<BroadcastEphemeris> nav =
                 RinexNavParser::parse(nav_path.string());
-            std::map<std::string, double> first_tgd_s;   // sat -> first record's T_GD [s]
-            std::map<std::string, double> max_spread_s;  // sat -> max |T_GD - first| [s]
-            std::map<std::string, int>    n_rec;
-            for (const auto& e : nav) {
-                if (e.satellite.empty() || e.system == System::GLONASS) continue;
-                ++n_rec[e.satellite];
-                const auto it = first_tgd_s.find(e.satellite);
-                if (it == first_tgd_s.end()) {
-                    first_tgd_s[e.satellite] = e.kepler.tgd0;
-                    max_spread_s[e.satellite] = 0.0;
-                } else {
-                    max_spread_s[e.satellite] =
-                        std::max(max_spread_s[e.satellite],
-                                 std::abs(e.kepler.tgd0 - it->second));
-                }
-            }
-            if (first_tgd_s.empty()) {
+            // Card OWD (O3): the value in force during the RUN, not the file's first record
+            // (the first record is the value in force when the file starts: right for a
+            // run that starts with it, wrong for any other).  The rule and its reasons live
+            // in NetworkSbasis::latchBroadcastGroupDelays, beside the pair rule it feeds.
+            const NetworkSbasis::GroupDelayLatch latch = NetworkSbasis::latchBroadcastGroupDelays(
+                nav, setup.window_t0_s, setup.window_t1_s);
+            if (latch.sats.empty()) {
                 log->error("Network (RF-0c): parsed 0 usable broadcast ephemerides from "
                            "'{}' — no group delays, so every satellite's geometry-free "
                            "datum would silently fall back to zero and the run would claim "
@@ -499,23 +519,45 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 return 1;
             }
             double worst_spread_m = 0.0;
-            std::string worst_sat;
-            int n_zero = 0;
-            for (const auto& [sat, tgd_s] : first_tgd_s) {
-                setup.sat_gf_target_m[sat] = Constants::SPEED_OF_LIGHT * tgd_s;
-                if (tgd_s == 0.0) ++n_zero;
-                const double sp = Constants::SPEED_OF_LIGHT * max_spread_s[sat];
+            std::string worst_sat, zeros, changed, all_unhealthy;
+            int n_zero = 0, n_changed = 0;
+            for (const auto& [sat, g] : latch.sats) {
+                setup.sat_gf_target_m[sat] = Constants::SPEED_OF_LIGHT * g.value_s;
+                if (g.value_s == 0.0) {
+                    ++n_zero;
+                    zeros += (zeros.empty() ? "" : " ") + sat;
+                }
+                const double sp = Constants::SPEED_OF_LIGHT * g.spread_file_s;
                 if (sp > worst_spread_m) { worst_spread_m = sp; worst_sat = sat; }
+                if (g.value_s != g.first_s) {
+                    ++n_changed;
+                    changed += fmt::format("{}{} {:+.4f} m", changed.empty() ? "" : ", ", sat,
+                                           Constants::SPEED_OF_LIGHT * (g.value_s - g.first_s));
+                }
+                if (g.reason == NetworkSbasis::GroupDelayLatchReason::AllUnhealthy
+                    || g.reason == NetworkSbasis::GroupDelayLatchReason::AllUnhealthyInForceAtStart)
+                    all_unhealthy += (all_unhealthy.empty() ? "" : " ") + sat;
             }
-            log->info("Network (RF-0c): latched broadcast group delays for {} satellite(s) "
-                      "from '{}' ({} record(s) scanned); {} satellite(s) broadcast T_GD = 0 "
-                      "exactly (their geometry-free datum is then indistinguishable from "
-                      "sat_gf_datum = zero).  Largest within-day |c*dT_GD| {:.4f} m{}.  The "
-                      "FIRST record's value is used for the whole run — the datum is "
-                      "latched on purpose, so a non-zero spread here is information about "
-                      "the constellation, not an error.",
-                      setup.sat_gf_target_m.size(), nav_path.filename().string(),
-                      nav.size(), n_zero, worst_spread_m,
+            log->info("Network (RF-0c, card OWD): latched broadcast group delays for {} "
+                      "satellite(s) from '{}' ({} record(s) scanned) over the processing window "
+                      "[TOW {:.1f}, TOW {:.1f}): the low median of each satellite's healthy "
+                      "records whose clock epoch lies in the window, Galileo's F/NAV (E1, E5a) "
+                      "records preferred.  Satellites: {} on the window rule, {} on the healthy "
+                      "record in force at the window start, {} with no healthy record at all "
+                      "(latched by the same rule over all their records: {}).  Records set "
+                      "aside: {} unhealthy, {} Galileo I/NAV, {} outside the window.  {} "
+                      "satellite(s) latched at exactly 0 ({}; a real value, one broadcast step "
+                      "is 0.233 ns).  {} satellite(s) differ from the file's first record, the "
+                      "pre-OWD latch{}{}.  Largest within-day |c*dT_GD| {:.4f} m{}; one value "
+                      "per run, so the datum cannot churn.",
+                      setup.sat_gf_target_m.size(), nav_path.filename().string(), nav.size(),
+                      std::fmod(setup.window_t0_s, 604800.0),
+                      std::fmod(setup.window_t1_s, 604800.0),
+                      latch.n_window, latch.n_in_force, latch.n_all_unhealthy,
+                      all_unhealthy.empty() ? "none" : all_unhealthy,
+                      latch.dropped_unhealthy, latch.dropped_inav, latch.outside_window,
+                      n_zero, zeros.empty() ? "none" : zeros, n_changed,
+                      changed.empty() ? "" : ": ", changed, worst_spread_m,
                       worst_sat.empty() ? std::string{}
                                         : fmt::format(" (on {})", worst_sat));
         }
@@ -1314,7 +1356,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // network_solution.csv etc.; an absolute path is used verbatim.
         prod_path = nc.product_output_path;
         if (prod_path.is_relative()) prod_path = log_dir_ / prod_path;
-        if (nc.serialize_sbasis_contract) {
+        // Card OWD (O1): the S-basis contract is part of the wire.  It used to be stamped only
+        // under network.serialize_sbasis_contract, and a replay of a wire without it rebuilt
+        // the DEFAULT emitter (no clock-discontinuity channel, the flat default phase-bias
+        // threshold), so card GAL's first census missed every declared clock re-reference: a
+        // declaration hung on an output option.  The knob is accepted and inert, and the v1
+        // branch that opened a contract-less writer at setup is gone; the records are
+        // unchanged byte for byte, only the header gains the S line.
+        {
             // B6: stamp the S-basis contract into a v2 header.  Declaration semantics are
             // the A3-corrected per-constellation sat-clock-pin basis.
             pending_contract.decl.reference_receiver_id = nc.clock_datum_station;
@@ -1378,11 +1427,19 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 const std::string nav = config_.getNavigationPath().filename().string();
                 apriori_id = "brdc:" + (nav.empty() ? std::string("?") : nav);
             } else {
-                const std::string sp3 = config_.getProductPath("SP3").filename().string();
-                const std::string clk = config_.getProductPath("CLK").filename().string();
-                if (!sp3.empty() || !clk.empty())
-                    apriori_id = (sp3.empty() ? std::string("?") : sp3) + "+"
-                               + (clk.empty() ? std::string("?") : clk);
+                // Card OWD (O1): the files in force during the processing window.  The
+                // resolver merges the previous, the observation and the next day's products,
+                // and the first merged SP3 / CLK (getProductPath) is the PREVIOUS day's, so a
+                // DOY-129 wire used to declare DOY-128 products.
+                bool named_all = false;
+                const std::string in_force = aprioriIdentityForWindow(
+                    config_.getProductPaths(), setup.window_t0_s, setup.window_t1_s, &named_all);
+                if (!in_force.empty()) apriori_id = in_force;
+                if (named_all)
+                    log->info("Network (card OWD): a product file name does not carry an IGS "
+                              "long-name span (or none meets the processing window), so the S "
+                              "contract's a-priori identity names every merged file of that "
+                              "kind: '{}'.", apriori_id);
             }
             pending_contract.apriori_product_id = apriori_id;
             // RTA-12: contract identity fields (each serialized as an optional
@@ -1435,7 +1492,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // The deferred writer only opens (and truncates) at the FIRST emit; a run
             // that emits zero epochs would otherwise leave a PREVIOUS run's complete
             // product file at this path for a downstream consumer to silently replay.
-            // Match the v1 branch's truncate-at-startup by removing any existing file.
+            // Do what the former v1 branch's truncate-at-startup did: remove any
+            // existing file.
             std::error_code stale_ec;
             std::filesystem::remove(prod_path, stale_ec);
             if (stale_ec && std::filesystem::exists(prod_path))
@@ -1445,15 +1503,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           prod_path.string(), stale_ec.message());
             log->info("Network: will serialize per-epoch products with a v2 S-basis contract "
                       "(realized pivots stamped at first emit) to '{}'", prod_path.string());
-        } else {
-            product_writer = std::make_unique<NetworkProductWriter>(prod_path.string());
-            if (product_writer->good()) {
-                log->info("Network: serializing per-epoch products to '{}'", prod_path.string());
-            } else {
-                log->error("Network: failed to open product_output_path '{}' for writing; "
-                           "disabling on-disk serialization for this run.", prod_path.string());
-                product_writer.reset();
-            }
         }
     }
 

@@ -206,6 +206,7 @@ bool decodeKeplerRecord(const std::string& epoch,
     const double omdot  = orb(3, 3);
     // ORBIT-5: IDOT, codes/dataSrc, Week, flag
     const double idot   = orb(4, 0);
+    const double src_d  = orb(4, 1);   // card OWD: Galileo data sources (GPS: codes on L2)
     const double week_d = orb(4, 2);
     // ORBIT-6: accuracy, health, TGD/BGD-a, TGD2/BGD-b
     const double health = orb(5, 1);
@@ -227,6 +228,10 @@ bool decodeKeplerRecord(const std::string& epoch,
     eph.system    = sys;
     eph.iode      = static_cast<int>(std::lround(iode_d));
     eph.health    = static_cast<int>(std::lround(health));
+    // Card OWD (O3): the Galileo data-source word says which message the record is
+    // (I/NAV or F/NAV) and which clock and group-delay pair it carries; the network's
+    // group-delay latch prefers the F/NAV (E1, E5a) records.  Other systems: -1.
+    if (sys == System::Galileo) eph.data_source = static_cast<int>(std::lround(src_d));
     eph.received_time = GnssTime{0, 0.0};   // file load: no wall-clock receipt stamp
 
     KeplerianEphemeris& k = eph.kepler;

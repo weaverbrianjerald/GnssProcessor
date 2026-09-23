@@ -523,6 +523,10 @@ add_executable(gnss_tests
     tests/test_channel_mode_all.cpp
     tests/test_galileo_network.cpp
     tests/test_clock_level_carry.cpp
+    tests/test_owd_wire_contract.cpp
+    tests/test_reinflate_never_shrinks.cpp
+    tests/test_active_system_admission.cpp
+    tests/test_group_delay_latch.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

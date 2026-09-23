@@ -564,8 +564,9 @@ void networkEmitStore(
     // round-trip self-check compares against the LAST written contract.  Written
     // BEFORE the epoch block so the S line positionally precedes the epochs it
     // describes; the elapsed>0 guard keeps the first-emit epoch single-S (the
-    // header line just written).  OFF (0) ⇒ no extra S lines (byte-identical).
-    if (contract_rebroadcast_s > 0.0 && product_writer && nc.serialize_sbasis_contract
+    // header line just written).  OFF (0) ⇒ no extra S lines (byte-identical).  Card OWD:
+    // the contract is on every wire, so contract_rebroadcast_s alone governs.
+    if (contract_rebroadcast_s > 0.0 && product_writer
         && last_contract_emit_s >= 0.0 && pl_now_s > last_contract_emit_s) {
         const bool due = (pl_now_s - last_contract_emit_s) >= contract_rebroadcast_s;
         // Card 3 (D4): a datum-receiver (root) handover re-references the whole

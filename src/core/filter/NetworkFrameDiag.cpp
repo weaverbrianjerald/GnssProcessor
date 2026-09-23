@@ -372,16 +372,26 @@ void networkPostfitSigma0(NetworkRunContext& ctx, const GnssConfig& config_,
             if (rows_on) {
                 if (phase_row || code_row) {
                     // SIGNED v (metres), the row weight, and the LOS elevation.  The
-                    // sat / signal come from the same CLK/CB/PB labels the keyed
-                    // pools key on; a row with no labelled signal writes it empty
-                    // (every code row of a posture with no satellite code biases,
-                    // and the W6 datum signal's rows even with them — the sat is
-                    // still named, off the CLK column).
+                    // sat comes from the same CLK/CB/PB labels the keyed pools key on.
+                    // Card OWD (O5): the signal is the observation's OWN (the assembly's
+                    // row_sig, row-aligned with H for the data rows); an appended row
+                    // falls back to the first labelled column's.  The label alone left
+                    // a row whose only shared column is the clock with an empty signal
+                    // (32 code and 2 987 phase rows on runs/_rf0hv10_field6), and every
+                    // (station, sat, signal) grade pooled them across signals.
+                    const std::string* obs_sig =
+                        (row < static_cast<Eigen::Index>(R.row_sig.size())
+                         && !R.row_sig[static_cast<std::size_t>(row)].empty())
+                            ? &R.row_sig[static_cast<std::size_t>(row)] : nullptr;
+                    const std::string* sig_out = obs_sig ? obs_sig : row_sig;
+                    if (!sig_out) ++ctx.carry.pf_rows_no_signal;
+                    if (obs_sig && row_sig && *obs_sig != *row_sig)
+                        ++ctx.carry.pf_rows_sig_relabel;
                     auto& t = traces.pf_rows_trace;
                     t << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                       << stations[i].name << ','
                       << (row_sat ? *row_sat : std::string()) << ','
-                      << (row_sig ? *row_sig : std::string()) << ','
+                      << (sig_out ? *sig_out : std::string()) << ','
                       << (phase_row ? "phase" : "code") << ','
                       << fmt::format("{:.5f}", v(row)) << ','
                       << fmt::format("{:.6e}", w) << ',';

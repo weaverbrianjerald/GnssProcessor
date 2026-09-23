@@ -232,11 +232,14 @@ namespace GnssProcessor {
               Tier::ON, false, "network.emit_epoch_status_record",
               "one positional H heartbeat record per epoch incl. withheld ones (gate + sigma0): "
               "record stream 0-diff, solve-neutral; pair with h_sigma0_prefit_census" },
+            // Card OWD: the S contract line is part of every wire, so the loader forces this
+            // field true and the row always reads armed; kept so the ledger row keeps its
+            // loader coverage (config_posture_check.py --verify-loader).
             { true,
               nc.serialize_sbasis_contract,
               Tier::ON, false, "network.serialize_sbasis_contract",
-              "stamp the S-basis contract into the product header: replay consumer -12.7 % RMS, "
-              "45 spurious resets removed; header-only, solve byte-identical" },
+              "the S-basis contract in the product header (replay consumer -12.7 % RMS, 45 "
+              "spurious resets removed); unconditional since card OWD, the key is inert" },
             { true,
               nc.write_run_manifest,
               Tier::ON, false, "network.write_run_manifest",

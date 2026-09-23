@@ -5266,9 +5266,34 @@ int networkTeardown(
                  "and local prior rows; since the 2026-09-14 CLK fallback a code row with "
                  "no satellite code-bias column is no longer among them).  0 written "
                  "under an ARMED trace means the pass never pooled a station — read the "
-                 "P1-4 line.",
+                 "P1-4 line.  Card OWD: {} written with an empty signal "
+                 "(pf_rows_no_signal), {} whose observation signal differs from the first "
+                 "labelled column's (pf_rows_sig_relabel); both 0 expected.",
                  ctx.carry.pf_rows_written, ctx.carry.pf_rows_code, ctx.carry.pf_rows_phase,
-                 ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed);
+                 ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed,
+                 ctx.carry.pf_rows_no_signal, ctx.carry.pf_rows_sig_relabel);
+    {
+        // Card OWD (O2): the producer's state-manager re-inflations, summed over the
+        // stations (the deweight-release hygiene's ionosphere re-inflation is the only
+        // producer caller; a kept count names a variance the pre-OWD rule deflated).
+        StateManager::ReinflateCounters sum{};
+        std::string kept_at;
+        for (const auto& st : stations) {
+            if (!st.sm) continue;
+            const auto& c = st.sm->reinflateCounters();
+            long long kept = 0;
+            for (std::size_t k = 0; k < sum.size(); ++k) {
+                sum[k].raised += c[k].raised;
+                sum[k].kept   += c[k].kept;
+                kept          += c[k].kept;
+            }
+            if (kept > 0)
+                kept_at += fmt::format("{}{} {}", kept_at.empty() ? "" : ", ", st.name, kept);
+        }
+        log->info("Network (card OWD re-inflations (producer, {} station(s))): {}; stations "
+                  "with a kept re-inflation: {}.", stations.size(),
+                  StateManager::reinflateSummary(sum), kept_at.empty() ? "none" : kept_at);
+    }
     if (config_.getNetworkConfig().trace_station_block)
         // Invariant #4: "0 rows under an ARMED trace" is a WARN, never a clean line.
         // The two refusal counts distinguish the two ways the sweep finds nothing —
@@ -6032,14 +6057,18 @@ int networkTeardown(
                       "opened; no product file exists at '{}' (round-trip self-check skipped).",
                       prod_path.string());
         // L14: record the distinguishable "writer never opened" outcome so an absent
-        // contract-check CSV unambiguously means "the check never ran".
-        if (nc.serialize_sbasis_contract) {
+        // contract-check CSV unambiguously means "the check never ran".  Card OWD: the
+        // contract is on every wire, so the record is unconditional.
+        {
             std::ofstream cc(log_dir_ / "network_contract_check.csv");
             if (cc) cc << "check,status,detail\n"
                           "overall,FAIL,writer never opened (zero epochs emitted)\n";
         }
     }
-    if (nc.serialize_sbasis_contract && product_writer && !prod_path.empty()) {
+    if (product_writer && !prod_path.empty()) {
+        // Card OWD: the check runs on every wire now; it re-reads the whole product file,
+        // so its wall time is measured and reported (the line after the verdict).
+        const auto b6_t0 = std::chrono::steady_clock::now();
         product_writer.reset();   // flush + close so the reader sees the complete header
         SbasisContract parsed;
         bool           rok = false;
@@ -6092,6 +6121,16 @@ int networkTeardown(
             log->info("Network[B6]: S-basis contract round-trips cleanly "
                       "(write → read → checkContract), {} realized pivot(s) serialized.",
                       parsed.decl.clock_pivot_sat.size());
+        }
+        {
+            std::error_code sz_ec;
+            const auto sz = std::filesystem::file_size(prod_path, sz_ec);
+            log->info("Network[B6] (card OWD): the round-trip self-check re-read {} product "
+                      "epoch(s) of '{}' ({} bytes) in {:.2f} s.",
+                      check_recs.size(), prod_path.filename().string(),
+                      sz_ec ? 0ULL : static_cast<unsigned long long>(sz),
+                      std::chrono::duration<double>(std::chrono::steady_clock::now() - b6_t0)
+                          .count());
         }
         // L14: machine-readable check result.  The pivot-map round-trip is checked SEPARATELY
         // (checkContract only compares the expected-side pivots, so a realized-pivot mismatch is
@@ -6362,6 +6401,7 @@ int networkTeardown(
         // harness never calls RealTimeEngine::flush(), so the census is printed
         // here; silent on a wire that carries no declaration.
         consumer->logRosterConsumerSummary("closed loop");
+        consumer->logReinflateSummary("closed loop");   // card OWD (O2)
         // Card CC (B): consumer snapshots written beside the network history
         // copies (0 written on an armed seed = no warm start on offer).
         if (cl.state_snapshot)

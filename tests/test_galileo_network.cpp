@@ -416,12 +416,16 @@ TEST(GalileoNetworkTest, GpsExtraAnchorIsUnchanged) {
 // R1: the loader's Galileo admission consistency check
 // ===========================================================================
 
-TEST(GalileoNetworkTest, GalileoListWithoutGalileoActiveIsRefused) {
+// Card OWD (O4): the network admits observations by processing.active_systems, so a
+// Galileo list without Galileo active is IGNORED with a warning (card GAL refused it); the
+// warning text is asserted in test_active_system_admission.cpp.
+TEST(GalileoNetworkTest, GalileoListWithoutGalileoActiveIsIgnored) {
     LogManager log;
-    const fs::path p = writeTempConfig("refused",
+    const fs::path p = writeTempConfig("ignored",
         networkConfig("[ \"GPS\" ]", kGpsGalPriorities));
     GnssConfig cfg;
-    EXPECT_FALSE(cfg.loadFromJson(p, log));
+    ASSERT_TRUE(cfg.loadFromJson(p, log));
+    EXPECT_FALSE(networkMultiGnssActive(cfg));   // Galileo is not admitted
     std::error_code ec; fs::remove(p, ec);
 }
 

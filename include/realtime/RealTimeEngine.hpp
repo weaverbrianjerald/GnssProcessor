@@ -787,6 +787,38 @@ private:
     void logPbHoldSummary_(const char* tag);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
+public:
+    /**
+     * @brief Card OWD (O2): the inter-system biases to re-inflate on a clock re-reference.
+     *
+     * A non-reference constellation's own step re-inflates its own ISB; a REFERENCE (GPS)
+     * step re-inflates every allocated non-reference ISB, observed this epoch or not (the
+     * ISB is a difference of two clock datums, and a constellation absent from the step
+     * epoch would otherwise return stale by the whole step).  A set: each ISB at most once
+     * per epoch.
+     *
+     * @param reference_stepped A reference-constellation clock re-referenced this epoch.
+     * @param stepped           The non-reference ISB names whose own constellation stepped.
+     * @param allocated         The ISB states the consumer holds, keyed by system name
+     *                          (@c StateManager::getSystemTimeOffsetStates()).
+     * @return The ISB names to re-inflate.
+     */
+    static std::set<std::string> isbReinflationSet(bool reference_stepped,
+                                                   const std::set<std::string>& stepped,
+                                                   const std::map<std::string, size_t>& allocated);
+
+    /**
+     * @brief Card OWD (O2): log this consumer's state-manager re-inflation counters.
+     *
+     * One line, "card OWD re-inflations (<tag>): code_bias raised=N kept=M | isb ... |
+     * iono ... | iono_rate ... | sat_bias ... | sat_phase_bias ... | sat_clock ...", on the
+     * @c rt_engine logger.  A nonzero kept count names a re-inflation that the pre-OWD rule
+     * would have deflated.
+     *
+     * @param tag Where the line comes from ("end of run", "closed loop", "end of replay").
+     */
+    void logReinflateSummary(const char* tag) const;
+private:
 
     /// Card SID phase 5: read the producer's DECLARED SIGNAL ROSTER out of the SSR
     /// store and hand it to the latch, ONCE per epoch and before @c computeModels

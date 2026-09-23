@@ -2282,6 +2282,12 @@ state_manager_ = std::make_unique<StateManager>(core_state_size, log_manager_, c
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(wall_end - wall_start).count();
     log_manager_.getLogger("main_log")->info("Processing completed in {} ms, mode={}",
         duration_ms, is_ppp_rtk ? "PPP-RTK" : "PPP");
+    // Card OWD (O2): the state manager's re-inflation counters (a kept count names a
+    // variance the pre-OWD rule, which set the request, would have deflated).
+    if (state_manager_)
+        log_manager_.getLogger("main_log")->info(
+            "card OWD re-inflations ({}): {}", is_ppp_rtk ? "PPP-RTK" : "PPP",
+            StateManager::reinflateSummary(state_manager_->reinflateCounters()));
 
     if (kalman_filter_) kalman_filter_->logKalmanFilterTimings();
 

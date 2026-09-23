@@ -77,7 +77,7 @@ FEATURES = {
     "emit_ura": True,
     "ura_retro_bump": True,
     "emit_clock_disc": True,
-    "serialize_sbasis_contract": True,
+    "serialize_sbasis_contract": True,   # inert since card OWD (the S line is on every wire); kept, so the output is unchanged
     "emit_generation_id": True,
     "serialize_disc_counters": True,
     "emit_epoch_status_record": True,

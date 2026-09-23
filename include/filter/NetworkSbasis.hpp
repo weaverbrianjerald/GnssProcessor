@@ -67,6 +67,7 @@
 
 #include "config/GnssConfigTypes.hpp"   // RF-0c: NetworkSatGfDatum (the GF datum mode)
 #include "filter/NetworkEstimator.hpp"
+#include "products/BroadcastEphemerisTypes.hpp"   // card OWD: the group-delay latch's records
 
 namespace GnssProcessor {
 
@@ -429,6 +430,68 @@ public:
                                             const std::string& sig1,
                                             const std::string& sig2,
                                             const std::map<std::string, double>& sat_gf_target_m);
+
+    /// Card OWD (O3): two group delays closer than this are the SAME broadcast value (1 ps:
+    /// two orders below the smallest broadcast step, BeiDou's 0.1 ns, and eight above the
+    /// last-digit differences with which a merged RINEX file prints one value); a latched
+    /// value that is the same broadcast value as the file's first record keeps that record's
+    /// exact bits, so an unchanged datum is unchanged to the bit.
+    static constexpr double kSameBroadcastGroupDelayS = 1e-12;
+
+    /// Card OWD (O3): which records a satellite's broadcast group delay was latched from.
+    enum class GroupDelayLatchReason {
+        Window,                      ///< its healthy records whose clock epoch lies in the window
+        InForceAtStart,              ///< none in the window: the healthy record in force at its start
+        AllUnhealthy,                ///< no healthy record at all: the window rule over all records
+        AllUnhealthyInForceAtStart   ///< no healthy record at all, and none in the window
+    };
+
+    /// Card OWD (O3): one satellite's run-latched broadcast group delay.
+    struct GroupDelayLatchEntry {
+        double value_s{0.0};         ///< latched @c tgd0 (GPS T_GD, Galileo BGD(E1,E5a), BeiDou TGD1), s
+        double first_s{0.0};         ///< the file's first record (the pre-OWD latch), s
+        double spread_file_s{0.0};   ///< max |tgd0 − first| over the file, s (the spread report)
+        GroupDelayLatchReason reason{GroupDelayLatchReason::Window};   ///< which records
+        int n_records{0};            ///< the satellite's records in the file
+        int n_used{0};               ///< the records the median was taken over
+    };
+
+    /// Card OWD (O3): the latch of every satellite, with the records set aside per reason.
+    struct GroupDelayLatch {
+        std::map<std::string, GroupDelayLatchEntry> sats;   ///< per satellite id
+        long long dropped_unhealthy{0};   ///< unhealthy records set aside (a healthy one existed)
+        long long dropped_inav{0};        ///< Galileo non-F/NAV records set aside (F/NAV existed)
+        long long outside_window{0};      ///< records outside the window, after those two filters
+        int n_window{0};                  ///< healthy satellites on the window rule
+        int n_in_force{0};                ///< healthy satellites on the record in force at the start
+        int n_all_unhealthy{0};           ///< satellites with no healthy record at all
+    };
+
+    /**
+     * @brief Card OWD (O3): latch each satellite's broadcast group delay for the run.
+     *
+     * The RF-0c latch kept the FIRST navigation record's @c tgd0, the value in force when
+     * the file starts, wrong for any run that does not start with it (on DOY 129 a run
+     * from 18:00 would take the superseded value at 21 Galileo satellites, by up to
+     * 0.698 m).  The rule: the LOW median (always a broadcast value) of the group delays
+     * of the satellite's healthy records (health 0) whose clock reference epoch lies in
+     * the half-open processing window [@p t0_gps_s, @p t1_gps_s), Galileo's F/NAV (E1, E5a)
+     * records preferred when present (data-source bits 1 and 8); with no such record, the
+     * healthy record in force at the window start (the latest at or before it, else the
+     * earliest after it); a satellite with no healthy record at all is latched by the same
+     * rule over all its records (health is the author's sequenced item; dropping them would
+     * move the GPS pivot G01's datum by 5.863 m on DOY 129).  Zeros are real values.  A
+     * latched value that is the same broadcast value as the file's first record (within
+     * @ref kSameBroadcastGroupDelayS) keeps that record's exact bits.  One value per run,
+     * so the datum still cannot churn.  GLONASS records are skipped.
+     *
+     * @param nav      The parsed navigation records, file order.
+     * @param t0_gps_s Window start, continuous GPS seconds.
+     * @param t1_gps_s Window end (exclusive), continuous GPS seconds.
+     * @return Every satellite's latch and the per-reason counts.
+     */
+    static GroupDelayLatch latchBroadcastGroupDelays(const std::vector<BroadcastEphemeris>& nav,
+                                                     double t0_gps_s, double t1_gps_s);
 
     static ChannelFamily channelFamilyOf(const std::string& constellation,
                                          const std::string& signal);

@@ -106,6 +106,7 @@
 #include "filter/NetworkSbasis.hpp"             // SbasisDeclaration (B6 contract)
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -568,6 +569,27 @@ public:
     static NetworkProductEmitter makeReplayEmitter(const SbasisContract& contract);
 
     /**
+     * @brief Card OWD (O1): may a consumer replay a wire that carries this contract?
+     *
+     * Since card OWD the S contract line is part of every wire: it carries the replay
+     * emitter's construction (@ref makeReplayEmitter), the clock-discontinuity channel
+     * included, so a wire without it replays with the DEFAULT emitter and every clock
+     * re-reference the producer declared is silent to the replay.  Such a wire (written
+     * before card OWD, when the line was optional) is refused unless the consumer asks
+     * for it on purpose through @c network.replay_allow_undeclared_wire, the switch for
+     * grading a legacy leg knowingly.
+     *
+     * @param file             The contract parsed from the wire (present or not).
+     * @param allow_undeclared The consumer's @c network.replay_allow_undeclared_wire.
+     * @param why              Optional out: empty for a declared wire; otherwise the
+     *                         reason, naming the cause and (when refused) the two fixes.
+     * @return true when the wire carries a contract, or when it does not and
+     *         @p allow_undeclared is set; false otherwise.
+     */
+    static bool admitsWire(const SbasisContract& file, bool allow_undeclared,
+                           std::string* why = nullptr);
+
+    /**
      * @brief Replay one record into @p store via @p emitter, reproducing the live
      *        producer path: a @c markDatumChange (when @c rec.datum_changed) then
      *        @c emitToStore.  The consumer interleaves this with its own per-epoch
@@ -689,5 +711,30 @@ private:
     struct Impl;                    ///< Parse/file state (defined in the .cpp).
     std::unique_ptr<Impl> impl_;
 };
+
+/**
+ * @brief Card OWD (O1): the a-priori orbit/clock identity of the S contract, naming the
+ *        SP3 and CLK files in force during the run's processing window.
+ *
+ * The path resolver merges the previous, the observation and the next day's products,
+ * so "the first SP3" named the PREVIOUS day's file on every run (a DOY-129 wire declared
+ * DOY-128 products).  A product whose IGS long name carries its span
+ * (@c _YYYYDDDHHMM_NNU_, U in M/H/D/W/Y, the start on the GPS time scale) is in force
+ * when that half-open span meets the half-open window [@p t0_gps_s, @p t1_gps_s).  The
+ * identity lists the SP3 files in force, then the CLK files in force, each in resolver
+ * order, joined with '+' (one day: "<sp3>+<clk>", the pre-OWD shape).  When a name of a
+ * kind does not parse, or no file of a kind meets the window, every merged file of that
+ * kind is named instead and @p named_all is set.  An absent kind reads '?'.
+ *
+ * @param product_paths The resolved product paths (@c GnssConfig::getProductPaths()).
+ * @param t0_gps_s      Window start, continuous GPS seconds.
+ * @param t1_gps_s      Window end (exclusive), continuous GPS seconds.
+ * @param named_all     Optional out: true when a kind fell back to all its files.
+ * @return The identity, or an empty string when there is no SP3 and no CLK file (the
+ *         caller keeps its configuration-intent identity).
+ */
+std::string aprioriIdentityForWindow(const std::vector<std::filesystem::path>& product_paths,
+                                     double t0_gps_s, double t1_gps_s,
+                                     bool* named_all = nullptr);
 
 } // namespace GnssProcessor

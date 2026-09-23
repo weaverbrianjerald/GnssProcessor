@@ -374,6 +374,7 @@ void RealTimeEngine::flush() {
     // was seen or the 5b knob is armed).  The closed-loop harness and the replay
     // driver never call flush(), so both call this directly at their own tails.
     logRosterConsumerSummary("end of run");
+    logReinflateSummary("end of run");   // card OWD (O2)
 }
 
 void RealTimeEngine::drainHeldObs() {

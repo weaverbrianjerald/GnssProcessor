@@ -1278,9 +1278,10 @@ def main():
         print( "                 (NOT trusted as a date key — the product day-edge guard")
         print( "                  loads the neighbouring day and this names only one file)")
     else:
-        print("  realized datum: *** NO S LINE *** — arm network.serialize_sbasis_contract.")
-        print("                  Without it the datum must be ASSUMED, which is exactly")
-        print("                  the invariant-#5 mistake this grader exists to avoid.")
+        print("  realized datum: *** NO S LINE ***: the wire predates card OWD, since which the")
+        print("                  producer writes the S line on every wire; re-produce it with a")
+        print("                  current build.  Without it the datum must be ASSUMED, which is")
+        print("                  exactly the invariant-#5 mistake this grader exists to avoid.")
 
     # The census runs FIRST, ahead of every channel, because it decides whether the
     # channels below are grading a product or an empty file.  Every per-channel skip
@@ -1350,8 +1351,9 @@ def main():
     elif osb_truth:
         print("  ⚠ injected OSB present but no cbpin on the S line: the absorbed IF lump")
         print("    CANNOT be removed from the truth, so this residual carries a per-satellite")
-        print("    constant of order 1 m that is the datum, not an error.  Arm")
-        print("    network.serialize_sbasis_contract before reading the numbers below.")
+        print("    constant of order 1 m that is the datum, not an error.  Re-produce the")
+        print("    wire with a current build (the S line on every wire since card OWD, its")
+        print("    cbpin= wherever a code-bias pair is pinned) before reading the numbers below.")
     print(f"  residual  {fmt(clk['residual'], ' m')}")
     print(f"  contrast  {fmt(clk['contrast'], ' m')}   <- datum-free cross-check")
     if clk["vf"] is not None:
@@ -1416,8 +1418,9 @@ def main():
               + str(cb.get("refused")))
         print(f"  The S line declares cbpin for: {cb.get('declared') or '(nothing)'}")
         print("  do NOT assume (C1C,C2W).  If the S line exists but carries no cbpin= at")
-        print("  all, network.serialize_sbasis_contract is NOT the missing knob — check")
-        print("  that the producer build has the unconditional §1.5 declaration record")
+        print("  all, no knob is missing (network.serialize_sbasis_contract is inert since")
+        print("  card OWD, which writes the S line on every wire).  Check that the producer")
+        print("  build has the unconditional §1.5 declaration record")
         print("  (before 2026-08-13 the fill was gated on network.emit_clock_disc, which")
         print("  defaults false and is absent from the whole ft63 -> pc305 field chain,")
         print("  so every field posture-C product declared no pin).")

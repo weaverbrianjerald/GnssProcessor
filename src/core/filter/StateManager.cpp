@@ -1544,18 +1544,19 @@ namespace GnssProcessor {
         const double prev_value = state_vector_(idx);
         const double prev_diag  = current_diag;
 
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
+        const double applied =
+            reinflateDiag_(idx, current_diag, new_variance, Reinflation::Ionosphere);
         // Value intentionally preserved: slant iono doesn't change
         // due to the receiver losing phase lock — only the joint
         // (iono, sat-bias) covariance partition needs to be broken.
 
         logger->info("Reinflated iono state for {} at index {}: "
-                      "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m",
+                      "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m ({})",
                       satellite, idx, prev_value,
-                      std::sqrt(std::max(prev_diag, 0.0)),
-                      std::sqrt(new_variance));
+                      std::sqrt(std::max(prev_diag, 0.0)), std::sqrt(applied),
+                      applied > new_variance ? "kept: the current variance is larger, a "
+                                               "re-inflation never shrinks"
+                                             : "raised");
     }
 
     void StateManager::reinflateIonosphereRateVariance(const std::string& satellite,
@@ -1592,18 +1593,18 @@ namespace GnssProcessor {
 
         const double prev_value = state_vector_(idx);
         const double prev_diag  = current_diag;
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
+        const double applied =
+            reinflateDiag_(idx, current_diag, new_variance, Reinflation::IonosphereRate);
         // Value preserved: the physical slant-iono rate is continuous across a
         // phase-lock loss (the ionosphere keeps ramping), just as the level
         // value is preserved; only the cross-covariance partition is broken so
         // the filter re-partitions cleanly over the next several epochs.
 
         logger->info("Reinflated iono-rate state for {} at index {}: "
-                      "value={:+.5f} m/s (unchanged), std {:.4f} -> {:.4f} m/s",
+                      "value={:+.5f} m/s (unchanged), std {:.4f} -> {:.4f} m/s ({})",
                       satellite, idx, prev_value,
-                      std::sqrt(std::max(prev_diag, 0.0)), std::sqrt(new_variance));
+                      std::sqrt(std::max(prev_diag, 0.0)), std::sqrt(applied),
+                      applied > new_variance ? "kept" : "raised");
     }
 
     void StateManager::reinflateCodeBiasVariance(const std::string& key,
@@ -1647,19 +1648,20 @@ namespace GnssProcessor {
         const double prev_value = state_vector_(idx);
         const double prev_diag  = current_diag;
 
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
+        const double applied =
+            reinflateDiag_(idx, current_diag, new_variance, Reinflation::CodeBias);
         // Value intentionally preserved: the receiver hardware delay did not
         // change — only the satellite-bias gauge it is referenced to stepped.
         // Breaking the (code-bias, rest) covariance partition lets the next
         // update re-absorb the common-mode step without a multi-epoch transient.
 
         logger->info("Reinflated code-bias state {} at index {}: "
-                     "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m",
+                     "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m ({})",
                      key, idx, prev_value,
-                     std::sqrt(std::max(prev_diag, 0.0)),
-                     std::sqrt(new_variance));
+                     std::sqrt(std::max(prev_diag, 0.0)), std::sqrt(applied),
+                     applied > new_variance ? "kept: the current variance is larger, a "
+                                              "re-inflation never shrinks"
+                                            : "raised");
     }
 
     void StateManager::reinflateSystemTimeOffsetVariance(const std::string& system_name,
@@ -1701,19 +1703,60 @@ namespace GnssProcessor {
         const double prev_value = state_vector_(idx);
         const double prev_diag  = current_diag;
 
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
+        const double applied =
+            reinflateDiag_(idx, current_diag, new_variance, Reinflation::SystemTimeOffset);
         // Value intentionally preserved: the receiver inter-system hardware
         // offset did not change — only the constellation's clock gauge it is
         // referenced to stepped.  Breaking the (ISB, rest) partition lets the
         // next update re-absorb the differential datum step in one epoch.
 
         logger->info("Reinflated system-time-offset state ISB_{} at index {}: "
-                     "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m",
+                     "value={:+.4f} m (unchanged), std {:.4f} -> {:.4f} m ({})",
                      system_name, idx, prev_value,
-                     std::sqrt(std::max(prev_diag, 0.0)),
-                     std::sqrt(new_variance));
+                     std::sqrt(std::max(prev_diag, 0.0)), std::sqrt(applied),
+                     applied > new_variance ? "kept: the current variance is larger, a "
+                                              "re-inflation never shrinks"
+                                            : "raised");
+    }
+
+    // =================================================================
+    // Card OWD (O2): the shared re-inflation rule and its counters
+    // =================================================================
+
+    double StateManager::reinflateDiag_(Eigen::Index idx, double current_diag,
+                                        double requested, Reinflation kind) {
+        const double applied = std::max(current_diag, requested);
+        covariance_.row(idx).setZero();
+        covariance_.col(idx).setZero();
+        covariance_(idx, idx) = applied;
+        ReinflateCounter& c = reinflate_counters_[static_cast<std::size_t>(kind)];
+        if (current_diag > requested) ++c.kept;
+        else                          ++c.raised;
+        return applied;
+    }
+
+    const char* StateManager::reinflationName(Reinflation r) {
+        switch (r) {
+        case Reinflation::CodeBias:         return "code_bias";
+        case Reinflation::SystemTimeOffset: return "isb";
+        case Reinflation::Ionosphere:       return "iono";
+        case Reinflation::IonosphereRate:   return "iono_rate";
+        case Reinflation::SatBias:          return "sat_bias";
+        case Reinflation::SatPhaseBias:     return "sat_phase_bias";
+        case Reinflation::SatClock:         return "sat_clock";
+        case Reinflation::Count:            break;
+        }
+        return "?";
+    }
+
+    std::string StateManager::reinflateSummary(const ReinflateCounters& counters) {
+        std::string s;
+        for (std::size_t k = 0; k < counters.size(); ++k) {
+            s += fmt::format("{}{} raised={} kept={}", s.empty() ? "" : " | ",
+                             reinflationName(static_cast<Reinflation>(k)),
+                             counters[k].raised, counters[k].kept);
+        }
+        return s;
     }
 
     void StateManager::setIonosphereElevation(const std::string& satellite, double elevation_deg) {
@@ -1933,6 +1976,7 @@ namespace GnssProcessor {
         const std::string prefix = satellite + "|";
         std::vector<std::pair<std::string, Eigen::Index>> touched;
         std::vector<std::string> frozen;
+        long long n_kept = 0;   // card OWD: states whose larger variance was kept
         for (const auto& [key, raw_idx] : sat_bias_indices_) {
             if (key.compare(0, prefix.size(), prefix) != 0) continue;
             const auto idx = static_cast<Eigen::Index>(raw_idx);
@@ -1950,9 +1994,9 @@ namespace GnssProcessor {
                 frozen.push_back(key);
                 continue;
             }
-            covariance_.row(idx).setZero();
-            covariance_.col(idx).setZero();
-            covariance_(idx, idx) = new_variance;
+            if (reinflateDiag_(idx, current_diag, new_variance, Reinflation::SatBias)
+                > new_variance)
+                ++n_kept;
             // Value preserved — hardware delay is constant.
             touched.emplace_back(key, idx);
         }
@@ -1963,9 +2007,10 @@ namespace GnssProcessor {
                 if (i) joined += ", ";
                 joined += touched[i].first;
             }
-            logger->info("Reinflated {} sat-bias state(s) for {} to std={:.4f} m: {}",
+            logger->info("Reinflated {} sat-bias state(s) for {} to std>={:.4f} m ({} kept a "
+                          "larger variance): {}",
                           touched.size(), satellite,
-                          std::sqrt(new_variance), joined);
+                          std::sqrt(new_variance), n_kept, joined);
         }
         if (!frozen.empty()) {
             logger->debug("reinflateSatBiasVariancesForSat: skipped {} frozen pivot row(s) for {}",
@@ -2139,6 +2184,7 @@ namespace GnssProcessor {
         const std::string prefix = satellite + "|";
         std::vector<std::pair<std::string, Eigen::Index>> touched;
         std::vector<std::string> frozen;
+        long long n_kept = 0;   // card OWD: states whose larger variance was kept
         for (const auto& [key, raw_idx] : sat_phase_bias_indices_) {
             if (key.compare(0, prefix.size(), prefix) != 0) continue;
             const auto idx = static_cast<Eigen::Index>(raw_idx);
@@ -2152,9 +2198,9 @@ namespace GnssProcessor {
                 frozen.push_back(key);   // frozen pivot row — leave the datum alone
                 continue;
             }
-            covariance_.row(idx).setZero();
-            covariance_.col(idx).setZero();
-            covariance_(idx, idx) = new_variance;
+            if (reinflateDiag_(idx, current_diag, new_variance, Reinflation::SatPhaseBias)
+                > new_variance)
+                ++n_kept;
             // Value preserved — phase hardware delay is constant.
             touched.emplace_back(key, idx);
         }
@@ -2165,9 +2211,10 @@ namespace GnssProcessor {
                 if (i) joined += ", ";
                 joined += touched[i].first;
             }
-            logger->info("Reinflated {} sat-phase-bias state(s) for {} to std={:.4f} m: {}",
+            logger->info("Reinflated {} sat-phase-bias state(s) for {} to std>={:.4f} m ({} kept "
+                          "a larger variance): {}",
                           touched.size(), satellite,
-                          std::sqrt(new_variance), joined);
+                          std::sqrt(new_variance), n_kept, joined);
         }
         if (!frozen.empty()) {
             logger->debug("reinflateSatPhaseBiasVariancesForSat: skipped {} frozen pivot row(s) for {}",
@@ -2387,11 +2434,11 @@ namespace GnssProcessor {
             logger->debug("reinflateSatClockVarianceForSat: skipped frozen pivot row {}", key);
             return;
         }
-        covariance_.row(idx).setZero();
-        covariance_.col(idx).setZero();
-        covariance_(idx, idx) = new_variance;
+        const double applied =
+            reinflateDiag_(idx, current_diag, new_variance, Reinflation::SatClock);
         // Value preserved — the clock estimate continuity is intentional.
-        logger->info("Reinflated sat-clock state {} to std={:.4f} m", key, std::sqrt(new_variance));
+        logger->info("Reinflated sat-clock state {} to std={:.4f} m ({})", key,
+                     std::sqrt(applied), applied > new_variance ? "kept" : "raised");
     }
 
     void StateManager::pruneSatClockStatesExcept(const std::set<std::string>& keep_keys) {

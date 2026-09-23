@@ -2013,6 +2013,8 @@ namespace GnssProcessor {
         long long pf_rows_phase        = 0;   ///< …of which kind=phase
         long long pf_rows_no_elev      = 0;   ///< …written with an EMPTY elev_deg (station absent from the modeled set, or no satellite on the row)
         long long pf_rows_unattributed = 0;   ///< data rows attributed to neither family (local-column-only pseudo-observations) — counted, not written
+        long long pf_rows_no_signal    = 0;   ///< card OWD (O5): rows written with an EMPTY signal (neither the observation's own signal nor a labelled column named one); 0 expected
+        long long pf_rows_sig_relabel  = 0;   ///< card OWD (O5): rows whose observation signal differs from the first labelled column's (the pre-OWD label); 0 expected, proves the fix only filled empties
         // SPEC_event_harness §24.10 (network.trace_station_block, card ZP): run-end
         // accounting of the per-station LOCAL-block audit.  Invariant #4 needs all
         // four: "0 rows under an ARMED trace" must be visible, and the two refusal

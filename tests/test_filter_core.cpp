@@ -390,10 +390,11 @@ TEST(StateManagerTest, ReinflateCodeBiasVariancePreservesValueBreaksCovariance) 
     Eigen::VectorXd x = sm.getStateVector();
     Eigen::MatrixXd P = sm.getCovariance();
     x(idx_a)            = 0.42;
-    P(idx_a, idx_a)     = 4.0;
+    P(idx_a, idx_a)     = 0.04;   // below the request: the raise path (card OWD: a larger
+                                  // variance is kept, test_reinflate_never_shrinks.cpp)
     P(idx_b, idx_b)     = 9.0;
-    P(idx_a, idx_b)     = 1.5;
-    P(idx_b, idx_a)     = 1.5;
+    P(idx_a, idx_b)     = 0.3;    // |0.3| < sqrt(0.04 * 9): a valid covariance
+    P(idx_b, idx_a)     = 0.3;
     sm.setStateVector(x);
     sm.setCovariance(P);
 
@@ -402,7 +403,7 @@ TEST(StateManagerTest, ReinflateCodeBiasVariancePreservesValueBreaksCovariance) 
     const Eigen::VectorXd x2 = sm.getStateVector();
     const Eigen::MatrixXd P2 = sm.getCovariance();
     EXPECT_DOUBLE_EQ(x2(idx_a), 0.42);        // value preserved
-    EXPECT_DOUBLE_EQ(P2(idx_a, idx_a), 0.25); // diagonal reset
+    EXPECT_DOUBLE_EQ(P2(idx_a, idx_a), 0.25); // diagonal raised to the request
     EXPECT_DOUBLE_EQ(P2(idx_a, idx_b), 0.0);  // cross-covariance broken
     EXPECT_DOUBLE_EQ(P2(idx_b, idx_a), 0.0);
     EXPECT_DOUBLE_EQ(P2(idx_b, idx_b), 9.0);  // neighbour untouched
@@ -453,10 +454,10 @@ TEST(StateManagerTest, ReinflateSystemTimeOffsetPreservesValueAndSetsDiag) {
     Eigen::VectorXd x = sm.getStateVector();
     Eigen::MatrixXd P = sm.getCovariance();
     x(gi)     = 1.7;    // converged ISB value (m)
-    P(gi, gi) = 4.0;
+    P(gi, gi) = 0.04;   // below the request: the raise path (card OWD)
     P(ri, ri) = 9.0;
-    P(gi, ri) = 1.5;    // cross-covariance that must be severed
-    P(ri, gi) = 1.5;
+    P(gi, ri) = 0.3;    // cross-covariance that must be severed
+    P(ri, gi) = 0.3;
     P(gi, 3)  = 0.8;    // and vs. the receiver clock (core index 3)
     P(3, gi)  = 0.8;
     sm.setStateVector(x);
@@ -467,7 +468,7 @@ TEST(StateManagerTest, ReinflateSystemTimeOffsetPreservesValueAndSetsDiag) {
     const Eigen::VectorXd x2 = sm.getStateVector();
     const Eigen::MatrixXd P2 = sm.getCovariance();
     EXPECT_DOUBLE_EQ(x2(gi), 1.7);        // value preserved (hardware delay unchanged)
-    EXPECT_DOUBLE_EQ(P2(gi, gi), 0.25);   // diagonal reset to requested variance
+    EXPECT_DOUBLE_EQ(P2(gi, gi), 0.25);   // diagonal raised to the requested variance
     EXPECT_DOUBLE_EQ(P2(gi, ri), 0.0);    // row/col zeroed: ISB↔ISB ...
     EXPECT_DOUBLE_EQ(P2(ri, gi), 0.0);
     EXPECT_DOUBLE_EQ(P2(gi, 3), 0.0);     // ... and ISB↔clock partitions broken

@@ -9,10 +9,11 @@ Three readouts (docs/HANDOFF_edge_response_queue.md edge 1):
   1. WIRE + THRESHOLD SPLIT.  Mid-arc phase-bias steps, classified against BOTH
      thresholds: the producer's per-lambda gate (network.disc_threshold_frac_cycles)
      and the flat kDefaultDiscThresholdM the replay consumer falls back to when the
-     product is a v1 file with no S contract line
-     (network.serialize_sbasis_contract off => NetworkProductReader::makeReplayEmitter
-     returns the DEFAULT emitter).  The two disagree in BOTH directions depending on
-     band, so the split is reported per direction and per band.
+     product is a v1 file with no S contract line (written before card OWD, when
+     network.serialize_sbasis_contract was off: NetworkProductReader::makeReplayEmitter
+     returns the DEFAULT emitter, and since card OWD a replay admits such a wire only
+     with network.replay_allow_undeclared_wire).  The two disagree in BOTH directions
+     depending on band, so the split is reported per direction and per band.
 
   2. REACTIONS.  What RealTimeEngineSsrBreaks actually fired, parsed from rt_engine.log.
      NOTE: logging.enable_rt_engine defaults to FALSE, so an empty rt_engine.log means

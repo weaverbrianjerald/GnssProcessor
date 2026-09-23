@@ -98,7 +98,7 @@ DROP = {
     "network.state_snapshot_signal_capture": "snapshots off",
     "network.state_snapshot_station_capture": "snapshots off",
     "network.serialize_disc_counters":       "snapshot serialization",
-    "network.serialize_sbasis_contract":     "snapshot serialization",
+    "network.serialize_sbasis_contract":     "inert since card OWD (the S contract line is written on every wire)",
     # --- inert under this posture (would only produce loader noise) ---------------
     "network.raim_carry_invariant":          "loader DISABLES it with carry_invariant off",
     "network.sh_health_gate":                "SH off",

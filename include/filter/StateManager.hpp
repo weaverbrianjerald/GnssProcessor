@@ -12,6 +12,7 @@
 #include "common/PppTypes.hpp"
 #include "config/GnssConfig.hpp"
 #include <Eigen/Dense>
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -323,7 +324,9 @@ namespace GnssProcessor {
          * @brief In-place variance re-inflation of an existing iono state.
          *
          * Preserves the state value, decorrelates by zeroing the iono row/column,
-         * then sets the diagonal to @p new_variance.  The cycle-slip layer calls
+         * then RAISES the diagonal to @p new_variance: the new diagonal is the larger
+         * of the current and the requested variance (card OWD: a re-inflation never
+         * shrinks; a set would inject information).  The cycle-slip layer calls
          * this after a sat-wide ambiguity reset to break the stale iono/sat-bias
          * partition: the pre-reset pair may have absorbed slant iono
          * non-uniquely, and without enough variance to re-track after the
@@ -333,8 +336,9 @@ namespace GnssProcessor {
          * pivot's iono state is held at (0, 0) and must not be disturbed.
          *
          * @param satellite Satellite identifier.  No-op when it has no iono state.
-         * @param new_variance Replacement diagonal (m²); falls back to
-         *                  @c initial_std.ionosphere² when non-positive.
+         * @param new_variance Requested diagonal (m²), a floor the current variance is
+         *                  raised to; falls back to @c initial_std.ionosphere² when
+         *                  non-positive.
          */
         void reinflateIonosphereVariance(const std::string& satellite,
                                           double new_variance);
@@ -352,7 +356,8 @@ namespace GnssProcessor {
          * on a frozen (pivot) row (zero diagonal).
          *
          * @param satellite Satellite identifier.
-         * @param new_variance Replacement diagonal (m²/s²).  Falls back to
+         * @param new_variance Requested diagonal (m²/s²), a floor the current variance
+         *                  is raised to (card OWD: never lowered).  Falls back to
          *                  @c initial_std.ionosphere_rate² when non-positive.
          */
         void reinflateIonosphereRateVariance(const std::string& satellite,
@@ -366,13 +371,14 @@ namespace GnssProcessor {
          * per-(const,signal) sum-to-zero level steps as satellites rise and set —
          * the receiver code-bias state absorbing that common-mode step must be
          * freed to take it in one epoch rather than dragging it through a
-         * near-frozen random walk.  Zeroes the row/col and sets the diagonal while
-         * PRESERVING the value: the hardware delay did not change, only the gauge
-         * it is referenced to.
+         * near-frozen random walk.  Zeroes the row/col and RAISES the diagonal to the
+         * request (card OWD: the larger of the current and the requested variance, a
+         * re-inflation never shrinks) while PRESERVING the value: the hardware delay
+         * did not change, only the gauge it is referenced to.
          *
          * @param key Receiver code-bias key (e.g. "GPS_DCB", "GPS_IFB5").  No-op
          *            when no such state exists.
-         * @param new_variance Replacement diagonal (m²); falls back to
+         * @param new_variance Requested diagonal (m²), a floor; falls back to
          *            @c initial_std.code_bias² when non-positive.  Refused on a
          *            frozen row (P_diag ≤ 0), which defends any BSSD-held or
          *            GLONASS per-slot column the network path should never target.
@@ -389,20 +395,70 @@ namespace GnssProcessor {
          * receiver clock, but a non-reference constellation's is DIFFERENTIAL and
          * lands on the ISB state, whose near-frozen random walk cannot follow a
          * jump in one epoch — dragging every observation of that constellation
-         * until it re-converges.  Zeroes the row/col and sets the diagonal while
-         * PRESERVING the value: the inter-system hardware offset did not change,
+         * until it re-converges.  Zeroes the row/col and RAISES the diagonal to the
+         * request (card OWD: the larger of the current and the requested variance)
+         * while PRESERVING the value: the inter-system hardware offset did not change,
          * only the clock gauge stepped.
          *
          * @param system_name Constellation name as used by the ISB key map
          *            (e.g. "GAL", "GLO"; @c StateInitializer::systemToIsbName).
          *            No-op when no such state exists, as for the reference
          *            constellation.
-         * @param new_variance Replacement diagonal (m²); falls back to
+         * @param new_variance Requested diagonal (m²), a floor; falls back to
          *            @c initial_std.system_time_offset² when non-positive.
          *            Refused on a frozen row (P_diag ≤ 0).
          */
         void reinflateSystemTimeOffsetVariance(const std::string& system_name,
                                                double new_variance);
+
+        /// Card OWD (O2): the seven variance re-inflations, in the order of the run-end line.
+        enum class Reinflation : int {
+            CodeBias = 0,       ///< @ref reinflateCodeBiasVariance
+            SystemTimeOffset,   ///< @ref reinflateSystemTimeOffsetVariance (the ISB)
+            Ionosphere,         ///< @ref reinflateIonosphereVariance
+            IonosphereRate,     ///< @ref reinflateIonosphereRateVariance
+            SatBias,            ///< @ref reinflateSatBiasVariancesForSat (per state)
+            SatPhaseBias,       ///< @ref reinflateSatPhaseBiasVariancesForSat (per state)
+            SatClock,           ///< @ref reinflateSatClockVarianceForSat
+            Count
+        };
+
+        /// Card OWD (O2): one re-inflation's count of states whose diagonal the request
+        /// RAISED (the request was at least the current variance: the pre-OWD result too) and
+        /// of states whose larger current variance was KEPT (where the pre-OWD rule, which set
+        /// the diagonal, deflated it).  A refused (frozen) row counts in neither.
+        struct ReinflateCounter {
+            long long raised = 0;   ///< request >= current: the diagonal became the request
+            long long kept   = 0;   ///< current > request: the diagonal kept its value
+        };
+
+        /// Card OWD (O2): the counters of the seven re-inflations, indexed by @ref Reinflation.
+        using ReinflateCounters =
+            std::array<ReinflateCounter, static_cast<std::size_t>(Reinflation::Count)>;
+
+        /// Card OWD (O2): this state manager's re-inflation counters since construction.
+        /// @return The counters, indexed by @ref Reinflation.
+        const ReinflateCounters& reinflateCounters() const { return reinflate_counters_; }
+
+        /// Card OWD (O2): the stable short name of a re-inflation in the run-end lines
+        /// ("code_bias", "isb", "iono", "iono_rate", "sat_bias", "sat_phase_bias",
+        /// "sat_clock").
+        /// @param r The re-inflation.
+        /// @return Its name.
+        static const char* reinflationName(Reinflation r);
+
+        /**
+         * @brief Card OWD (O2): format counters as the run-end summary.
+         *
+         * One format everywhere (the consumer, the producer summed over its stations, the
+         * PPP run), parsed by the card's graders:
+         * "code_bias raised=N kept=M | isb raised=N kept=M | iono ... | iono_rate ... |
+         * sat_bias ... | sat_phase_bias ... | sat_clock raised=N kept=M".
+         *
+         * @param counters One state manager's counters, or a sum of several.
+         * @return The formatted summary.
+         */
+        static std::string reinflateSummary(const ReinflateCounters& counters);
 
         /**
          * @brief Store the last-known elevation (degrees) for a per-satellite iono state.
@@ -923,9 +979,10 @@ namespace GnssProcessor {
          * @brief In-place variance re-inflation of all sat-bias states
          *        for one satellite.
          *
-         * Preserves the values, decorrelates each affected row/column, then sets
-         * each diagonal to @p new_variance.  Rows with a zero diagonal (frozen
-         * pivot) are skipped, preserving the BSSD invariant.
+         * Preserves the values, decorrelates each affected row/column, then raises
+         * each diagonal to @p new_variance (card OWD: the larger of the current and the
+         * requested variance per state).  Rows with a zero diagonal (frozen pivot) are
+         * skipped, preserving the BSSD invariant.
          *
          * The cycle-slip layer calls this alongside @c reinflateIonosphereVariance
          * after a sat-wide ambiguity reset: the bias may have absorbed iono leakage
@@ -935,7 +992,7 @@ namespace GnssProcessor {
          * cross-state correlation needs breaking.
          *
          * @param satellite Satellite identifier.  No-op when it has no sat-bias states.
-         * @param new_variance Replacement diagonal (m²); falls back to
+         * @param new_variance Requested diagonal (m²), a floor per state; falls back to
          *                  @c initial_std.sat_bias² when non-positive.
          */
         void reinflateSatBiasVariancesForSat(const std::string& satellite,
@@ -1085,7 +1142,11 @@ namespace GnssProcessor {
 
         /// @brief Re-inflate the variances of all phase-bias states for a
         ///        satellite (value preserved — phase HW delay is constant),
-        ///        skipping frozen-pivot rows.
+        ///        skipping frozen-pivot rows.  Card OWD: each diagonal is raised to
+        ///        @p new_variance, never lowered.
+        /// @param satellite    Satellite identifier.
+        /// @param new_variance Requested diagonal (m²), a floor per state; falls back
+        ///                     to @c initial_std.sat_phase_bias² when non-positive.
         void reinflateSatPhaseBiasVariancesForSat(const std::string& satellite,
                                                   double new_variance);
 
@@ -1167,7 +1228,11 @@ namespace GnssProcessor {
                                 double new_variance);
 
         /// @brief Re-inflate the variance of a satellite's clock state, skipping
-        ///        a frozen-pivot row.  Value is preserved.
+        ///        a frozen-pivot row.  Value is preserved.  Card OWD: the diagonal is
+        ///        raised to @p new_variance, never lowered.
+        /// @param satellite    Satellite identifier.
+        /// @param new_variance Requested diagonal (m²), a floor; falls back to
+        ///                     @c initial_std.sat_clock² when non-positive.
         void reinflateSatClockVarianceForSat(const std::string& satellite,
                                              double new_variance);
 
@@ -1468,6 +1533,25 @@ namespace GnssProcessor {
         bool is_baseline_{ false };                 //!< True when configured for baseline (DD) mode: no clock/tropo/iono/system-offset states.
         std::map<std::string, double> meas_var_scale_; //!< Per-measurement variance scale map (key -> multiplier).
         std::map<std::string, int> last_ssr_discontinuity_; //!< Last-seen SSR phase-bias discontinuity counter per "sat|signal" key.
+        ReinflateCounters reinflate_counters_{};    //!< Card OWD (O2): raised / kept per re-inflation.
+
+        /**
+         * @brief Card OWD (O2): the rule every re-inflation shares.
+         *
+         * Zeroes row and column @p idx (the value is untouched) and writes the larger of
+         * @p current_diag and @p requested on the diagonal, so a re-inflation never shrinks a
+         * variance (the pre-OWD rule set the request and deflated a larger variance, which
+         * injects information the data never supplied).  Counts the state as raised or kept
+         * under @p kind.
+         *
+         * @param idx          State index (validated by the caller, not frozen).
+         * @param current_diag The current diagonal (> 0).
+         * @param requested    The requested variance (> 0, after the caller's fallback).
+         * @param kind         Which re-inflation, for the counters.
+         * @return The diagonal written.
+         */
+        double reinflateDiag_(Eigen::Index idx, double current_diag, double requested,
+                              Reinflation kind);
 
         // -------------------------------------------------------------------
         // Internal state vector / covariance manipulation helpers

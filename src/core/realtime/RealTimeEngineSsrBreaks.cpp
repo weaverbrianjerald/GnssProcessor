@@ -874,15 +874,39 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
             }
         }
     }
-    if (reference_stepped) {
-        reref_isb.insert(present_isb.begin(), present_isb.end());
-        if (!present_isb.empty())
-            log->info("{}Reference (GPS) clock re-reference — re-inflating {} "
-                      "non-reference ISB variance(s) for the differential step.",
-                      epoch_prefix, present_isb.size());
-    }
-    for (const std::string& sys : reref_isb)
+    // Card OWD (O2): on a reference re-reference EVERY allocated non-reference ISB is
+    // re-inflated, observed this epoch or not.  The ISB is a difference of two clock datums,
+    // and the declaration is consumed once per satellite, so an ISB whose constellation is
+    // absent from the step epoch would otherwise return stale by the whole step.
+    const std::set<std::string> isbs =
+        isbReinflationSet(reference_stepped, reref_isb,
+                          state_manager_->getSystemTimeOffsetStates());
+    if (reference_stepped && !isbs.empty())
+        log->info("{}Reference (GPS) clock re-reference — re-inflating {} "
+                  "non-reference ISB variance(s) for the differential step ({} observed "
+                  "this epoch; every allocated ISB is re-inflated).",
+                  epoch_prefix, isbs.size(), present_isb.size());
+    for (const std::string& sys : isbs)
         state_manager_->reinflateSystemTimeOffsetVariance(sys, isb_std * isb_std);
+}
+
+void RealTimeEngine::logReinflateSummary(const char* tag) const {
+    if (!state_manager_) return;
+    log_manager_.getLogger("rt_engine")->info(
+        "[RT] card OWD re-inflations ({}): {}", tag,
+        StateManager::reinflateSummary(state_manager_->reinflateCounters()));
+}
+
+std::set<std::string> RealTimeEngine::isbReinflationSet(
+        bool reference_stepped, const std::set<std::string>& stepped,
+        const std::map<std::string, size_t>& allocated) {
+    std::set<std::string> out = stepped;   // a set: one entry per ISB, once per epoch
+    if (reference_stepped)
+        for (const auto& [sys, idx] : allocated) {
+            (void)idx;
+            out.insert(sys);
+        }
+    return out;
 }
 
 } // namespace GnssProcessor

@@ -48,9 +48,7 @@ namespace GnssProcessor {
     /// definition for the setup-side staging sort and the epoch-loop feed —
     /// duplicating it risks sort-vs-feed drift (formerly a runNetwork lambda).
     inline double navAvailabilityGpsSeconds(const BroadcastEphemeris& e) {
-        double c = static_cast<double>(e.kepler.toc.week) * 604800.0 + e.kepler.toc.tow;
-        if (e.system == System::BeiDou) c += 1356.0 * 604800.0 + 14.0;   // BDT week 0 = GPS week 1356, BDT = GPS − 14 s
-        return c;
+        return brdcTocGpsSeconds(e);   // card OWD: one definition, shared with the group-delay latch
     }
 
     /// @internal See the file banner.  Plain aggregate; members carry the former
@@ -84,6 +82,14 @@ namespace GnssProcessor {
         /// Empty in every other mode, which is what makes the row builder fall back
         /// to a zero target rather than guess.
         std::map<std::string, double> sat_gf_target_m;
+        /// Card OWD: the run's processing window [window_t0_s, window_t1_s) in continuous
+        /// GPS seconds, computed once right after the multi-station sync with the epoch
+        /// loop's own bounds (the first synced epoch plus @c network.start_offset_hours; the
+        /// start plus @c processing.max_duration_s, else just past the last synced epoch).
+        /// Read by the group-delay latch (the records in force during the run) and by the
+        /// S contract's a-priori identity (the product files in force during the run).
+        double window_t0_s = 0.0;
+        double window_t1_s = 0.0;
         /// Phase 3b: the co-estimated SH-VTEC field model (estimate_iono_sh), or
         /// null (external-GIM / no-iono paths).
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model;

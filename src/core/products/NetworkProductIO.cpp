@@ -5,6 +5,7 @@
 
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "math/TimeUtils.hpp"                // card OWD: IGS long-name spans on the GPS scale
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -16,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <stdexcept>
 
 namespace GnssProcessor {
@@ -1140,6 +1142,30 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
                                  contract.disc_mark_scope_channel);   // Card MS
 }
 
+bool NetworkProductReader::admitsWire(const SbasisContract& file, bool allow_undeclared,
+                                      std::string* why) {
+    if (file.present) {
+        if (why) why->clear();
+        return true;
+    }
+    if (why) {
+        const std::string cause =
+            "the wire carries no S-basis contract line: it was written before card OWD made "
+            "the line part of every wire (network.serialize_sbasis_contract was off).  Without "
+            "it the replay builds the DEFAULT emitter (the flat default phase-bias threshold, "
+            "no clock-discontinuity channel, no staleness horizon, no code-jump or set-change "
+            "channel), so every clock re-reference the producer declared is silent to the "
+            "replay and it diverges from the in-process consumer.";
+        *why = allow_undeclared
+            ? cause + "  network.replay_allow_undeclared_wire is set: replaying it anyway, as "
+                      "a legacy leg graded on purpose."
+            : cause + "  Re-produce the wire with a current build, or set "
+                      "network.replay_allow_undeclared_wire = true to grade a legacy leg on "
+                      "purpose.";
+    }
+    return allow_undeclared;
+}
+
 // ===========================================================================
 // NetworkProductTail (RTA-6)
 // ===========================================================================
@@ -1338,6 +1364,73 @@ std::vector<NetworkProductRecord> NetworkProductTail::pollInto(SsrCorrectionStor
     if (impl_->assembler.contract.present)
         store.setCombinedSigmaAgeCoeff(impl_->assembler.contract.age_scale_k);
     return recs;
+}
+
+// ===========================================================================
+// Card OWD (O1): the a-priori identity of the run's own product files
+// ===========================================================================
+
+namespace {
+/// [start, end) of a product's span in continuous GPS seconds, read from its IGS long
+/// name (e.g. COD0MGXFIN_20241290000_01D_05M_ORB.SP3: start 2024 DOY 129 00:00 on the
+/// GPS time scale, span one day).  False when the name does not follow the convention.
+bool productLongNameSpan(const std::string& name, double& start_s, double& end_s) {
+    static const std::regex re(R"(_(\d{4})(\d{3})(\d{2})(\d{2})_(\d{2})([MHDWY])_)");
+    std::smatch m;
+    if (!std::regex_search(name, m, re)) return false;
+    const int year = std::stoi(m[1].str());
+    const int doy  = std::stoi(m[2].str());
+    const int hh   = std::stoi(m[3].str());
+    const int mm   = std::stoi(m[4].str());
+    const int len  = std::stoi(m[5].str());
+    const char unit = m[6].str()[0];
+    int month = 0, day = 0;
+    if (len <= 0 || hh > 23 || mm > 59 || !TimeUtils::dayOfYearToDate(year, doy, month, day))
+        return false;
+    const double unit_s = unit == 'M' ? 60.0
+                        : unit == 'H' ? 3600.0
+                        : unit == 'D' ? 86400.0
+                        : unit == 'W' ? 604800.0
+                                      : 365.0 * 86400.0;   // 'Y'
+    start_s = TimeUtils::continuousGpsSeconds(
+        TimeUtils::gregorianGpsToGpsTime(year, month, day, hh, mm, 0.0));
+    end_s = start_s + static_cast<double>(len) * unit_s;
+    return true;
+}
+}  // namespace
+
+std::string aprioriIdentityForWindow(const std::vector<std::filesystem::path>& product_paths,
+                                     double t0_gps_s, double t1_gps_s, bool* named_all) {
+    if (named_all) *named_all = false;
+    // The files of one kind (the extension getProductPath matches) in force during the
+    // window; every file of the kind when one name does not parse or none meets it.
+    auto inForce = [&](const std::string& ext) {
+        std::vector<std::string> all, in_force;
+        bool parsed_all = true;
+        for (const auto& p : product_paths) {
+            if (p.extension().string() != ext) continue;
+            const std::string name = p.filename().string();
+            all.push_back(name);
+            double s = 0.0, e = 0.0;
+            if (!productLongNameSpan(name, s, e)) { parsed_all = false; continue; }
+            if (s < t1_gps_s && e > t0_gps_s) in_force.push_back(name);
+        }
+        if (!all.empty() && (!parsed_all || in_force.empty())) {
+            if (named_all) *named_all = true;
+            return all;
+        }
+        return in_force;
+    };
+    const std::vector<std::string> sp3 = inForce(".SP3");
+    const std::vector<std::string> clk = inForce(".CLK");
+    if (sp3.empty() && clk.empty()) return {};
+    auto join = [](const std::vector<std::string>& v) {
+        if (v.empty()) return std::string("?");
+        std::string s;
+        for (const auto& x : v) s += (s.empty() ? "" : "+") + x;
+        return s;
+    };
+    return join(sp3) + "+" + join(clk);
 }
 
 } // namespace GnssProcessor

@@ -85,6 +85,86 @@ NetworkSbasis::SatGfTarget NetworkSbasis::satGfBroadcastTarget(
     return t;
 }
 
+NetworkSbasis::GroupDelayLatch NetworkSbasis::latchBroadcastGroupDelays(
+        const std::vector<BroadcastEphemeris>& nav, double t0_gps_s, double t1_gps_s) {
+    GroupDelayLatch out;
+    std::map<std::string, std::vector<const BroadcastEphemeris*>> by_sat;
+    for (const auto& e : nav) {
+        if (e.satellite.empty() || e.system == System::GLONASS) continue;
+        by_sat[e.satellite].push_back(&e);   // file order within a satellite
+    }
+    for (const auto& [sat, recs] : by_sat) {
+        GroupDelayLatchEntry g;
+        g.n_records = static_cast<int>(recs.size());
+        g.first_s   = recs.front()->kepler.tgd0;
+        for (const auto* e : recs)
+            g.spread_file_s = std::max(g.spread_file_s, std::abs(e->kepler.tgd0 - g.first_s));
+
+        // Health: the healthy records, unless the satellite has none at all.
+        std::vector<const BroadcastEphemeris*> pool;
+        for (const auto* e : recs)
+            if (e->health == 0) pool.push_back(e);
+        const bool all_unhealthy = pool.empty();
+        if (all_unhealthy) pool = recs;
+        else out.dropped_unhealthy += static_cast<long long>(recs.size() - pool.size());
+
+        // Galileo: the F/NAV (E1, E5a) records when present (data-source bits 1 and 8).
+        if (recs.front()->system == System::Galileo) {
+            std::vector<const BroadcastEphemeris*> fnav;
+            for (const auto* e : pool)
+                if (e->data_source >= 0 && (e->data_source & 2) && (e->data_source & 256))
+                    fnav.push_back(e);
+            if (!fnav.empty()) {
+                out.dropped_inav += static_cast<long long>(pool.size() - fnav.size());
+                pool = std::move(fnav);
+            }
+        }
+
+        // The window: the records whose clock reference epoch lies in [t0, t1).
+        std::vector<double> inside;
+        for (const auto* e : pool) {
+            const double t = brdcTocGpsSeconds(*e);
+            if (t >= t0_gps_s && t < t1_gps_s) inside.push_back(e->kepler.tgd0);
+        }
+        out.outside_window += static_cast<long long>(pool.size() - inside.size());
+        if (!inside.empty()) {
+            std::sort(inside.begin(), inside.end());
+            g.value_s = inside[(inside.size() - 1) / 2];   // the LOW median: a broadcast value
+            g.n_used  = static_cast<int>(inside.size());
+            g.reason  = all_unhealthy ? GroupDelayLatchReason::AllUnhealthy
+                                      : GroupDelayLatchReason::Window;
+        } else {
+            // None in the window: the record in force at its start (the latest at or
+            // before t0), else the earliest after it.
+            const BroadcastEphemeris* pick = nullptr;
+            for (const auto* e : pool)
+                if (brdcTocGpsSeconds(*e) <= t0_gps_s
+                    && (!pick || brdcTocGpsSeconds(*e) > brdcTocGpsSeconds(*pick)))
+                    pick = e;
+            if (!pick)
+                for (const auto* e : pool)
+                    if (!pick || brdcTocGpsSeconds(*e) < brdcTocGpsSeconds(*pick)) pick = e;
+            g.value_s = pick->kepler.tgd0;
+            g.n_used  = 1;
+            g.reason  = all_unhealthy ? GroupDelayLatchReason::AllUnhealthyInForceAtStart
+                                      : GroupDelayLatchReason::InForceAtStart;
+        }
+        // The SAME broadcast value keeps the first record's exact bits.  A merged
+        // navigation file prints one broadcast value with different last digits in
+        // different records (DOY 129: G02 "-1.769512891770E-08" in 6 records,
+        // "-1.769512891769E-08" in 9), so the median can pick a representation 1e-20 s
+        // from the first record's; that is no datum change, yet it moved the solve at the
+        // numerical-noise level.  1 ps sits two orders below the smallest broadcast step
+        // (BeiDou's 0.1 ns) and eight above that noise.
+        if (std::abs(g.value_s - g.first_s) < kSameBroadcastGroupDelayS) g.value_s = g.first_s;
+        if (all_unhealthy)                                          ++out.n_all_unhealthy;
+        else if (g.reason == GroupDelayLatchReason::InForceAtStart) ++out.n_in_force;
+        else                                                        ++out.n_window;
+        out.sats.emplace(sat, g);
+    }
+    return out;
+}
+
 NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
     const std::string& constellation, const std::string& signal) {
     // Raw RINEX-3 code observable, "C<band><attribute>"; the attribute is signal[2]

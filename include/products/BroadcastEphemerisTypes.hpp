@@ -105,10 +105,31 @@ struct BroadcastEphemeris {
     System      system{System::Unknown};    ///< Constellation this record belongs to.
     int         iode{-1};                   ///< Issue of data, ephemeris (−1 = unknown).
     int         health{0};                  ///< SV health (0 = healthy; system-specific encoding).
+    /// Card OWD (O3): the Galileo "data sources" word (RINEX ORBIT-5 field 2): bit 0 I/NAV
+    /// E1-B, bit 1 F/NAV E5a-I, bit 2 I/NAV E5b-I, bit 8 clock and group delay for
+    /// (E5a, E1), bit 9 for (E5b, E1).  −1 for every other system and for a record whose
+    /// source carries no such word (the RTCM decoders).
+    int         data_source{-1};
     GnssTime    received_time{0, 0.0};      ///< Wall-clock receive time (GPS scale) for staleness.
 
     KeplerianEphemeris kepler;              ///< Valid when @c system is GPS/Galileo/BeiDou/QZSS.
     GlonassEphemeris   glonass;             ///< Valid when @c system is GLONASS.
 };
+
+/**
+ * @brief A Keplerian record's clock reference epoch (toc) on the continuous GPS time scale.
+ *
+ * week x 604800 + seconds of week; a BeiDou toc (native BDT) is shifted by 1356 weeks plus
+ * 14 s.  The single definition behind the network's broadcast staging
+ * (@c navAvailabilityGpsSeconds) and its group-delay latch (card OWD).
+ *
+ * @param e A GPS / Galileo / BeiDou / QZSS record.
+ * @return Its toc in continuous GPS seconds.
+ */
+inline double brdcTocGpsSeconds(const BroadcastEphemeris& e) {
+    double c = static_cast<double>(e.kepler.toc.week) * 604800.0 + e.kepler.toc.tow;
+    if (e.system == System::BeiDou) c += 1356.0 * 604800.0 + 14.0;   // BDT week 0 = GPS week 1356, BDT = GPS − 14 s
+    return c;
+}
 
 } // namespace GnssProcessor

@@ -5,9 +5,11 @@
 
 #include "rinex/MultiRinexSync.hpp"
 #include "math/TimeUtils.hpp"
+#include "common/PppUtils.hpp"   // card OWD: system names for retainSystems
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <set>
 #include <utility>
 #include <vector>
 #ifdef _OPENMP
@@ -381,6 +383,27 @@ namespace GnssProcessor {
         auto it = stations_.find(station);
         if (it == stations_.end() || !it->second.loaded) return nullptr;
         return it->second.parser.get();
+    }
+
+    std::map<std::string, std::size_t> MultiRinexSync::retainSystems(
+            std::vector<SyncedEpoch>& epochs, const std::vector<std::string>& active) {
+        std::map<std::string, std::size_t> removed;
+        const std::set<std::string> keep(active.begin(), active.end());
+        for (auto& se : epochs) {
+            for (auto& [station, obs] : se.by_station) {
+                (void)station;
+                obs.erase(std::remove_if(obs.begin(), obs.end(),
+                                         [&](const RinexObservation& o) {
+                                             const std::string sys =
+                                                 PppUtils::getSystemString(o.system);
+                                             if (keep.count(sys)) return false;
+                                             ++removed[sys];
+                                             return true;
+                                         }),
+                          obs.end());
+            }
+        }
+        return removed;
     }
 
 } // namespace GnssProcessor

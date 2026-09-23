@@ -3236,7 +3236,19 @@ namespace GnssProcessor {
         /// O(stations x (1 + codes) x epochs); off by default — byte-identical when OFF.
         bool trace_rx_states{ false };
         bool trace_events{ false };       ///< L2: emit @c network_events.csv — one structured LONG-format row per discrete QC ACTION (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), replacing spdlog regex-scraping of which sat/station/arc was acted on and when.  Note pivot handover + retro-bump arming are otherwise SILENT.  Rows are written even on subsequently-withheld epochs (that IS the disposition story).  O(QC events); off by default — byte-identical when OFF (no new file).
-        bool serialize_sbasis_contract{ false }; ///< B6: stamp the S-basis contract (declaration + a-priori orbit/clock product identity + phase-bias discontinuity threshold) into the product-file header (v2 "S" line) so a consumer can cross-check compatibility.  OFF (default) => the product file stays byte-identical to the v1 format.
+        /// B6: stamp the S-basis contract (declaration + a-priori orbit/clock product identity +
+        /// phase-bias discontinuity threshold) into the product-file header (v2 "S" line).
+        /// INERT since card OWD: the S line is part of every wire, because the replay emitter is
+        /// built from it (a declaration must not hang on an output option).  The key is still
+        /// accepted so older configs load; the loader forces this field true (the realized
+        /// posture the manifest and the posture readout report) and logs the key as inert.
+        bool serialize_sbasis_contract{ true };
+        /// Card OWD (O1): replay a product file WITHOUT an S contract line anyway.  Such a wire
+        /// (written before card OWD) replays with the DEFAULT emitter (no clock-discontinuity
+        /// channel, the flat default phase-bias threshold), so it cannot reproduce the producer's
+        /// declarations; the consumer replay refuses it with an error naming the cause unless
+        /// this is set, the switch for grading a legacy leg on purpose.  Default false.
+        bool replay_allow_undeclared_wire{ false };
 
         // --- RTA-12: product-contract identity + survey-grade station coordinates ---
         /// Declared reference frame of the fixed station coordinates, e.g. "IGS20".

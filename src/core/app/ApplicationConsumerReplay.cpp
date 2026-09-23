@@ -218,10 +218,22 @@ int Application::runConsumerReplay() {
                       joined);
         }
     } else {
+        // Card OWD (O1): a wire without the S line is refused unless the consumer asks for
+        // it on purpose.  Without the contract the replay emitter falls back to the defaults
+        // (no clock-discontinuity channel among them), so the replay cannot reproduce the
+        // producer's declarations; card GAL's first census diverged at all 16 sites for
+        // exactly this reason.  Grading a legacy leg stays possible, never silently.
+        std::string why;
+        if (!NetworkProductReader::admitsWire(file_contract, nc.replay_allow_undeclared_wire,
+                                              &why)) {
+            log->error("Consumer replay: '{}': {}", cl.replay_products_path, why);
+            return 1;
+        }
         log->warn("Consumer replay: product file carries no S-basis contract (v1 "
                   "wire) — conventions are UNVERIFIABLE, including the carrier-"
                   "phase wind-up model revision (this binary: '{}').  A pre-fix "
                   "product is indistinguishable here.", kWindUpYawModelId);
+        log->warn("Consumer replay: {}", why);
     }
 
     // --- Phase 3: the consumer's observations --------------------------------
@@ -251,6 +263,27 @@ int Application::runConsumerReplay() {
     if (!sync.synchronize()) {
         log->error("Consumer replay: failed to build the synced epoch schedule.");
         return 1;
+    }
+    // Card OWD (O4): the same admission door as the live harness, which strips the synced
+    // epochs of every system outside processing.active_systems right after its sync
+    // (ApplicationNetworkSetup) and feeds the closed-loop consumer from them.  Without it the
+    // replay's observation vector is no longer the one the live harness feeds (the banner's
+    // contract above), and closed_loop_trace.csv's n_sats counts every system here and the
+    // admitted systems in process.
+    {
+        const std::map<std::string, std::size_t> removed =
+            sync.retainSystems(config_.getActiveSystems());
+        std::string active, what;
+        std::size_t n_removed = 0;
+        for (const std::string& sys : config_.getActiveSystems())
+            active += (active.empty() ? "" : ", ") + sys;
+        for (const auto& [sys, n] : removed) {
+            what += fmt::format("{}{} {}", what.empty() ? "" : ", ", sys, n);
+            n_removed += n;
+        }
+        log->info("Consumer replay (card OWD): admission by processing.active_systems [{}]: "
+                  "{} observation(s) of inactive systems removed from the consumer's epochs{}{}.",
+                  active, n_removed, what.empty() ? "" : ": ", what);
     }
     const auto& synced = sync.getSyncedEpochs();
     if (synced.empty()) {
@@ -526,6 +559,7 @@ int Application::runConsumerReplay() {
     // carries no declaration and with the 5b knob off, so a legacy replay's log
     // is unchanged.
     consumer.logRosterConsumerSummary("end of replay");
+    consumer.logReinflateSummary("end of replay");   // card OWD (O2)
 
     // Hourly LEVEL bands — the only defensible summary of this series (handoff
     // §4.1: a single Theil-Sen slope over it is invalid).
