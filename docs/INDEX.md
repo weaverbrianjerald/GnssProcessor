@@ -218,6 +218,13 @@ record the program is re-founding **on**.
   gates: byte-identity, the pilot family on the sim against truth, a sim emulation of the split
   with injected inter-family constants, then the field with the 16-site census; the reading
   under test: the consumer errors left are geometric and regional.
+- [CLV](refound/CLV_clock_level_2026-09-22.md): open (pre-registered 2026-09-22, the author's
+  decision to fix the root card GAL exposed before continuing), the satellite clock level frozen at
+  ignition by the carry: datum-free error 1.12 m rms across satellites on the GPS-only sim
+  baseline for six hours, 71 percent absorbed by every station's free slant ionosphere; a
+  22-arm ladder finds no single knob and one lever (the free-ambiguity era converges it at the
+  code's rate); design: the border carry inflated along each satellite's level direction by the
+  code-only level variance, `network.clock_level_carry`.
 
 ---
 
