@@ -697,6 +697,25 @@ namespace GnssProcessor {
         ///        declared step is translated exactly once.
         ///        See @c RealTimeEngine::translatePhaseBiasStep_.
         bool ssrPhaseBiasStepTranslate() const { return ssr_phase_bias_step_translate_; }
+
+        /// @brief Answer a presence edge of a HELD phase bias like any other A5 edge
+        ///        (@c processing.ssr_pb_hold_presence_flip, default false = the card-PBH
+        ///        dispatch, byte-identical; card PBF).
+        ///
+        /// Under the producer's hold (card PBH) the hold seam claims every key whose
+        /// store entry carries a generation, and the three phase-bias reactions skip a
+        /// claimed key entirely, including the A5 applied-value flag.  A held bias
+        /// that appears on a row the consumer was already using without it, or that
+        /// leaves it, therefore steps the applied correction by the whole bias with no
+        /// reaction.  Armed, a claimed key skips only the discontinuity-counter part
+        /// (the hold's), and the A5 edge runs as on an unheld key: the reset path
+        /// re-floats the ambiguity, the card-CC path carries it by the applied step,
+        /// and the card-PBT path translates it on the edge only.  Needs the staleness
+        /// gate (@c processing.enable_ssr_bias_max_age), which the closed-loop harness
+        /// arms under consumption.  The closed-loop harness derives it from
+        /// @c network.closed_loop.pb_hold_presence_flip.
+        /// See @c RealTimeEngine::resetOnPhaseBiasDisc.
+        bool ssrPbHoldPresenceFlip() const { return ssr_pb_hold_presence_flip_; }
         /**
          * @brief Card CLV2: answer a declared code-level step by raising the variance along
          *        the stepped satellite's phase-blind ionosphere-ambiguity direction
@@ -8506,6 +8525,7 @@ namespace GnssProcessor {
         double ssr_level_step_inflate_k_{ 1.0 };      ///< Card CLV2: the inflation's standard deviation over the declared code step.
         bool   ssr_phase_bias_step_translate_{ false };   ///< Translate the float ambiguity by −Δ on every change in the applied phase bias, declared or not (card PBT (A); covers undeclared steps and empty declarations in one rule, see EV6 and CST §7.1); off = the existing reset / card-CC carry path (byte-identical).  Set directly (processing.ssr_phase_bias_step_translate) or derived from network.closed_loop.pb_step_translate.  When on it replaces both reactions ⇒ a declared step is translated exactly once.
         double ssr_phase_bias_step_translate_eps_m_{ 0.005 }; ///< Dead band of the step translation (m; card PBT (A)): at or below it nothing is written and the filter absorbs the move as noise.  processing.ssr_phase_bias_step_translate_eps_m / network.closed_loop.pb_step_translate_eps_m.
+        bool   ssr_pb_hold_presence_flip_{ false };        ///< A held phase bias's presence edge (it appears on, or leaves, a row already in use) takes the A5 reaction of an unheld key instead of none (card PBF); off = the card-PBH dispatch, byte-identical.  processing.ssr_pb_hold_presence_flip / network.closed_loop.pb_hold_presence_flip.
         bool   amb_level_check_{ false };                 ///< Re-validate each float ambiguity against its own windowed code level (MW wide-lane + iono-free, both from the consumer's own corrected observations) and refloat the ones the code rejects (card ALC); off = nothing measured, nothing written (byte-identical).  processing.amb_level_check / network.closed_loop.amb_level_check.
         int    amb_level_check_window_ep_{ 20 };          ///< Samples per satellite before the level test may run (20 = 10 min at 30 s; card ALC).  processing.amb_level_check_window_ep.
         double amb_level_check_k_{ 4.0 };                 ///< Level-test trip at |state − level| > k · σ_level (card ALC).  processing.amb_level_check_k.

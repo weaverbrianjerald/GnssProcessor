@@ -175,6 +175,20 @@ namespace GnssProcessor {
          */
         bool          pb_disc_carry{ false };
         /**
+         * @brief Answer a presence edge of a held phase bias (card PBF).
+         *
+         * Key @c network.closed_loop.pb_hold_presence_flip, default false
+         * (byte-identical).  @c deriveClosedLoopConsumerConfig copies it into the
+         * consumer engine's config as @c processing.ssr_pb_hold_presence_flip
+         * (@c GnssConfig::ssrPbHoldPresenceFlip); a standalone real-time consumer sets
+         * that @c processing key directly.  Under the producer's hold (card PBH) a held
+         * bias that appears on, or leaves, a phase row the consumer already uses steps
+         * the applied correction by the whole bias, and the card-PBH dispatch answers
+         * neither edge.  Armed, both edges take the A5 reaction of an unheld key.  It
+         * never reaches the producer's solve or its resume fingerprint.
+         */
+        bool          pb_hold_presence_flip{ false };
+        /**
          * @brief Channel mode of the consumer itself
          *        (@c network.closed_loop.channel_mode, "single" (default) or "all")
          *        (card SID, phase 6b).

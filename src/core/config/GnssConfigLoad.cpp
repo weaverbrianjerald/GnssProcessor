@@ -695,6 +695,24 @@ namespace GnssProcessor {
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
         }
+        // Presence edges of a held phase bias (card PBF).  Default false keeps the card-PBH
+        // dispatch, under which a held key skips every reaction, byte-identical.  The
+        // closed-loop harness derives it from network.closed_loop.pb_hold_presence_flip
+        // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
+        ssr_pb_hold_presence_flip_ = jval<bool>(json,
+            "processing.ssr_pb_hold_presence_flip", "ssr_pb_hold_presence_flip", false);
+        if (ssr_pb_hold_presence_flip_) {
+            log->info("SSR phase-bias hold PRESENCE EDGES ON (card PBF): a held phase bias that "
+                      "appears on a row the consumer already uses, or leaves it, takes the A5 "
+                      "reaction of an unheld key (reset; carry under card CC; translate under "
+                      "card PBT) instead of none.  The hold still owns the discontinuity counter "
+                      "and the generation.");
+            if (!enable_ssr_bias_max_age_)
+                log->warn("processing.ssr_pb_hold_presence_flip is armed without "
+                          "processing.enable_ssr_bias_max_age: the A5 edge is tracked only under "
+                          "the staleness gate, so the knob is inert here (the closed-loop "
+                          "harness arms the gate on its derived consumer).");
+        }
         // Card CLV2: the consumer's response to a declared code-level step.  Default
         // false = byte-identical; the closed-loop harness derives it from
         // network.closed_loop.level_step_inflate, a standalone consumer sets it here.

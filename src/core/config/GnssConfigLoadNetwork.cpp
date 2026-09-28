@@ -12601,6 +12601,11 @@ namespace GnssProcessor {
             // byte-identical; neither reaches the producer's solve or its resume
             // fingerprint.
             clc.pb_disc_carry            = cl.value("pb_disc_carry", false);
+            // The presence edges of a held phase bias (card PBF; derived into the
+            // consumer engine as processing.ssr_pb_hold_presence_flip).  Same contract
+            // as pb_disc_carry: default false, and it never reaches the producer's solve
+            // or its resume fingerprint.
+            clc.pb_hold_presence_flip    = cl.value("pb_hold_presence_flip", false);
             // The consumer's band latch and its freshness response follow the
             // producer's declared roster (card SID phase 5b; derived into the consumer
             // engine as GnssConfig::consumerRosterLatch).  Same contract as
@@ -12925,6 +12930,11 @@ namespace GnssProcessor {
         // on the base config is kept.
         if (cl.pb_disc_carry)
             c.ssr_phase_bias_disc_carry_ = true;
+        // The same derivation for the presence edges of a held phase bias (card PBF).
+        // Never cleared here: an explicit processing.ssr_pb_hold_presence_flip on the
+        // base config is kept.
+        if (cl.pb_hold_presence_flip)
+            c.ssr_pb_hold_presence_flip_ = true;
         // The same derivation for the declared-roster latch and freshness response
         // (card SID phase 5b).  Never cleared here, and the consumer detects the
         // declaration's presence from the wire rather than from this flag, so arming it

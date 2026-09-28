@@ -6397,6 +6397,7 @@ int networkTeardown(
         // RealTimeEngine::flush(), so the census is printed here; silent on a wire that
         // carries no declaration.
         consumer->logRosterConsumerSummary("closed loop");
+        consumer->logPbHoldPresenceSummary("closed loop");   // held-key presence edges, silent unless armed (card PBF)
         consumer->logReinflateSummary("closed loop");   // consumer re-inflation summary (card OWD, O2)
         // Consumer snapshots written beside the network history copies (card CC (B));
         // 0 written on an armed seed means no warm start is on offer.

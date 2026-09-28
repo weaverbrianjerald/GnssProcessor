@@ -19,6 +19,7 @@
  *   per-epoch observations          | MultiRinexSync over a one-station roster       (same class)
  *   per-epoch store fill            | NetworkProductReader::replay from the file     (vs emitter.emitToStore)
  *   trace                           | closed_loop_trace.csv, identical columns       (same schema)
+ *   per-satellite trace (card CST)  | closed_loop_sat_trace.csv, same formatter      (network.trace_consumer_sat)
  *
  * Because the store is filled through `NetworkProductReader::replay`, the
  * consumer sees the recorded stream's discontinuity counters reconstructed
@@ -46,6 +47,7 @@
 #include "products/NetworkProductIO.hpp"
 #include "products/ProductParser.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "realtime/ConsumerSatTrace.hpp"
 #include "realtime/RealTimeEngine.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -308,6 +310,10 @@ int Application::runConsumerReplay() {
         return 1;
     }
     consumer.setArIgnoreMwWl(!consumer_config.getArWlOnly());
+    // The per-satellite readout (card CST), armed before the product-routing branch as
+    // the harness does (ApplicationNetworkSetup), so the baseline arm has it too.
+    // Measure-only: the consumer's solve is unchanged with it armed.
+    consumer.setConsumerSatTrace(nc.trace_consumer_sat);
     if (cl.consume_network_products) {
         consumer.setSsrStore(&store, cl.consume_network_clock, /*bias=*/true);
         log->info("Consumer replay: consumer '{}' reading the OWNED replay store ({}), "
@@ -339,6 +345,20 @@ int Application::runConsumerReplay() {
     }
     cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
                 "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
+    // Per-satellite companion (network.trace_consumer_sat, card CST): the header and the
+    // row formatter are the in-process stream's (ConsumerSatTrace.hpp), and the stamp is
+    // the (week, tow) of the closed_loop_trace.csv row, so the two files join exactly.
+    // Unarmed, nothing is opened.
+    std::ofstream cl_sat_trace;
+    long long n_cst_rows = 0, n_cst_epochs = 0;
+    if (nc.trace_consumer_sat) {
+        const std::filesystem::path cls_path = log_dir_ / "closed_loop_sat_trace.csv";
+        cl_sat_trace.open(cls_path);
+        if (cl_sat_trace)
+            cl_sat_trace << kConsumerSatTraceHeader;
+        else
+            log->warn("Consumer replay: failed to open {}", cls_path.string());
+    }
 
     // Truth in the frame the consumer estimates: the configured coordinate is a
     // published (monument-referenced) position, the state is the ARP.  The truth is
@@ -510,6 +530,13 @@ int Application::runConsumerReplay() {
                  << fmt::format("{:.4f}", enu.z()) << ','
                  << ar_gate << ','
                  << fmt::format("{:.6f}", ar_ran ? ar.p_succ : 0.0) << '\n';
+        if (cl_sat_trace.is_open()) {
+            const auto& rows = consumer.consumerSatRows();
+            for (const auto& r : rows)
+                cl_sat_trace << formatConsumerSatRow(se.time.week, se.time.tow, r);
+            n_cst_rows += static_cast<long long>(rows.size());
+            if (!rows.empty()) ++n_cst_epochs;
+        }
 
         if (n_processed == 1 || n_processed % 120 == 0)
             log->info("Consumer replay: ep {} (tow {:.1f}) — {} sats, 3D err {:.3f} m "
@@ -518,6 +545,14 @@ int Application::runConsumerReplay() {
                       enu.x(), enu.y(), enu.z(), rec_cursor, records.size());
     }
     cl_trace.flush();
+    // The readout's on-path counter (invariant #4): 0 rows on an armed replay means the
+    // consumer deferred every epoch.  Printed only when armed.
+    if (nc.trace_consumer_sat) {
+        cl_sat_trace.flush();
+        log->info("Consumer replay: per-sat consumer trace: {} rows over {} consumer "
+                  "epoch(s) -> {}", n_cst_rows, n_cst_epochs,
+                  (log_dir_ / "closed_loop_sat_trace.csv").string());
+    }
 
     // --- Phase 7: run-end telemetry ------------------------------------------
     // Counters, not the absence of crashes (standing invariant #4): a replay that
@@ -560,6 +595,7 @@ int Application::runConsumerReplay() {
     // driver never calls RealTimeEngine::flush().  Silent on a wire that carries no
     // declaration and with the 5b knob off, so a legacy replay's log is unchanged.
     consumer.logRosterConsumerSummary("end of replay");
+    consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed (card PBF)
     consumer.logReinflateSummary("end of replay");   // re-inflation summary (card OWD, O2)
 
     // Hourly level bands, the summary this series supports (handoff §4.1: a single

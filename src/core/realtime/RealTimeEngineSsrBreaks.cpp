@@ -284,21 +284,29 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     // cycle hovering near max_age.
     const double bias_max_age  = config_.getSsrBiasMaxAge()
                                * config_.getSsrBiasStaleHoldFactor();
+    const bool   presence_on_hold = config_.ssrPbHoldPresenceFlip();   // card PBF
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key = obs.satellite + "|" + code;
-            if (ctx.pb_hold_handled.count(key)) continue;         // card PBH reacted
-            if (auto pb = ssr.getPhaseBias(obs.satellite, code)) {
-                if (state_manager_->noteSsrDiscontinuity(
-                        key, pb->discontinuity_counter)) {
-                    state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
-                    noteConsumerSatEvent_(key, "reset_disc");   // card CST (no-op unarmed)
-                    noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
-                    log->info("{}SSR phase-bias discontinuity: reset {} {}",
-                              epoch_prefix, obs.satellite, code);
+            // A key the hold seam claimed skips the discontinuity-counter reaction,
+            // which the hold owns (card PBH).  With processing.ssr_pb_hold_presence_flip
+            // off it skips the A5 edge below as well; armed, that edge runs as on an
+            // unheld key (card PBF).
+            const bool claimed = ctx.pb_hold_handled.count(key) > 0;
+            if (claimed && !presence_on_hold) continue;
+            if (!claimed) {
+                if (auto pb = ssr.getPhaseBias(obs.satellite, code)) {
+                    if (state_manager_->noteSsrDiscontinuity(
+                            key, pb->discontinuity_counter)) {
+                        state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
+                        noteConsumerSatEvent_(key, "reset_disc");   // card CST (no-op unarmed)
+                        noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
+                        log->info("{}SSR phase-bias discontinuity: reset {} {}",
+                                  epoch_prefix, obs.satellite, code);
+                    }
                 }
             }
             // With the bias staleness gate on, a phase bias that goes stale (age-gated
@@ -329,6 +337,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                         "phase", it->second, applied_now,
                         static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
                         obs.time);
+                    countPbHoldPresenceEdge_(key, applied_now, suppress);   // card PBF
                     if (suppress) {
                         ++roster_consumer_.flip_suppressed;
                         log->info("{}SSR phase-bias freshness flip ({} -> {}) on {} {}: NOT a "
@@ -383,19 +392,24 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                                * config_.getSsrBiasStaleHoldFactor();
     const bool basis_nlwl = (config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl);
     const bool bssd       = config_.enableBetweenSatelliteSd();
+    const bool presence_on_hold = config_.ssrPbHoldPresenceFlip();   // card PBF
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
-            if (ctx.pb_hold_handled.count(key)) continue;         // card PBH reacted
+            // A claimed key: the hold owns its counter (card PBH); armed, its A5 edge
+            // is carried here as an unheld key's is (card PBF).
+            const bool claimed = ctx.pb_hold_handled.count(key) > 0;
+            if (claimed && !presence_on_hold) continue;
             const std::string amb_key = obs.satellite + "_" + code;
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
             bool bump = false;
-            if (auto pb = ssr.getPhaseBias(obs.satellite, code))
-                bump = state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
+            if (!claimed)
+                if (auto pb = ssr.getPhaseBias(obs.satellite, code))
+                    bump = state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
 
             // The value the model applies this epoch (the model's own read).
             const auto applied = bias_age_gate
@@ -411,6 +425,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                 const auto it = ssr_phase_bias_applied_.find(key);
                 flip = (it != ssr_phase_bias_applied_.end() && it->second != applied_now);
             }
+            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);   // card PBF
 
             const auto d = pb_disc_carry_.react(*state_manager_, key, amb_key, bump, flip,
                                                 applied_now_m, basis_nlwl, bssd, reset_std);
@@ -491,19 +506,24 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
                                * config_.getSsrBiasStaleHoldFactor();
     const bool basis_nlwl = (config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl);
     const bool bssd       = config_.enableBetweenSatelliteSd();
+    const bool presence_on_hold = config_.ssrPbHoldPresenceFlip();   // card PBF
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
-            if (ctx.pb_hold_handled.count(key)) continue;         // card PBH reacted
+            // A claimed key: the hold owns its counter (card PBH); armed, its A5 edge
+            // is translated here as an unheld key's step is (card PBF).
+            const bool claimed = ctx.pb_hold_handled.count(key) > 0;
+            if (claimed && !presence_on_hold) continue;
             const std::string amb_key = obs.satellite + "_" + code;
 
             // The disc-counter bump: the ungated read, exactly as the reset path.
             bool bump = false;
-            if (auto pb = ssr.getPhaseBias(obs.satellite, code))
-                bump = state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
+            if (!claimed)
+                if (auto pb = ssr.getPhaseBias(obs.satellite, code))
+                    bump = state_manager_->noteSsrDiscontinuity(key, pb->discontinuity_counter);
 
             // The value the model applies this epoch (the model's own read).
             const auto applied = bias_age_gate
@@ -519,6 +539,16 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
                 const auto it = ssr_phase_bias_applied_.find(key);
                 flip = (it != ssr_phase_bias_applied_.end() && it->second != applied_now);
             }
+            // Under a hold the applied value is constant within a generation, and the
+            // hold seam already re-floated a generation change, so for a claimed key
+            // only the presence edge is translated; any other epoch is recorded only
+            // (card PBF).
+            if (claimed && !flip) {
+                pb_step_translate_.record(key, applied_now, applied_now_m);
+                if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
+                continue;
+            }
+            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);   // card PBF
 
             const auto d = pb_step_translate_.react(*state_manager_, key, amb_key,
                                                     bump || flip, applied_now, applied_now_m,
@@ -615,10 +645,18 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
  *
  * The A5 freshness flip is not handled or suppressed here: it is a step in the
  * applied correction (a bias gated out and back in), which the hold does not
- * touch.  It is also unreachable on the closed-loop postures, where
- * @c processing.enable_ssr_bias_max_age is off.  Keys this seam handled are recorded
- * in @c ctx.pb_hold_handled and skipped downstream, so a held key is never visited
- * twice in one epoch.
+ * touch.  Keys this seam handled are recorded in @c ctx.pb_hold_handled and skipped
+ * downstream, so a held key is never visited twice in one epoch.
+ *
+ * Card PBF corrects two premises above.  A first sighting has no prior state only
+ * when the row is new: a held bias that appears on a phase row the consumer was
+ * already using without it steps the applied correction by the whole bias, and so
+ * does one that leaves the row.  And the A5 edge is reachable on the closed-loop
+ * postures, because the harness arms the staleness gate on its derived consumer;
+ * the downstream skip of a claimed key is what left both edges unanswered (the
+ * wire's L1W family flips at the stations that track it, e.g. G32 L1W appearing at
+ * 92.4 m).  With @c processing.ssr_pb_hold_presence_flip armed the downstream
+ * reactions skip only a claimed key's counter reaction and run its A5 edge.
  */
 void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
     auto log = log_manager_.getLogger("rt_engine");
@@ -667,6 +705,28 @@ void RealTimeEngine::logPbHoldSummary_(const char* tag) {
         "disc-counter changes IGNORED {} (no value step under a hold); closure {}",
         tag, c.cells, c.keys, c.first_sight, c.held, c.refloats, c.disc_ignored,
         c.closureHolds() ? "HOLDS" : "BROKEN");
+}
+
+void RealTimeEngine::countPbHoldPresenceEdge_(const std::string& key, bool applied_now,
+                                              bool suppressed) {
+    if (!config_.ssrPbHoldPresenceFlip() || !pb_hold_.recorded(key)) return;
+    if (applied_now) ++pb_hold_presence_.appear; else ++pb_hold_presence_.vanish;
+    if (suppressed) ++pb_hold_presence_.suppressed;
+}
+
+void RealTimeEngine::logPbHoldPresenceSummary(const char* tag) const {
+    // Printed only when armed and a held entry was seen, so every other consumer
+    // keeps a byte-identical log.  Armed with held keys and 0 edges means no held
+    // bias appeared on, or left, a row in use: an inert knob on this wire.
+    if (!config_.ssrPbHoldPresenceFlip() || pb_hold_.counters().cells == 0) return;
+    const auto& c = pb_hold_presence_;
+    log_manager_.getLogger("rt_engine")->info(
+        "[RT] SSR phase-bias HOLD presence edges ({}, card PBF): {} (appear {} / vanish {}) "
+        "answered by the A5 reaction ({}), {} left alone by the declared roster",
+        tag, c.appear + c.vanish, c.appear, c.vanish,
+        config_.ssrPhaseBiasStepTranslate() ? "translate"
+        : config_.ssrPhaseBiasDiscCarry()   ? "carry" : "reset",
+        c.suppressed);
 }
 
 void RealTimeEngine::logPbDiscCarrySummary_(const char* tag) {

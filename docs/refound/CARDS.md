@@ -220,7 +220,11 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   modes side by side, "pivot" (the election passes over an unhealthy satellite) and "exclude"
   (its observations removed at the synced-epoch door), on 2 h arms of four beds and the
   16-site census.
-- [CLV2](CLV2_clock_level_batch2_2026-09-25.md): open (BUILT 2026-09-25, NOT ARMED: R-A2 see-saws with the
+- [CLV2](CLV2_clock_level_batch2_2026-09-25.md): open (section 5, 2026-09-28: the census loss is in the
+  wire's phase rows, not its code rows (hybrid wires: code rows only cost nothing, phase rows only
+  reproduce the loss); the hold transfers each declared level step to the phase bias while the
+  estimator keeps a median 0.54 to 0.89 of it in the clock, so the phase row moves by the remainder,
+  0.07 to 0.09 m rms; revised batch 3: a phase-exact re-base; BUILT 2026-09-25, NOT ARMED: R-A2 see-saws with the
   solve, the consumer response repairs the split emulation's hour 1 (0.516 to 0.222 m) and not the
   census, the candidate costs the 10 C1W census sites +0.59 / +0.19 m; batch 3 proposed), 2026-09-25:
   card CLV's return plan, batch 2;
@@ -230,3 +234,13 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   declared level step by inflating the stepped satellite's phase-blind ionosphere-ambiguity
   direction, where it absorbed 71 percent of the old code level; R-C's common-shift declaration
   sequenced; bars C0 to C3 frozen.
+- [PBF](PBF_pb_hold_presence_edges_2026-09-28.md): open (BUILT 2026-09-28, default OFF, NOT ARMED:
+  P0, P1 and P3 pass, P2 fails as frozen with the catastrophe removed, ARHT00ATA 803.9 to 0.762 m in
+  hour 2 on the CLV wire, the rest card CLV2's phase-side cost; a candidate for the author's arming
+  decision), 2026-09-28: build card, presence edges of a held phase bias at the consumer. Under the
+  hold (card PBH) a bias that appears on, or leaves, a phase row the consumer already uses steps the
+  row by the whole bias (G32 L1W at 92.4 m) and nothing answers it; the Kalman peel then decides, and
+  at ARHT00ATA it resets the wrong satellites and the solution leaves by 490 m in one epoch (14 of 90
+  census keys above 400 m in hour 1). `processing.ssr_pb_hold_presence_flip` (harness
+  `network.closed_loop.pb_hold_presence_flip`) gives a held key's A5 edge the reaction of an unheld
+  key; the consumer replay now writes card CST's per-satellite trace.

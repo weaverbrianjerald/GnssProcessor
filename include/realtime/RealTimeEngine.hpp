@@ -353,7 +353,8 @@ public:
     // --- Per-satellite consumer readout (card CST) ----------------------------
     /**
      * @brief Arm the per-satellite readout of this engine's own epoch
-     *        (@c network.trace_consumer_sat, set by the closed-loop harness).
+     *        (@c network.trace_consumer_sat, set by the closed-loop harness and by
+     *        the consumer replay driver).
      *
      * When armed, every @c processEpoch that reaches the estimation tail leaves
      * one @ref ConsumerSatRow per (satellite, raw phase signal) in
@@ -448,6 +449,37 @@ public:
     /// inert (invariant #4): @c cells == 0 on a clean wire means nothing was
     /// held, not that the hold worked.
     const PbHoldLedger::Counters& pbHoldCounters() const { return pb_hold_.counters(); }
+
+    /**
+     * @struct PbHoldPresenceCounters
+     * @brief Presence edges of held phase-bias keys (card PBF), counted whether or
+     *        not @c processing.ssr_pb_hold_presence_flip is armed.
+     *
+     * A key is "held" here once the hold ledger has recorded it, so an edge that
+     * happens on the epoch the entry leaves the store is still attributed to the
+     * hold.  @c answered counts the edges that took a reaction; with the knob off
+     * it stays 0 and @c appear + @c vanish is the number of full-bias steps the
+     * consumer absorbed unanswered (invariant #7, both edges).
+     */
+    struct PbHoldPresenceCounters {
+        std::size_t appear{ 0 };     ///< Held key applied now, not applied at the previous epoch.
+        std::size_t vanish{ 0 };     ///< Held key applied at the previous epoch, not applied now.
+        std::size_t answered{ 0 };   ///< Edges that took the A5 reaction (knob armed).
+        std::size_t suppressed{ 0 }; ///< Edges left alone by the declared-roster rule (card SID 5b).
+    };
+    /// Run-end counters of the held-key presence edges (card PBF).
+    const PbHoldPresenceCounters& pbHoldPresenceCounters() const { return pb_hold_presence_; }
+
+    /**
+     * @brief Log the held-key presence-edge counters (card PBF) on @c rt_engine.
+     *
+     * Silent when no held entry was ever seen, so a consumer of an unheld product
+     * keeps a byte-identical log.  Public so the consumer replay driver, which never
+     * calls @ref flush, can print it.
+     *
+     * @param tag Where the line comes from ("end of run", "closed loop", "end of replay").
+     */
+    void logPbHoldPresenceSummary(const char* tag) const;
 
     // --- Declared signal roster at the consumer (card SID phase 5) -----------
     /**
@@ -568,6 +600,7 @@ public:
 
 private:
     friend struct AmbLevelArcTestAccess;  ///< Exercises the ALC seam after real reseed/update recovery.
+    friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges (card PBF).
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -811,10 +844,26 @@ private:
     /// @c RtEpochContext::pb_hold_handled and skipped by whichever of the three
     /// reactions runs next, so each key is still visited once per epoch.  With
     /// no held entries the set stays empty and all three are byte-identical.
+    /// With @c processing.ssr_pb_hold_presence_flip armed, the downstream reaction
+    /// skips only the claimed key's counter reaction and still answers its A5
+    /// presence edge (card PBF).
     void reactToPbHold_(RtEpochContext& ctx);
     /// One INFO line with the hold-reaction counters; silent unless a held entry
     /// was ever seen (card PBH).
     void logPbHoldSummary_(const char* tag);
+    /**
+     * @brief Count one A5 presence edge if it belongs to a held key (card PBF).
+     *
+     * Called by the three phase-bias reactions at an A5 edge.  Counts only with
+     * @c processing.ssr_pb_hold_presence_flip armed (the off path never reaches a
+     * claimed key's edge) and only for a key the hold ledger has recorded, so an
+     * unheld key's edge is not attributed to the hold.
+     *
+     * @param key         The "<sat>|<signal>" key.
+     * @param applied_now The bias is applied this epoch (an appearance) or not (a vanish).
+     * @param suppressed  The declared-roster rule left the edge alone (card SID 5b).
+     */
+    void countPbHoldPresenceEdge_(const std::string& key, bool applied_now, bool suppressed);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
     /**
@@ -1134,6 +1183,9 @@ private:
     /// memory without a reset, and the producer's own hold state cold-starts on
     /// its own resume.
     PbHoldLedger pb_hold_;
+    /// Presence edges of held keys (card PBF).  Counted on every consumer of a held
+    /// product; the reaction to them is gated by processing.ssr_pb_hold_presence_flip.
+    PbHoldPresenceCounters pb_hold_presence_;
 
     // --- Consumer ambiguity level re-validation (card ALC) --------------------
     /// The windowed code levels + the two tests + the counters.  Configured once

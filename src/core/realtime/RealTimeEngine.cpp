@@ -372,6 +372,8 @@ void RealTimeEngine::flush() {
     logPbStepTranslateSummary_("end of run");
     // The hold reaction, silent unless a held entry was seen (card PBH).
     logPbHoldSummary_("end of run");
+    // Its presence edges, silent unless armed (card PBF).
+    logPbHoldPresenceSummary("end of run");
     // The ambiguity level-check counters (card ALC).
     logAmbLevelCheckSummary_("end of run");
     // The declared-roster census, silent unless a declaration was seen or the

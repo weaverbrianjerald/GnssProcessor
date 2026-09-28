@@ -5,7 +5,7 @@
 - **id:** CLV2
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-09-25, NOT ARMED (section 4): C0 passes (default off byte-identical, the consumer knob never reaches the producer); R-A2 moves the wire's C1W - C1C bias to the dual-tracking stations (effect 0.182 to 0.055 m, against CODE 0.155 to 0.110 m) but see-saws with the solve (0.058 m per epoch, 340 breaks) and costs the census C1W sites hour 1; the consumer response repairs the split emulation's hour 1 (0.516 to 0.222 m) and does nothing at the census; the candidate fails C3 (census +0.32 / +0.11 m against the no-CLV wire, all of it at the 10 C1W sites). The field's cost is the C1W users', not in the consumer's phase-blind direction and not in the ionosphere-free code; batch 3 proposed. Original summary: Build card, pre-registered 2026-09-25 at the author's direction to continue card
+- **summary:** BATCH 3 READ (section 5, 2026-09-28): the census loss is in the wire's PHASE rows. A hybrid wire with the batch-1 base's code rows only costs the census nothing (C1W sites -0.001 / +0.001 m); with its phase rows only it reproduces the loss (+0.418 / +0.151 m, WTZZ00DEU 0.977 m in hour 1). The hold transfers each declared level step to the phase bias, the estimator keeps only part of it in the clock (median kept fraction 0.54 at the arm, 0.89 at 2 h), and the phase row moves by the remainder, exactly (0.07 to 0.09 m rms, band-common). ARHT00ATA's divergence is a consumer defect (card PBF). Revised batch 3: a phase-exact re-base. Earlier summary: BUILT 2026-09-25, NOT ARMED (section 4): C0 passes (default off byte-identical, the consumer knob never reaches the producer); R-A2 moves the wire's C1W - C1C bias to the dual-tracking stations (effect 0.182 to 0.055 m, against CODE 0.155 to 0.110 m) but see-saws with the solve (0.058 m per epoch, 340 breaks) and costs the census C1W sites hour 1; the consumer response repairs the split emulation's hour 1 (0.516 to 0.222 m) and does nothing at the census; the candidate fails C3 (census +0.32 / +0.11 m against the no-CLV wire, all of it at the 10 C1W sites). The field's cost is the C1W users', not in the consumer's phase-blind direction and not in the ionosphere-free code; batch 3 proposed. Original summary: Build card, pre-registered 2026-09-25 at the author's direction to continue card
   CLV's return plan with batch 2 (card CLV section 8.6; the CLV file is near the size bar). Two
   builds, default OFF: R-A2, each free same-band code-bias column (GPS C1W, Galileo C1X) re-based
   from the same-band code difference at the stations that track both codes
@@ -22,11 +22,13 @@
   `network.closed_loop.level_step_inflate_k` (default 1), derived into the consumer as
   `processing.ssr_level_step_inflate` and `processing.ssr_level_step_inflate_k`; no golden,
   ledger row or loader default changed
-- **dates in the text:** 2026-09-25
+- **dates in the text:** 2026-09-25, 2026-09-28
 - **hashes / run dirs:** code in the session worktree on main `335f640` beside card CLV's batch 1
   and card HLT (all uncommitted, default OFF); arms `runs/_rap_clv2_<bed>_<arm>` (2 h); census
   keys `c2<arm>` (`runs/_rap_msc_<site>_c2<arm>_d`); result: exe `gnss_processor_clv2.exe` sha256
-  prefix `9d2d7cb13ea9f886`
+  prefix `9d2d7cb13ea9f886`; section 5: exe `gnss_processor_clv3.exe` sha256 prefix
+  `77643cd1db6677d9`, census keys `t3g0`, `t3b1`, `gtg0`, `gtb1`, `hbb`, `hbc`, `hbp`, hybrid
+  wires `runs/_hyb_g0_b1{code,phase,both}`
 
 ## 1. What batch 1 left, and what was measured before this build
 
@@ -200,3 +202,73 @@ its size; that loss is unread.
    scale and dead band are untuned.
 4. R-C's declaration stays sequenced. Galileo adoption stays behind this card, as the author
    decided.
+
+## 5. Batch 3, item 1: the read of the C1W sites' loss (2026-09-28)
+
+Section 4.6 item 1, done on 2 h census replays with card CST's per-satellite trace (the replay
+driver now writes it; the 34 traced replays of the baseline wire `runs/_rap_clv2_f_g0` and of
+`runs/_rap_clv2_f_b1` reproduce the census `closed_loop_trace.csv` of keys `rp1g0` and `c2b1`
+byte for byte). Exe `gnss_processor_clv3.exe` (main `3ca0626` plus the replay trace), census keys
+`t3g0`, `t3b1`. Graders in the session scratchpad: `census2h.py`, `cstdiff.py`, `armsteps.py`,
+`pbflips.py`, `hybrid_wire.py`, `wirediff.py`.
+
+**5.1 The loss is in the wire's phase rows, not its code rows.** Hybrid wires: the baseline
+wire's records with the batch-1 base's row values substituted (a code row is -clock + code bias,
+a phase row is -clock + phase bias; the substitution keeps the baseline wire's clock and
+rewrites the bias so the row equals the donor's). `hbc` takes the code rows only, `hbp` the phase
+rows only, `hbb` both (`runs/_hyb_g0_b1{code,phase,both}`). Median change of the hour-1 / hour-2
+p50 against the baseline wire:
+
+| wire | C1W sites (9, ARHT00ATA out, section 5.3) | C1C sites (6) | WTZZ00DEU |
+| --- | --- | --- | --- |
+| `hbb` (both) | +0.406 / +0.153 (7 worse, 2 better in hour 1) | +0.059 / -0.011 | 0.966 / 0.056 |
+| `hbc` (code only) | -0.001 / +0.001 (0 worse, 1 better) | -0.030 / -0.003 | 0.547 / 0.064 |
+| `hbp` (phase only) | +0.418 / +0.151 (7 worse, 2 better) | +0.096 / -0.005 | 0.977 / 0.056 |
+
+(the baseline wire: WTZZ00DEU 0.560 / 0.059). The code side of the level re-base, including the
+C1W follow share, costs the census nothing; the phase side carries the whole loss. `hbb` equals
+the batch-1 base at 13 of 17 sites to the millimetre; it differs at ANMG00MYS, QUIN00USA and
+ARHT00ATA, where the baseline wire's counters and tokens replace the donor's.
+
+**5.2 Why the phase rows move.** On the batch-1 base the wire's phase bias of each satellite
+differs from the baseline wire by exactly its accumulated declared steps (the C records' `lvl=`
+sum): the hold (card PBH) transfers each declared step to the held value. The wire's clock
+differs by the declared steps plus an undeclared remainder, the part of each step the
+estimator's next solves do not keep. The wire's phase-row change is therefore minus that
+remainder, exactly (to 1e-14 m while each hold generation lasts), and it is band-common (L1C
+and L2W move by the same amount per satellite). The kept fraction differs by satellite; its
+median over the satellites with an accumulated step above 0.05 m is 0.54 at TOW 259530
+(interquartile 0.38 to 0.71), 0.67 at 260400, 0.82 at 262800 and 0.89 at 266370, with G12 near
+0 (every step given back) and G08 and G23 above 1. The remainder is 0.068 to 0.089 m rms across
+satellites from TOW 259530 on, grows over the first 10 to 20 epochs after the arm (TOW 259350)
+and is then nearly constant; a float consumer converging in that window absorbs it into its
+position. The station ambiguities of the carry move between the two wires by a band-common
+0.05 to 0.35 m per satellite (median over stations), so the estimator re-partitions along the
+phase-datum direction as well as the level direction; which carried state pulls the clock back
+is not established here.
+
+**5.3 ARHT00ATA is a consumer defect, not the level.** Its divergence on this wire (478.953 /
+803.907 m) is an unanswered presence edge of a held phase bias that the Kalman peel misattributes;
+card [PBF](PBF_pb_hold_presence_edges_2026-09-28.md) reads it and builds the response. With that
+response the site reaches 0.762 m in hour 2 on this wire (0.066 m on the baseline wire): the
+same phase-side cost as the other C1W sites, larger.
+
+**5.4 Why the C1W and C1C sites differ.** Not established. A C1W site's consumer here reads
+L1C phase with C1W code (HARB00ZAF), so both groups read the same phase family; the split may
+follow the satellites in view during the arming window rather than the code family.
+
+**5.5 Batch 3, revised (one change each, 2 h).**
+
+1. A phase-exact re-base: the wire's phase rows unchanged across a re-base. Two places to act,
+   to be read before either is built: (a) the solve side, the carried state that pulls the clock
+   back after a step (the kept fraction per satellite is the instrument; the station
+   ambiguities' band-common move is the first suspect), so that the estimator keeps each
+   declared step; (b) the emit side, where the hold's transfer would have to follow the step the
+   estimator kept rather than the declared one, which needs a measurement of the remainder that
+   the real clock walk does not contaminate. Bar for either: the wire's phase-row change against
+   the baseline wire below 0.01 m rms across satellites at every epoch, and the census C1W sites'
+   hour-1 change at most +0.05 m.
+2. R-A2 inside the solve (section 4.6 item 2) waits for item 1: its column see-saw is a code-side
+   effect, and the code side is not where the census loss is.
+3. The consumer response stays a built option; R-C stays sequenced; Galileo adoption stays
+   behind this card.
