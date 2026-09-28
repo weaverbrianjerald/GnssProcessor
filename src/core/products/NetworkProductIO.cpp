@@ -231,6 +231,8 @@ struct LineAssembler {
                         // Only the value "obs" is recognized; any other value is ignored.
                         if (f[k].substr(4) == "obs")
                             satSolution(f[1]).isc_observed.insert(f[2]);
+                    } else if (f[k].rfind("lvl=", 0) == 0) {   // card CLV R-A: declared follow step
+                        satSolution(f[1]).cb_level_step_m[f[2]] = std::stod(f[k].substr(4));
                     } else if (f[k].find('=') == std::string::npos && !f[k].empty()) {
                         try {
                             cur.serialized_disc.code[f[1] + "|" + f[2]] = std::stoi(f[k]);
@@ -675,7 +677,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# 'key=value' tokens are self-describing; unknown keys are ignorable.\n"
             "# E,week,tow,iod_ssr,provider_id,solution_id,datum_changed[,datum_consts]\n"
             "# C,sat,clock_c0_m[,clock_c1_m_s[,clock_disc]][,iode=<n>[,oiod=<n>][,oepoch=<week>:<tow>]][,sigcc=<m>[,rho=<r>]][,lvl=<m>]\n"
-            "# B,sat,signal,code_bias_m[,code_disc][,isc=obs]\n"
+            "# B,sat,signal,code_bias_m[,code_disc][,isc=obs][,lvl=<m>]\n"
             "# P,sat,signal,bias_m,signal_integer,wide_lane_integer[,phase_disc][,sigma=<m>][,sigc=<m>][,gen=<n>]\n"
             "# G,week,tow                    (RT0-4 wall-clock time-of-generation)\n"
             "# I,generation_id               (RTA-3 solution-generation id)\n"
@@ -810,6 +812,16 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             // flagged.  Absent unless network.sat_isc_state is armed, so a run with it
             // off writes byte-identical records.
             if (s.isc_observed.count(signal)) out_ << ",isc=obs";
+            // Card CLV return plan R-A: the free column's follow step since the
+            // satellite's previous emission, the declaration the code-bias jump test
+            // needs to reproduce the producer's counters on a replay.  Written ONLY
+            // when nonzero, so an unarmed wire is byte-identical.
+            {
+                const auto lv = s.cb_level_step_m.find(signal);
+                if (lv != s.cb_level_step_m.end() && lv->second != 0.0
+                    && std::isfinite(lv->second))
+                    out_ << ",lvl=" << fmt::format("{}", lv->second);
+            }
             out_ << '\n';
         }
         for (const auto& [signal, pb] : s.phase_bias) {

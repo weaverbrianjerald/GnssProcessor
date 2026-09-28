@@ -817,6 +817,19 @@ private:
     void logPbHoldSummary_(const char* tag);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
+    /**
+     * @brief Card CLV2: answer a declared code-level step (processing.ssr_level_step_inflate).
+     *
+     * For each satellite of this epoch whose declared step totals in the SSR store moved
+     * since the engine last read them (the first reading only records), the change of
+     * each of its code signals' prediction is -(clock step) + (that signal's code-bias
+     * step), and sigma is the largest.  The engine's covariance then gains
+     * (k sigma)^2 v v^T along the satellite's phase-blind direction v (ionosphere +1,
+     * each phase ambiguity +alpha_f): the direction an undifferenced consumer absorbed the
+     * old code level in, which the next epochs' code rows re-determine while the phase
+     * rows stay as they were.  No-op when unarmed.
+     */
+    void reactToDeclaredLevelSteps_(RtEpochContext& ctx);
 public:
     /**
      * @brief The inter-system biases to re-inflate on a clock re-reference (card OWD (O2)).
@@ -1022,6 +1035,15 @@ private:
     /// (at the tail, before the harvest), and drained by @ref traceConsumerSat_;
     /// cleared with the row buffer.
     std::map<std::string, std::string> consumer_sat_events_;
+
+    /// Card CLV2: the declared code-level step totals last read per satellite
+    /// (@ref reactToDeclaredLevelSteps_), and its counters.
+    std::map<std::string, SsrCorrectionStore::DeclaredLevelSteps> level_steps_seen_;
+    long long level_step_events_{ 0 };     ///< (sat, epoch) declared code steps above the dead band
+    long long level_step_inflated_{ 0 };   ///< …answered by an inflation
+    long long level_step_refused_{ 0 };    ///< …refused: no ionosphere state, a frozen row, or no ambiguity
+    double    level_step_sigma_sum_{ 0.0 };///< sum of the answered sigmas (m)
+    double    level_step_sigma_max_{ 0.0 };///< largest answered sigma (m)
 
     /// When true, AR ignores the MW WL feed and runs pure MLAMBDA on the KF float
     /// (closed-loop network-phase-bias validation; see setArIgnoreMwWl).

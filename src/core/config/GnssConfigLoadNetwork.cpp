@@ -9036,6 +9036,43 @@ namespace GnssProcessor {
         network_clock_level_horizon_s_ =
             jval<double>(json, "network.clock_level_horizon_s",
                          "network_clock_level_horizon_s", 7200.0);
+        // Card CLV return plan (R-A, R-B, R-C): each default reproduces the built card.
+        network_clock_level_pin_pair_read_ =
+            jval<bool>(json, "network.clock_level_pin_pair_read",
+                       "network_clock_level_pin_pair_read", false);
+        {
+            const std::string follow =
+                jval<std::string>(json, "network.clock_level_free_cb_follow",
+                                  "network_clock_level_free_cb_follow", std::string("off"));
+            if (follow == "off") {
+                network_clock_level_free_cb_follow_ = 0;
+            } else if (follow == "if") {
+                network_clock_level_free_cb_follow_ = 1;
+            } else if (follow == "full") {
+                network_clock_level_free_cb_follow_ = 2;
+            } else {
+                log->warn("Network (card CLV): network.clock_level_free_cb_follow = '{}' is not "
+                          "one of off, if, full; using off.", follow);
+                network_clock_level_free_cb_follow_ = 0;
+            }
+        }
+        network_clock_level_datum_pause_ =
+            jval<bool>(json, "network.clock_level_datum_pause",
+                       "network_clock_level_datum_pause", false);
+        network_clock_level_confirm_epochs_ =
+            jval<int>(json, "network.clock_level_confirm_epochs",
+                      "network_clock_level_confirm_epochs", 1);
+        if (network_clock_level_confirm_epochs_ < 1) {
+            log->warn("Network (card CLV): network.clock_level_confirm_epochs = {} is below 1; "
+                      "using 1.", network_clock_level_confirm_epochs_);
+            network_clock_level_confirm_epochs_ = 1;
+        }
+        network_clock_level_pivot_ref_ =
+            jval<bool>(json, "network.clock_level_pivot_ref",
+                       "network_clock_level_pivot_ref", false);
+        network_clock_level_free_cb_rebase_ =
+            jval<bool>(json, "network.clock_level_free_cb_rebase",
+                       "network_clock_level_free_cb_rebase", false);
         if (network_clock_level_carry_) {
             if (!(network_clock_level_sigma_floor_m_ > 0.0)) {
                 log->warn("Network (card CLV): network.clock_level_sigma_floor_m = {:.4f} is not "
@@ -9059,6 +9096,44 @@ namespace GnssProcessor {
                       "phase side does not move.  SOLVE-AFFECTING + FINGERPRINTED: fresh "
                       "convergence only.",
                       network_clock_level_sigma_floor_m_, network_clock_level_horizon_s_);
+            static const char* const kFollowName[] = {"off", "if", "full"};
+            log->info("Network producer (card CLV return plan): pin_pair_read {}, "
+                      "free_cb_follow {}, datum_pause {}, confirm_epochs {}, pivot_ref {}.",
+                      network_clock_level_pin_pair_read_,
+                      kFollowName[network_clock_level_free_cb_follow_],
+                      network_clock_level_datum_pause_, network_clock_level_confirm_epochs_,
+                      network_clock_level_pivot_ref_);
+            if (network_clock_level_free_cb_rebase_)
+                log->info("Network producer (card CLV2): R-A2 free-column re-base ON: each free "
+                          "same-band code-bias column is re-based from the same-band code "
+                          "difference at the stations that track both codes, and no longer "
+                          "follows the level while its filter is armed.");
+        }
+        {
+            // Card HLT: broadcast satellite health on the network path.
+            const std::string health =
+                jval<std::string>(json, "network.sat_health", "network_sat_health",
+                                  std::string("off"));
+            if (health == "off") {
+                network_sat_health_ = 0;
+            } else if (health == "pivot") {
+                network_sat_health_ = 1;
+            } else if (health == "exclude") {
+                network_sat_health_ = 2;
+            } else {
+                log->warn("Network (card HLT): network.sat_health = '{}' is not one of off, "
+                          "pivot, exclude; using off.", health);
+                network_sat_health_ = 0;
+            }
+            if (network_sat_health_ != 0)
+                log->info("Network producer (card HLT): broadcast satellite health '{}': {}.  "
+                          "SOLVE-AFFECTING + FINGERPRINTED: fresh convergence only.",
+                          health,
+                          network_sat_health_ == 1
+                              ? "the clock-pivot election passes over a satellite the broadcast "
+                                "flags unhealthy at the epoch, whose observations are processed"
+                              : "the observations of a satellite the broadcast flags unhealthy "
+                                "at an epoch are removed from the synced epochs");
         }
         network_phase_datum_hold_sigma_m_ =
             jval<double>(json, "network.phase_datum_hold_sigma_m",
@@ -12555,6 +12630,11 @@ namespace GnssProcessor {
             // reaches the producer's solve or its resume fingerprint.
             clc.pb_step_translate        = cl.value("pb_step_translate", false);
             clc.pb_step_translate_eps_m  = cl.value("pb_step_translate_eps_m", 0.005);
+            // Card CLV2: the consumer's response to a declared code-level step (derived
+            // into the consumer engine as processing.ssr_level_step_inflate).  Default
+            // false ⇒ byte-identical, and it never reaches the producer's solve.
+            clc.level_step_inflate       = cl.value("level_step_inflate", false);
+            clc.level_step_inflate_k     = cl.value("level_step_inflate_k", 1.0);
             // The consumer's ambiguity level re-validation (card ALC; derived into the
             // consumer engine as processing.amb_level_check).  Same contract as
             // pb_step_translate: default false ⇒ byte-identical, and it never reaches
@@ -12865,6 +12945,13 @@ namespace GnssProcessor {
         if (cl.pb_step_translate) {
             c.ssr_phase_bias_step_translate_     = true;
             c.ssr_phase_bias_step_translate_eps_m_ = cl.pb_step_translate_eps_m;
+        }
+        // Card CLV2: same derivation for the declared level-step response.  Never cleared
+        // here; a non-positive scale falls back to 1.
+        if (cl.level_step_inflate) {
+            c.ssr_level_step_inflate_   = true;
+            c.ssr_level_step_inflate_k_ =
+                (cl.level_step_inflate_k > 0.0) ? cl.level_step_inflate_k : 1.0;
         }
         // The same derivation for the ambiguity level check (card ALC).  Never cleared
         // here: an explicit processing.amb_level_check on the base config is kept.  The

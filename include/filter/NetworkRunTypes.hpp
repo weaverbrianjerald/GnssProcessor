@@ -1623,6 +1623,21 @@ struct ClockAnchorState {
     std::set<std::string> tripped;
 };
 
+/// Card CLV2 R-A2 (@c network.clock_level_free_cb_rebase): the filter of one free same-band
+/// code-bias column, re-based from the same-band code difference (the free signal minus the
+/// pin pair's first signal) at the stations that track both.  The difference is free of the
+/// clock, the geometry, the troposphere and the ionosphere, so it reads the column's error
+/// against the pinned signal directly, up to a per-station offset.
+struct ClockLevelFreeCb {
+    double info{0.0};     ///< information about the column's error (1/m^2), valid at @c t_info; 0 = not armed
+    double t_info{0.0};   ///< continuous-GPS seconds of the last update
+    bool   armed{false};  ///< an update has landed; while armed the column no longer follows the level (R-A)
+    int    n_cells{0};    ///< station cells of the last update
+    double e_last{0.0};   ///< the last update's effect (m): positive when the wire's column is low against the stations
+    double d_last{0.0};   ///< the last step applied to the column (m)
+    double d_sum{0.0};    ///< the accumulated step since the run start (m)
+};
+
 /// One satellite's code-only level filter (card CLV,
 /// docs/refound/CLV_clock_level_2026-09-22.md).  The level is the direction that moves
 /// the satellite clock and every one of its phase biases by the same amount (+1 on
@@ -1643,6 +1658,24 @@ struct ClockLevelSat {
     /// Per phase-bias signal: the accumulated shift the emit-side hold follows (m), so
     /// the wire's phase side does not move with the level.
     std::map<std::string, double> xfer;
+    /// R-A (@c network.clock_level_free_cb_follow): per free same-band code-bias signal,
+    /// the follow steps applied since this satellite's last emission (m), declared on its
+    /// next B record (lvl=) and reset.
+    std::map<std::string, double> cb_pending;
+    /// R-B (@c network.clock_level_datum_pause): the filter was armed when the datum
+    /// changed, so while the anchor re-validates the satellite is skipped with its
+    /// information kept.  Cleared when the satellite is next updated or disarmed.
+    bool paused_datum{false};
+    /// R-B (@c network.clock_level_confirm_epochs): the epochs accumulated towards an arm
+    /// or a break (0 = none pending), their summed information, their information-weighted
+    /// effect sum, and the sign of a pending break (+1 or -1; 0 for an arm).
+    int    pend_n{0};
+    double pend_info{0.0};
+    double pend_esum{0.0};
+    int    pend_sign{0};
+    /// Card CLV2 R-A2 (@c network.clock_level_free_cb_rebase): per free same-band code-bias
+    /// signal (GPS C1W, Galileo C1X), the column's own filter.  Empty unless the knob is on.
+    std::map<std::string, ClockLevelFreeCb> free_cb;
 };
 
 /// Run state of the level filter (card CLV).  Lives in NetworkCarryState.  Not

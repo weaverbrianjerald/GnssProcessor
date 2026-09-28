@@ -23,6 +23,7 @@
 #include "config/GnssConfig.hpp"                    // GnssConfig (consumer_config), BaselineConfig via GnssConfigTypes
 #include "rinex/MultiRinexSync.hpp"
 #include "filter/NetworkRunTypes.hpp"               // NetStation
+#include "filter/NetworkSbasis.hpp"                 // card HLT: SatHealth
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"     // BroadcastEphemeris (brdc_rts nav staging)
 #include "products/SsrCorrectionStore.hpp"
@@ -90,6 +91,14 @@ namespace GnssProcessor {
         /// during the run).  (Card OWD)
         double window_t0_s = 0.0;
         double window_t1_s = 0.0;
+        /// Card HLT (@c network.sat_health): every satellite's broadcast health over time,
+        /// built at setup from the navigation file.  Read by the synced-epoch door
+        /// ("exclude") and by the clock-pivot election ("pivot").  Empty when the knob is off.
+        NetworkSbasis::SatHealth sat_health;
+        /// Card HLT, "exclude": the observations the door removed inside the processing
+        /// window, per satellite.  (The door also clears the synced epochs outside the
+        /// window, which no reader processes.)
+        std::map<std::string, long long> sat_health_removed;
         /// Phase 3b: the co-estimated SH-VTEC field model (estimate_iono_sh), or
         /// null (external-GIM / no-iono paths).
         std::unique_ptr<SphericalHarmonicIonosphere> sh_model;

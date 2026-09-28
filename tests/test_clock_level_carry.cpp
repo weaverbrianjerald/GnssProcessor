@@ -657,4 +657,224 @@ TEST(ClockLevelCarryTest, LevelStepRoundTripsTheWireAndKeepsTheDeclarations) {
     fs::remove(p, ec);
 }
 
+// ---------------------------------------------------------------------------
+// Return plan R-A: the free same-band code-bias families.
+// ---------------------------------------------------------------------------
+
+// Only a code on the band of the pin pair's first signal that is not in the pair is a
+// free same-band extra; the second band's companions are pinned at the group delay.
+TEST(ClockLevelCarryTest, FreeSameBandExtraIsTheFirstBandCompanionOnly) {
+    EXPECT_TRUE(clockLevelIsFreeSameBand("C1W", "C1C", "C2W"));
+    EXPECT_TRUE(clockLevelIsFreeSameBand("C1X", "C1C", "C5Q"));
+    EXPECT_FALSE(clockLevelIsFreeSameBand("C1C", "C1C", "C2W")) << "the pinned signal itself";
+    EXPECT_FALSE(clockLevelIsFreeSameBand("C2W", "C1C", "C2W"));
+    EXPECT_FALSE(clockLevelIsFreeSameBand("C2L", "C1C", "C2W")) << "second-band companion";
+    EXPECT_FALSE(clockLevelIsFreeSameBand("C5X", "C1C", "C5Q")) << "second-band companion";
+    EXPECT_FALSE(clockLevelIsFreeSameBand("L1W", "C1C", "C2W")) << "a phase signal";
+    EXPECT_FALSE(clockLevelIsFreeSameBand("C1W", "", "")) << "no pin pair";
+}
+
+// The "if" share keeps the ionosphere-free combination of the free extra and the pinned
+// second signal unchanged under the shift: with the extra moved by x and the slant
+// ionosphere by d / mu2, both code rows vanish, and the IF combination of the two rows
+// does not move for any ionosphere.
+TEST(ClockLevelCarryTest, FollowFactorKeepsTheExtraPairIonosphereFree) {
+    const double f1 = 1575.42e6, f2 = 1227.60e6, f5 = 1176.45e6;
+    EXPECT_NEAR(clockLevelFreeCbFollowFactor(1, f1, f2), 0.392815, 1e-6);
+    EXPECT_NEAR(clockLevelFreeCbFollowFactor(1, f1, f5), 0.442360, 1e-6);
+    EXPECT_DOUBLE_EQ(clockLevelFreeCbFollowFactor(2, f1, f2), 1.0);
+    EXPECT_DOUBLE_EQ(clockLevelFreeCbFollowFactor(0, f1, f2), 0.0);
+    EXPECT_DOUBLE_EQ(clockLevelFreeCbFollowFactor(1, 0.0, f2), 0.0);
+
+    const double d   = 0.8;
+    const double x   = clockLevelFreeCbFollowFactor(1, f1, f2) * d;
+    const double mu2 = (f1 / f2) * (f1 / f2);
+    const double a   = f1 * f1 / (f1 * f1 - f2 * f2);
+    const double b   = f2 * f2 / (f1 * f1 - f2 * f2);
+    // Rows after the clock moves by d: extra -d + x + I, pinned second -d + mu2 I.
+    const double I = d / mu2;
+    EXPECT_NEAR(-d + x + I, 0.0, 1e-12);
+    EXPECT_NEAR(-d + mu2 * I, 0.0, 1e-12);
+    // The IF combination with the ionosphere left where it was (I = 0).
+    EXPECT_NEAR(a * (-d + x) - b * (-d), 0.0, 1e-12);
+    // A full follow leaves an IF step of d (a - 1) - ... = 1.546 d on that pair.
+    EXPECT_NEAR(a * (-d + d) - b * (-d), b * d, 1e-12);
+}
+
+// The shift moves a free extra's carried value, its coupling s_prev, its time-linked
+// datum reference and its pending declaration by factor x d; the pinned pair's columns
+// and other satellites stay.
+TEST(ClockLevelCarryTest, ReBaseMovesTheFreeCodeBiasFamilyByItsShare) {
+    NetworkCarryState carry;
+    carry.prev_carry = {
+        prior(SharedParamKind::Clock, "G01", "", 0.8),
+        prior(SharedParamKind::CodeBias, "G01", "C1C", 1.5),
+        prior(SharedParamKind::CodeBias, "G01", "C2W", 2.5),
+        prior(SharedParamKind::CodeBias, "G01", "C1W", 1.9),
+        prior(SharedParamKind::CodeBias, "G02", "C1W", -0.3),
+    };
+    LocalCarry rx{0.0, 1e-4, 0.0};
+    rx.coupling = {term(SharedParamKind::CodeBias, "G01", "C1W", 0.5, 1.9, 1e-4),
+                   term(SharedParamKind::CodeBias, "G01", "C1C", 0.5, 1.5, 1e-4)};
+    carry.rx_cb_carry[{3, "C1W"}] = rx;
+    carry.code_bias_prev_["G|C1W"]["G01"] = 1.9;
+    carry.code_bias_prev_["G|C1W"]["G02"] = -0.3;
+    carry.code_bias_prev_["G|C1C"]["G01"] = 1.5;
+
+    const double d = 0.5, share = 0.4;
+    std::map<std::string, ClockLevelCbFollow> follow;
+    follow["G01"] = ClockLevelCbFollow{share, "C1C", "C2W"};
+    std::map<std::pair<std::string, std::string>, double> moved;
+    const long long n = clockLevelShiftCarry(carry, {{"G01", d}}, &follow, &moved);
+    // clock, the C1W carry, its coupling term, its datum reference.
+    EXPECT_EQ(n, 4);
+    EXPECT_DOUBLE_EQ(carry.prev_carry[0].value, 0.8 + d);
+    EXPECT_DOUBLE_EQ(carry.prev_carry[1].value, 1.5) << "pinned C1C stays";
+    EXPECT_DOUBLE_EQ(carry.prev_carry[2].value, 2.5) << "pinned C2W stays";
+    EXPECT_DOUBLE_EQ(carry.prev_carry[3].value, 1.9 + share * d);
+    EXPECT_DOUBLE_EQ(carry.prev_carry[4].value, -0.3) << "other satellites stay";
+    const LocalCarry& r = carry.rx_cb_carry.at({3, "C1W"});
+    EXPECT_DOUBLE_EQ(r.coupling[0].s_prev, 1.9 + share * d);
+    EXPECT_DOUBLE_EQ(r.coupling[1].s_prev, 1.5);
+    EXPECT_DOUBLE_EQ(carry.code_bias_prev_.at("G|C1W").at("G01"), 1.9 + share * d);
+    EXPECT_DOUBLE_EQ(carry.code_bias_prev_.at("G|C1W").at("G02"), -0.3);
+    EXPECT_DOUBLE_EQ(carry.code_bias_prev_.at("G|C1C").at("G01"), 1.5);
+    EXPECT_DOUBLE_EQ(carry.clk_level.sat.at("G01").cb_pending.at("C1W"), share * d);
+    ASSERT_EQ(moved.size(), 1u);
+    EXPECT_DOUBLE_EQ(moved.at({"G01", "C1W"}), share * d);
+
+    // Without a follow the code biases are untouched, as in the built card.
+    NetworkCarryState c2;
+    c2.prev_carry = {prior(SharedParamKind::Clock, "G01", "", 0.8),
+                     prior(SharedParamKind::CodeBias, "G01", "C1W", 1.9)};
+    c2.code_bias_prev_["G|C1W"]["G01"] = 1.9;
+    EXPECT_EQ(clockLevelShiftCarry(c2, {{"G01", d}}), 1);
+    EXPECT_DOUBLE_EQ(c2.prev_carry[1].value, 1.9);
+    EXPECT_DOUBLE_EQ(c2.code_bias_prev_.at("G|C1W").at("G01"), 1.9);
+}
+
+// The B-record lvl= token carries the follow step: an emitter fed the epochs directly
+// and one fed the written-then-read records declare the same code-bias discontinuities,
+// and without the declaration the follow would be declared as one.
+TEST(ClockLevelCarryTest, CodeBiasFollowStepRoundTripsTheWire) {
+    namespace fs = std::filesystem;
+    SbasisContract contract;
+    contract.decl.reference_receiver_id = "MBAR00UGA";
+    contract.disc_threshold_m           = 0.05;
+    contract.emit_clock_disc            = true;
+    contract.code_bias_jump_test        = true;
+    contract.present                    = true;
+
+    const double step[4] = {0.0, 0.12, -0.08, 0.0};
+    std::vector<NetworkSolutionEpoch> epochs;
+    double acc = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        acc += step[k];
+        NetworkSolutionEpoch sol;
+        sol.epoch_time  = GnssTime{2313, 259200.0 + 30.0 * k};
+        sol.iod_ssr     = 3;
+        sol.provider_id = 42;
+        sol.solution_id = 1;
+        NetworkSatSolution g05;
+        g05.sat        = "G05";
+        g05.has_clock  = true;
+        g05.clock_c0_m = 1.25;
+        g05.code_bias_m["C1C"] = -3.2;
+        g05.code_bias_m["C2W"] = -5.3;
+        g05.code_bias_m["C1W"] = -2.9 + acc + (k == 3 ? 0.40 : 0.0);
+        if (step[k] != 0.0) g05.cb_level_step_m["C1W"] = step[k];
+        g05.phase_bias["L1C"] = NetworkPhaseBias{-10.24, true, 1};
+        g05.phase_bias["L2W"] = NetworkPhaseBias{-9.33, true, 1};
+        sol.sats = {g05};
+        epochs.push_back(sol);
+    }
+
+    const fs::path p = fs::temp_directory_path() / "clv_cb_follow_roundtrip.txt";
+    std::error_code ec;
+    fs::remove(p, ec);
+    NetworkProductEmitter live = NetworkProductReader::makeReplayEmitter(contract);
+    SsrCorrectionStore store_live;
+    {
+        NetworkProductWriter w(p.string(), contract);
+        ASSERT_TRUE(w.good());
+        for (const NetworkSolutionEpoch& sol : epochs) {
+            live.emitToStore(sol, store_live);
+            w.write(sol);
+        }
+    }
+    {
+        std::ifstream f(p);
+        std::string ln;
+        int n_lvl = 0;
+        while (std::getline(f, ln))
+            if (ln.rfind("B,", 0) == 0 && ln.find(",lvl=") != std::string::npos) ++n_lvl;
+        EXPECT_EQ(n_lvl, 2) << "one B record per nonzero follow step";
+    }
+    bool ok = false;
+    SbasisContract parsed;
+    const std::vector<NetworkProductRecord> recs = NetworkProductReader::read(p.string(), &parsed, &ok);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(recs.size(), epochs.size());
+    for (std::size_t k = 0; k < recs.size(); ++k) {
+        const auto& m = recs[k].epoch.sats[0].cb_level_step_m;
+        if (step[k] == 0.0) EXPECT_TRUE(m.empty());
+        else                EXPECT_DOUBLE_EQ(m.at("C1W"), step[k]);
+    }
+    NetworkProductEmitter replayed = NetworkProductReader::makeReplayEmitter(parsed);
+    SsrCorrectionStore store_replay;
+    for (const NetworkProductRecord& r : recs) NetworkProductReader::replay(r, store_replay, replayed);
+    for (const char* sig : {"C1C", "C2W", "C1W"})
+        EXPECT_EQ(replayed.codeBiasDiscontinuityCounter("G05", sig),
+                  live.codeBiasDiscontinuityCounter("G05", sig)) << sig;
+    EXPECT_EQ(live.codeBiasDiscontinuityCounter("G05", "C1W"), 1)
+        << "the follow steps are not discontinuities; the genuine jump is declared once";
+    EXPECT_EQ(live.clvCbJumpExcluded(), 2);
+    EXPECT_EQ(replayed.clvCbJumpExcluded(), live.clvCbJumpExcluded());
+
+    NetworkProductEmitter blind = NetworkProductReader::makeReplayEmitter(contract);
+    SsrCorrectionStore store_blind;
+    for (NetworkSolutionEpoch sol : epochs) {
+        for (NetworkSatSolution& s : sol.sats) s.cb_level_step_m.clear();
+        blind.emitToStore(sol, store_blind);
+    }
+    EXPECT_EQ(blind.codeBiasDiscontinuityCounter("G05", "C1W"), 3);
+    EXPECT_EQ(blind.clvCbJumpExcluded(), 0);
+    fs::remove(p, ec);
+}
+
+// ---------------------------------------------------------------------------
+// Return plan R-B: confirmation before an arm or a break.
+// ---------------------------------------------------------------------------
+
+TEST(ClockLevelCarryTest, ConfirmationNeedsConsecutiveSameSignEpochs) {
+    ClockLevelSat ls;
+    // An arm over three epochs: the mean of the effects, weighted by information.
+    ClockLevelConfirm c = clockLevelConfirmStep(ls, 0, 10.0, 1.0, 3);
+    EXPECT_FALSE(c.apply);
+    c = clockLevelConfirmStep(ls, 0, 30.0, 2.0, 3);
+    EXPECT_FALSE(c.apply);
+    c = clockLevelConfirmStep(ls, 0, 60.0, 0.5, 3);
+    ASSERT_TRUE(c.apply);
+    EXPECT_DOUBLE_EQ(c.info, 100.0);
+    EXPECT_NEAR(c.e, (10.0 * 1.0 + 30.0 * 2.0 + 60.0 * 0.5) / 100.0, 1e-12);
+    EXPECT_EQ(ls.pend_n, 0) << "cleared once applied";
+
+    // A break whose sign alternates never confirms; two of the same sign do.
+    c = clockLevelConfirmStep(ls, +1, 5.0, 2.0, 2);
+    EXPECT_FALSE(c.apply);
+    c = clockLevelConfirmStep(ls, -1, 5.0, -2.0, 2);
+    EXPECT_FALSE(c.apply);
+    EXPECT_TRUE(c.reset);
+    c = clockLevelConfirmStep(ls, -1, 5.0, -3.0, 2);
+    ASSERT_TRUE(c.apply);
+    EXPECT_DOUBLE_EQ(c.e, -2.5);
+
+    // One epoch needed: every step applies at once (the built card).
+    ClockLevelSat one;
+    c = clockLevelConfirmStep(one, 0, 7.0, 0.3, 1);
+    ASSERT_TRUE(c.apply);
+    EXPECT_DOUBLE_EQ(c.e, 0.3);
+    EXPECT_DOUBLE_EQ(c.info, 7.0);
+}
+
 }  // namespace GnssProcessor

@@ -538,6 +538,23 @@ std::optional<uint32_t> SsrCorrectionStore::getGenerationId() const {
     return generation_id_;
 }
 
+void SsrCorrectionStore::addDeclaredLevelSteps(const std::string& sat, double clock_step_m,
+                                               const std::map<std::string, double>& bias_steps_m) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    DeclaredLevelSteps& d = declared_level_steps_[sat];
+    d.clock_m += clock_step_m;
+    for (const auto& [sig, x] : bias_steps_m) d.bias_m[sig] += x;
+    ++d.n;
+}
+
+std::optional<SsrCorrectionStore::DeclaredLevelSteps>
+SsrCorrectionStore::getDeclaredLevelSteps(const std::string& sat) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = declared_level_steps_.find(sat);
+    if (it == declared_level_steps_.end()) return std::nullopt;
+    return it->second;
+}
+
 NetworkProducerStatus::State NetworkProducerStatus::parseState(const std::string& token) {
     // Wire tokens written by NetworkProductWriter::writeEpochStatus (RTA-10).  A
     // token from a newer producer that is not recognised maps to Unknown, which is
@@ -644,6 +661,7 @@ void SsrCorrectionStore::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     by_sat_.clear();
     generation_id_ = 0;   // a cleared store carries no generation marker (RTA-3)
+    declared_level_steps_.clear();   // Card CLV2: the totals restart with the store
     producer_status_.reset();      // a cleared store carries no producer heartbeat (RTA-10)
     bias_attr_mismatch_.clear();   // mismatch tallies are per-run diagnostics (RTA-13)
     orbit_echo_mismatch_.clear();  // per-run diagnostics too; the armed skew budget is configuration and is kept (Card 7)

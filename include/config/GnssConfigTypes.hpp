@@ -235,6 +235,24 @@ namespace GnssProcessor {
          */
         double        pb_step_translate_eps_m{ 0.005 };
         /**
+         * @brief Card CLV2: the consumer answers a declared code-level step by raising its
+         *        variance along the stepped satellite's phase-blind ionosphere-ambiguity
+         *        direction (@c network.closed_loop.level_step_inflate, default false ⇒
+         *        byte-identical).
+         *
+         * A declared step is the C record's lvl= token (the satellite clock level, which
+         * moves every code row of the satellite and no phase row) and the B record's lvl=
+         * token (a free code-bias column's own step).  Derived into the consumer engine's
+         * config as @c processing.ssr_level_step_inflate
+         * (@c GnssConfig::ssrLevelStepInflate) by @c deriveClosedLoopConsumerConfig; a
+         * STANDALONE consumer sets that key directly.  See
+         * @c RealTimeEngine::reactToDeclaredLevelSteps_ (RealTimeEngineSsrBreaks.cpp).
+         */
+        bool          level_step_inflate{ false };
+        /// Card CLV2: the inflation's standard deviation over the declared code step
+        /// (@c network.closed_loop.level_step_inflate_k, default 1).
+        double        level_step_inflate_k{ 1.0 };
+        /**
          * @brief The consumer re-validates each float ambiguity against its own code
          *        level and refloats the ones the code rejects (card ALC).
          *

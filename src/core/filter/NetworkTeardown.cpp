@@ -5576,6 +5576,30 @@ int networkTeardown(
     // Level re-base run-end readout (card CLV): one line per constellation with the
     // mechanism's counters and the wire.  Silent unless network.clock_level_carry is armed.
     networkClockLevelTeardown(ctx, setup.emitter ? &*setup.emitter : nullptr, log);
+    // Card HLT: broadcast health on the network path (silent unless network.sat_health).
+    // Standing invariant #4: the counters are the evidence the rule acted.
+    if (ctx.knobs.sat_health != 0) {
+        const auto& c = ctx.counters;
+        long long removed = 0;
+        std::string by_sat;
+        for (const auto& [sat, n] : setup.sat_health_removed) {
+            removed += n;
+            by_sat += fmt::format("{}{} {}", by_sat.empty() ? "" : ", ", sat, n);
+        }
+        log->info("Network (card HLT): sat_health '{}': {} (satellite, epoch) registered clock "
+                  "satellite(s) flagged unhealthy; the clock-pivot election passed over one at "
+                  "{} (constellation, epoch) and found none healthy at {}; {} observation(s) "
+                  "removed by the setup door inside the window{}{}.",
+                  ctx.knobs.sat_health == 1 ? "pivot" : "exclude", c.hlt_unhealthy_registered,
+                  c.hlt_pivot_skips, c.hlt_pivot_fallbacks, removed,
+                  by_sat.empty() ? "" : ": ", by_sat);
+        if (ctx.knobs.sat_health == 1 && c.hlt_pivot_skips == 0)
+            log->warn("Network (card HLT): sat_health 'pivot' is armed but no pick passed over an "
+                      "unhealthy satellite: INERT for this run.");
+        if (ctx.knobs.sat_health == 2 && removed == 0)
+            log->warn("Network (card HLT): sat_health 'exclude' is armed but the door removed no "
+                      "observation inside the window: INERT for this run.");
+    }
     if (ctx.knobs.cta_on) {
         // Guarded temporal clock anchor run-end telemetry (card Q3); the ON-path counters
         // are the evidence (invariant #4).  `folded_anchored = 0` means the anchor never

@@ -113,6 +113,14 @@ struct NetworkSatSolution {
     /// testing.  The producer and a replay use the same arithmetic, so a replay
     /// reproduces every declaration.  0 unless the card moved the level.
     double                                  level_step_m{0.0};
+    /// Card CLV return plan R-A (@c network.clock_level_free_cb_follow): per code-bias
+    /// signal, the FOLLOW STEP of a free same-band column since this satellite's previous
+    /// emission (m): the re-base moved that code-bias record by this amount together with
+    /// the clock, so a consumer reading band 1 through it sees no level step.  Serialized
+    /// as the B-record @c lvl= token (written only when nonzero) and removed from the
+    /// emitter's code-bias value-jump test, in the producer and in a replay.  Empty unless
+    /// the follow moved a column.
+    std::map<std::string, double>           cb_level_step_m;
     /// Broadcast ephemeris version (IODE, in the IGS-SSR matching convention) that the
     /// estimable clock @c clock_c0_m is a delta against, threaded from the producer
     /// emission path in @c brdc_rts mode (RTF-2, Card 5).  -1 means sp3 mode or
@@ -377,6 +385,13 @@ public:
     /// @return the run count (0 on an unarmed run).
     long long clvJumpExcluded() const { return clv_jump_excluded_; }
 
+    /// @brief Card CLV return plan R-A: code-bias value-jump tests whose raw step exceeded
+    ///        the bar only because of the column's declared follow step
+    ///        (@ref NetworkSatSolution::cb_level_step_m, the B-record lvl= token), and
+    ///        which the step's removal therefore did not declare.
+    /// @return the run count (0 unless network.clock_level_free_cb_follow moved a column).
+    long long clvCbJumpExcluded() const { return clv_cb_jump_excluded_; }
+
     /// Classified cells of the last @ref emitToStore call, cleared at the top of every
     /// emit (card JT).  Always empty when the knob is off, so a run with the knob off
     /// allocates nothing and the driver's drain is a no-op.
@@ -601,6 +616,7 @@ private:
     /// with no extra stream state.
     std::vector<PbJumpDecommonEvent> pb_jump_decommon_events_;
     long long clv_jump_excluded_{0};   ///< See clvJumpExcluded() (card CLV).
+    long long clv_cb_jump_excluded_{0};   ///< card CLV R-A: see clvCbJumpExcluded()
     bool   emit_clock_disc_{false};       ///< Maintain and stamp the clock disc counter (A2).
     /// Staleness horizon (s, product time; 0 = off) (RTA-11).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time.  A key that

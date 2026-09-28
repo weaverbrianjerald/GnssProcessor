@@ -637,8 +637,21 @@ try {
     // handover epoch that is then withheld leaves the incumbent unchanged, and if
     // the incumbent returns before any new-datum epoch emits, the datum does not
     // move (RTA-1).
+    // Card HLT (network.sat_health): the election passes over a registered satellite the
+    // broadcast flags unhealthy at this epoch.  In "exclude" mode the setup door removed
+    // such a satellite's observations, so none is registered and the set stays empty.
+    std::set<std::string> hlt_ineligible;
+    if (ctx.knobs.sat_health != 0) {
+        const double t_s = TimeUtils::continuousGpsSeconds(se.time);
+        for (const std::string& s : registered_clock_sats)
+            if (setup.sat_health.unhealthyAt(s, t_s)) hlt_ineligible.insert(s);
+        ctx.counters.hlt_unhealthy_registered += static_cast<long long>(hlt_ineligible.size());
+    }
     plan = sb.buildSharedDatum(est, registered_clock_sats, decl,
-                               sticky_pivot ? &last_pivot : nullptr);
+                               sticky_pivot ? &last_pivot : nullptr,
+                               ctx.knobs.sat_health != 0 ? &hlt_ineligible : nullptr);
+    ctx.counters.hlt_pivot_skips     += plan.pivot_health_skips;
+    ctx.counters.hlt_pivot_fallbacks += plan.pivot_health_fallbacks;
 } catch (const std::exception& ex) {
     log->warn("Network: buildSharedDatum failed ({}); skipping epoch", ex.what());
     ++n_skipped;

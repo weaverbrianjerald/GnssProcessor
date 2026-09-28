@@ -53,6 +53,7 @@
 #include <Eigen/Dense>
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -84,6 +85,18 @@ constexpr double kClvClipFloorM = 0.05;
 /// Innovation break: a level residual beyond this many predicted standard deviations
 /// restarts the filter (the carried level was not what its information claimed).
 constexpr double kClvBreakK = 4.0;
+/// Card CLV2 R-A2: standard deviation (m) of one station's same-band code difference (the
+/// free signal minus the pin pair's first signal), the robust scatter the field baseline
+/// shows about the two-way fit (0.061 to 0.077 m; 0.04 to 0.06 above 40 degrees of
+/// elevation, 0.13 to 0.15 below 20).  Both codes share the band's multipath, which is why
+/// it is a fraction of a single code's.
+constexpr double kClvFcbSigmaM = 0.08;
+/// Card CLV2 R-A2: floor (m) on a free column filter's standard deviation.  Above the
+/// white-noise figure of one epoch's fit (about 0.02 m at ten cells), because the
+/// multipath in the difference is correlated over minutes.
+constexpr double kClvFcbFloorM = 0.02;
+/// Card CLV2 R-A2: fewest station cells a satellite needs in an epoch's same-band fit.
+constexpr int kClvFcbMinCells = 3;
 
 /// @brief Decay accumulated information to @p now_s.
 /// @param info      information valid at @p t_info (1/m^2).
@@ -182,6 +195,64 @@ struct ClockLevelUpdate {
 ClockLevelUpdate clockLevelFilterUpdate(double info_prior, bool armed, double i_ep, double e,
                                         double break_k, double floor_m);
 
+/// @brief Is @p signal a free same-band extra of the pin pair (@p pin1, @p pin2)?
+///
+/// Pure.  A code signal on the band of the pair's first signal that is neither signal of
+/// the pair (GPS C1W against C1C/C2W, Galileo C1X against C1C/C5Q).  The S-basis leaves
+/// such a column free (its difference to the first pin signal is a pure inter-signal
+/// correction the data reach), so it absorbs the level at ignition like the clock.  A
+/// companion on the SECOND pin band is pinned at the broadcast group delay and is not
+/// free, so it answers false.
+/// @param signal RINEX code, e.g. "C1W".
+/// @param pin1   the pin pair's first signal, e.g. "C1C".
+/// @param pin2   the pin pair's second signal, e.g. "C2W".
+/// @return true for a free same-band extra.
+bool clockLevelIsFreeSameBand(const std::string& signal, const std::string& pin1,
+                              const std::string& pin2);
+
+/// @brief The share of a level shift d a free same-band code-bias column follows.
+///
+/// Pure.  Mode 0: none.  Mode 2: all of it.  Mode 1: 1 - (f2/f1)^2.  Derivation: a
+/// station reading band 1 through the free extra k and band 2 through the pinned second
+/// signal sees, after the clock moves by d, the code rows -d + x_k + I and -d + mu2 I
+/// (mu2 = (f1/f2)^2); both vanish for I = d / mu2 and x_k = d (1 - 1/mu2), and the
+/// ionosphere-free combination of the two rows is then unchanged, so a consumer on that
+/// pair sees no step.  GPS L1/L2: 0.3928; Galileo E1/E5a: 0.4424.
+/// @param mode  0 off, 1 "if", 2 "full".
+/// @param f1_hz the pin pair's first carrier frequency.
+/// @param f2_hz its second carrier frequency.
+/// @return the follow factor (0 when a frequency is not positive in mode 1).
+double clockLevelFreeCbFollowFactor(int mode, double f1_hz, double f2_hz);
+
+/// Per-satellite input of the code-bias follow in @ref clockLevelShiftCarry.
+struct ClockLevelCbFollow {
+    double      factor{0.0};  ///< share of the satellite's level shift its free columns follow
+    std::string pin1;         ///< the satellite's realized pin pair, first signal
+    std::string pin2;         ///< …and second signal
+};
+
+/// Outcome of @ref clockLevelConfirmStep.
+struct ClockLevelConfirm {
+    bool   apply{false};  ///< the arm or break is confirmed: restart with @c e and @c info
+    bool   reset{false};  ///< a pending sequence was dropped (a sign change)
+    double e{0.0};        ///< the information-weighted mean effect of the confirmed epochs (m)
+    double info{0.0};     ///< their summed information (1/m^2)
+};
+
+/// @brief Accumulate one epoch towards an arm (@p break_sign 0) or a break (+1 or -1).
+///
+/// Adds this epoch's effect and information to the satellite's pending sequence; a break
+/// of the other sign than the pending one first drops the sequence.  When the sequence
+/// reaches @p n_needed epochs it is returned as confirmed and cleared.
+/// @param ls         the satellite's filter state (its pend_* fields are updated).
+/// @param break_sign 0 for an arm, the sign of the innovation for a break.
+/// @param i_ep       this epoch's information (1/m^2, > 0).
+/// @param e          this epoch's level effect (m).
+/// @param n_needed   the confirmation length (at least 1).
+/// @return whether the restart is confirmed, with the mean effect and summed information.
+ClockLevelConfirm clockLevelConfirmStep(ClockLevelSat& ls, int break_sign, double i_ep,
+                                        double e, int n_needed);
+
 /// @brief Move the carry along each satellite's level direction.
 ///
 /// For every (satellite, shift d) of @p shift: the carried clock and every carried
@@ -192,13 +263,28 @@ ClockLevelUpdate clockLevelFilterUpdate(double info_prior, bool armed, double i_
 /// the clock-jump baselines (@c prev_clk, @c cb_exc_prev_clk, @c pb_hold_prev_clock_m),
 /// the last solved phase bias (@c pb_level_prev) and any open pin bridge move with them;
 /// and the emit-side transfer of every phase-bias signal the satellite has in the carry
-/// or in the hold accumulates d (@c clk_level.sat[sat].xfer).  Code biases and every
-/// other satellite are untouched.
-/// @param carry the run's carried state.
-/// @param shift satellite -> shift along its level direction (m).
+/// or in the hold accumulates d (@c clk_level.sat[sat].xfer).  Without @p cb_follow the
+/// code biases and every other satellite are untouched.  With it (card CLV return plan
+/// R-A), every free same-band code-bias column of a listed satellite
+/// (@ref clockLevelIsFreeSameBand against its pin pair) moves by factor x d: its carried
+/// value, the @c s_prev of every coupling term on it, its time-linked datum reference
+/// (@c code_bias_prev_), and its pending B-record declaration (@c cb_pending).  With
+/// @p cb_direct (card CLV2 R-A2) a listed (satellite, signal) column moves by its own step
+/// through the same references, whether or not the satellite has a level shift; a column
+/// in @p cb_held does not follow the level (its own re-base replaces the follow share).
+/// @param carry     the run's carried state.
+/// @param shift     satellite -> shift along its level direction (m).
+/// @param cb_follow optional satellite -> code-bias follow (null = none).
+/// @param cb_moved  optional out: (satellite, signal) -> the code-bias step applied (m).
+/// @param cb_direct optional (satellite, signal) -> a code-bias column's own step (m).
+/// @param cb_held   optional (satellite, signal) columns that do not follow the level.
 /// @return the number of carried references moved.
-long long clockLevelShiftCarry(NetworkCarryState& carry,
-                               const std::map<std::string, double>& shift);
+long long clockLevelShiftCarry(
+    NetworkCarryState& carry, const std::map<std::string, double>& shift,
+    const std::map<std::string, ClockLevelCbFollow>* cb_follow = nullptr,
+    std::map<std::pair<std::string, std::string>, double>* cb_moved = nullptr,
+    const std::map<std::pair<std::string, std::string>, double>* cb_direct = nullptr,
+    const std::set<std::pair<std::string, std::string>>* cb_held = nullptr);
 
 /// @brief The re-base seam: measure, filter and apply (see the file banner).
 ///
@@ -224,6 +310,10 @@ void networkClockLevelRebase(NetworkRunContext& ctx, NetworkRunTraces& traces,
 
 /// @brief Stamp each emitted satellite's level step (the shifts applied since its
 ///        previous emission) onto @c NetworkSatSolution::level_step_m and clear it.
+///
+/// With @c network.clock_level_free_cb_follow the per-signal code-bias follow steps are
+/// stamped the same way onto @c NetworkSatSolution::cb_level_step_m (the B record's
+/// @c lvl= token) and cleared.
 ///
 /// Called at the emit before anything reads the clock values, so the clock emission
 /// re-base, the emitter's phase-bias jump test and the C record's @c lvl= token carry

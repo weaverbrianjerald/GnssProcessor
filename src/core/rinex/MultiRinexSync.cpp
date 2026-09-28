@@ -408,4 +408,21 @@ namespace GnssProcessor {
         return removed;
     }
 
+    std::size_t MultiRinexSync::removeObservationsIf(
+            std::vector<SyncedEpoch>& epochs,
+            const std::function<bool(const GnssTime&, const RinexObservation&)>& drop) {
+        std::size_t removed = 0;
+        for (auto& se : epochs) {
+            for (auto& [station, obs] : se.by_station) {
+                (void)station;
+                const auto keep_end = std::remove_if(
+                    obs.begin(), obs.end(),
+                    [&](const RinexObservation& o) { return drop(se.time, o); });
+                removed += static_cast<std::size_t>(obs.end() - keep_end);
+                obs.erase(keep_end, obs.end());
+            }
+        }
+        return removed;
+    }
+
 } // namespace GnssProcessor

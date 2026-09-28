@@ -400,6 +400,32 @@ public:
      */
     std::optional<uint32_t> getGenerationId() const;
 
+    /// Card CLV2: one satellite's DECLARED code-level steps, accumulated since the store
+    /// began or was cleared: the clock level of the C record's lvl= token and, per code
+    /// signal, a code-bias column's own step of the B record's lvl= token.  A consumer
+    /// differences two readings, the pattern of the discontinuity counters.
+    struct DeclaredLevelSteps {
+        double clock_m{0.0};                    ///< sum of the declared clock-level steps (m)
+        std::map<std::string, double> bias_m;   ///< code signal -> sum of its declared steps (m)
+        long long n{0};                         ///< emissions that declared a step
+    };
+
+    /**
+     * @brief Card CLV2: add one emission's declared code-level steps of a satellite.
+     * @param sat          Satellite id.
+     * @param clock_step_m The C record's lvl= step (m); 0 when none.
+     * @param bias_steps_m The B records' lvl= steps per code signal (m).
+     */
+    void addDeclaredLevelSteps(const std::string& sat, double clock_step_m,
+                               const std::map<std::string, double>& bias_steps_m);
+
+    /**
+     * @brief Card CLV2: a satellite's accumulated declared code-level steps.
+     * @param sat Satellite id.
+     * @return The totals, or std::nullopt when the satellite never declared a step.
+     */
+    std::optional<DeclaredLevelSteps> getDeclaredLevelSteps(const std::string& sat) const;
+
     /**
      * @brief Record the network producer's latest epoch-status heartbeat (RTA-10).
      *
@@ -791,6 +817,7 @@ private:
     mutable std::mutex                       mutex_;
     std::unordered_map<std::string, SatRecord> by_sat_;
     uint32_t                                 generation_id_{0};  ///< Producer solution-generation id; 0 = unset.  (RTA-3)
+    std::map<std::string, DeclaredLevelSteps> declared_level_steps_;  ///< Card CLV2: per satellite, the declared code-level step totals.
     std::optional<NetworkProducerStatus>     producer_status_;   ///< Latest producer epoch-status heartbeat; nullopt = never seen.  (RTA-10)
     /// The producer's declared signal roster (see @ref setDeclaredRoster).
     /// Configuration-like: survives clear().  (card SID phase 5)
