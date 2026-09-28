@@ -238,3 +238,27 @@ corrected the report. What it found in the code or the mathematics:
 - [ ] **Stale comment:** `src/core/config/GnssConfigLoad.cpp` (near line 2719) cites
   `RealTimeEngine::run`, which does not exist; the aided prediction runs in
   `RealTimeEngine::processEpoch`.
+
+## 2026-09-28: findings from the LaTeX report prose pass, run 2
+
+Run 2 (network, network_example, network_carry, pipeline_diagrams, state_vector):
+
+- [ ] **Verified defect (upgrades the section 4 suspicion):** a chordless (K = 0) block's
+  slot is stored with a default-constructed 0x0 `G` (`foldReducedDdPriors`,
+  `src/core/filter/NetworkNormalEquations.cpp`), so `ddPriorPosteriorMean` forms
+  `G.transpose() * x_s` with mismatched dimensions: an Eigen assertion in Debug, undefined
+  behaviour in Release. The header promises an empty result, and the sibling functions
+  (`ddPriorPosteriorCovariance`, `ddPriorInnovation`) return early for K = 0.
+- [ ] **Stale comment:** `StateKeySchema.hpp` section 4b says the GLONASS CDMA bands keep the
+  per-band IFB key; `resolveReceiverBias` returns none for them.
+- [ ] **Stale comment:** `StateManager.cpp` gives the baseline DD key as `GPS|G05|L1C|G01`,
+  without the `DD|` prefix the code uses.
+- [ ] **Figures to redraw (docs/report/pipeline_diagrams.tex; the captions are corrected):**
+  the SSR decode box lists message types 1057 to 1068 only (1240 to 1270 are also accepted);
+  the real-time front-end figure draws the observation-to-SSR hold as a buffer before
+  `processEpoch`, while the hold is the first admission gate inside it; the network figure
+  omits the station-modelling pass (`networkPassAHead_`) before registration.
+- [ ] **Table to update (docs/report/network.tex, seam table; the prose is corrected):** it
+  calls the prefit census always-on (it runs only when `trace_prefit_census`,
+  `trace_topology` or `seed_birth_check_sigma` is armed) and omits `networkBuildSignalRoster`,
+  `networkAmbFloatApplyDrops`, `networkGrossLosScreen` and `networkClockLevelRebase`.

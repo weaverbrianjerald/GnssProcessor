@@ -9,7 +9,7 @@
 %  phase bias is estimable only across stations.
 %
 %  Standalone-compilable subfile (shares gnssreport.sty via the
-%  subfiles package, exactly like network.tex).  Wired into the
+%  subfiles package, as network.tex does).  Wired into the
 %  combined volume after \subfile{network} in main.tex.
 % ============================================================
 \documentclass[main.tex]{subfiles}
@@ -19,15 +19,16 @@
 \section{Worked example: estimability in a two-receiver network}
 \label{sec:net-example}
 
-This section makes the rank deficiency and minimum-constraint datum of
-\dcref{sec:net-sbasis}{the minimum-constraint datum section of the Network-mode document} concrete on the smallest network that still shows
-the structure: two receivers $\rxset = \{A, B\}$ and four satellites
-$\sat \in \{1,2,3,4\}$. We strip everything that is not essential to the
-estimability argument: positions are known so the geometric range is
-removed, a single frequency is used, the troposphere and ionosphere are
-absent, and the data are noise-free, so that every number below is
-\emph{exact} and the gauge freedoms are visible by inspection. The point
-is not the size of the system but its null space.
+This section works the rank deficiency and minimum-constraint datum of
+\dcref{sec:net-sbasis}{the minimum-constraint datum section of the Network-mode document}
+through numerically on the smallest network that shows the structure: two
+receivers $\rxset = \{A, B\}$ and four satellites $\sat \in \{1,2,3,4\}$.
+Everything not needed for the estimability argument is removed. Positions
+are known, so the geometric range drops out; a single frequency is used;
+the troposphere and ionosphere are absent; the data are noise-free. Every
+number below is therefore exact, and the gauge freedoms are visible by
+inspection. The subject of the example is the null space of the system,
+not its size.
 
 \subsection{Code only: clocks and one gauge freedom}
 \label{sec:net-example-code}
@@ -46,18 +47,18 @@ g^\sat := \sLight\,\mathrm{d}t^\sat + B^\sat,
 where $a_\rx$ is the receiver clock and $g^\sat$ the satellite clock. On
 a single frequency the receiver and satellite \emph{code biases}
 $B_\rx, B^\sat$ are inseparable from the respective clocks, so each
-``clock'' here is already a clock\,+\,code-bias lump; the
-$\mathrm{IF}$-vs-$\mathrm{DCB}$ split of \dcref{sec:net-phasebias}{the satellite phase-bias section of the Network-mode document}
-degenerates to nothing with one band. There are
-$|\rxset| + |\{\sat\}| = 2 + 4 = 6$ unknowns and
-$2 \times 4 = 8$ observations.
+``clock'' here is a clock\,+\,code-bias lump. With one band, the
+$\mathrm{IF}$-vs-$\mathrm{DCB}$ split of
+\dcref{sec:net-phasebias}{the satellite phase-bias section of the Network-mode document}
+does not arise. The system has $|\rxset| + |\{\sat\}| = 2 + 4 = 6$
+unknowns and $2 \times 4 = 8$ observations.
 
-Take as ground truth (metres)
+The ground truth (metres) is
 \begin{equation*}
 a_A = 5,\quad a_B = 3,\qquad
 g^1 = 2,\quad g^2 = -1,\quad g^3 = 4,\quad g^4 = 0.5,
 \end{equation*}
-which through \Cref{eq:ex-code-model} produces the eight pseudoranges
+and \Cref{eq:ex-code-model} maps it to the eight pseudoranges
 \begin{center}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
@@ -69,16 +70,16 @@ $\rx = B$ & $1$ & $4$ & $-1$ & $2.5$ \\
 \end{tabular}
 \end{center}
 
-\paragraph{The deficiency, seen two ways.}
-\emph{(i) Invariance.} Add any constant $\kappa$ to \emph{all six}
-unknowns, $a_\rx \mapsto a_\rx + \kappa$ and $g^\sat \mapsto g^\sat +
-\kappa$; the difference $a_\rx - g^\sat$, and therefore every
-observation, is unchanged. The truth above and the shifted set
-$\{15,13,12,9,14,10.5\}$ fit the data identically. Absolute clocks are
-unknowable; only differences are.
+\paragraph{The deficiency from two directions.}
+\emph{(i) Invariance.} Adding a constant $\kappa$ to all six unknowns,
+$a_\rx \mapsto a_\rx + \kappa$ and $g^\sat \mapsto g^\sat + \kappa$,
+leaves every difference $a_\rx - g^\sat$, and therefore every
+observation, unchanged. The truth above and the shifted set
+$\{15,13,12,9,14,10.5\}$ fit the data identically. The data determine
+clock differences only, never absolute clocks.
 
-\emph{(ii) Singular normals.} Ordering the unknowns
-$\bm{x} = [\,a_A, a_B, g^1, g^2, g^3, g^4\,]^\Tr$ and using unit weights,
+\emph{(ii) Singular normals.} With the unknowns ordered as
+$\bm{x} = [\,a_A, a_B, g^1, g^2, g^3, g^4\,]^\Tr$ and unit weights,
 the normal matrix $\bm{N} = \bm{A}^\Tr\bm{A}$ is
 \begin{equation}
 \bm{N} =
@@ -94,16 +95,15 @@ the normal matrix $\bm{N} = \bm{A}^\Tr\bm{A}$ is
 \bm{N}\,\bm{1} = \bm{0},
 \label{eq:ex-code-normals}
 \end{equation}
-which is $6\times6$ but has rank $5$: the all-ones vector
+a $6\times6$ matrix of rank $5$. The all-ones vector
 $\bm{1} = [1,1,1,1,1,1]^\Tr$ is an exact null vector (every row sums to
-zero), and it is precisely the common-shift direction of view~(i). The
-system $\bm{N}\bm{x} = \bm{u}$ cannot be solved without one added
+zero), and it is the common-shift direction of view~(i). The system
+$\bm{N}\bm{x} = \bm{u}$ has no unique solution without one added
 constraint, a \emph{datum}.
 
 \paragraph{Two datum choices, same fit.}
-Pinning one clock removes the gauge. Two natural choices give
-\emph{different} parameter values that fit the eight observations
-\emph{equally and exactly}:
+Pinning one clock removes the gauge. Two natural choices give different
+parameter values, and both fit the eight observations exactly:
 \begin{center}
 \begin{tabular}{@{}lcccccc@{}}
 \toprule
@@ -116,10 +116,10 @@ $g^1 \equiv 0$ (reference satellite) & $3$ & $\phantom{-}1$ & $\phantom{-}0$ & $
 \end{center}
 Under $a_A \equiv 0$, every satellite-clock estimate comes out as
 $\hat g^\sat = g^\sat - a_A^{\text{true}}$: the reference receiver's
-clock is \emph{absorbed} into all of them. The estimated ``satellite
-clock'' is not the physical clock; it is the physical clock plus the
-datum we chose, the \emph{lumping} that the user must add back. This
-is exactly why a producer must \emph{declare} its datum
+clock is absorbed into all of them. The estimated ``satellite clock'' is
+the physical clock shifted by the chosen datum. This offset is the
+\emph{lumping}, and the user must account for it. For this reason a
+producer declares its datum
 (\dcref{sec:net-closedloop}{the closed-loop section of the Network-mode document}).
 
 \paragraph{What is invariant.}
@@ -137,28 +137,27 @@ $a_B - g^4$  & $2.5$ & $2.5$ & ($=\code^4_B$) \\
 \bottomrule
 \end{tabular}
 \end{center}
-Only the absolute labels are convention; the differences are physics.
+The absolute values are a convention; the differences are physical.
 This is the S-system of \cite{teunissen1985generalised} in six
 parameters.
 
 \begin{remark}[Why the producer cannot difference]
-Form the double difference of this code-only model,
+The double difference of this code-only model is
 $\dd{\code^{\sat,1}_{AB}} = (\code^1_A - \code^\sat_A) - (\code^1_B -
-\code^\sat_B)$. The between-satellite step gives $g^\sat - g^1$ for
-\emph{both} receivers, so the between-receiver step yields exactly
-$\bm{0}$. Double differencing annihilates the entire model, because DD
-is built to delete clocks and here clocks are all there is
-(\dcref{sec:diff}{the differencing section}). A DD user would estimate
-nothing; the network producer instead \emph{keeps} the clocks and pins
-one datum. That degeneracy is the producer's reason for existence in
-miniature.
+\code^\sat_B)$. The between-satellite step gives $g^\sat - g^1$ for both
+receivers, so the between-receiver step yields exactly $\bm{0}$. Double
+differencing eliminates the entire model: DD removes clocks, and here the
+model contains nothing else
+(\dcref{sec:diff}{the differencing section}). A DD user estimates
+nothing. The network producer instead keeps the clocks and pins one
+datum. This degeneracy is, in miniature, the reason a network producer
+exists.
 \end{remark}
 
 \subsection{Adding carrier phase: the satellite phase bias needs the network}
 \label{sec:net-example-phase}
 
-Now add the single-frequency carrier phase. With the same clock lumps it
-reads
+The single-frequency carrier phase, with the same clock lumps, is
 \begin{equation}
 \phaseo^\sat_\rx \;=\; a_\rx - g^\sat \;+\; b^\sat \;+\; N^\sat_\rx,
 \label{eq:ex-phase-model}
@@ -166,8 +165,8 @@ reads
 where $b^\sat$ is the satellite phase bias, the producer's target,
 and $N^\sat_\rx$ is the float ambiguity (in metres). The receiver phase
 bias and the receiver code-minus-phase offset are constant per receiver
-and have been absorbed into $N^\sat_\rx$; we keep $b^\sat$ explicit
-because it is what the producer must emit. Extend the truth with
+and are absorbed into $N^\sat_\rx$. The satellite bias $b^\sat$ stays
+explicit because the producer emits it. The truth is extended with
 \begin{align*}
 b^1 &= 0.10, & b^2 &= -0.20, & b^3 &= 0.05, & b^4 &= 0.15, \\
 N^\sat_A &: 10,\ -5,\ 20,\ 8, & & & N^\sat_B &: 12,\ -3,\ 18,\ 9, & &
@@ -185,36 +184,39 @@ $\rx = B$ & $13.10$ & $0.80$ & $17.05$ & $11.65$ \\
 \end{center}
 
 \paragraph{Counting: one receiver vs.\ two.}
-The clocks are fixed by the code, so per satellite the phase contributes
-$b^\sat + N^\sat_\rx$. With \emph{one} receiver this is a single equation
-$b^\sat + N^\sat_A$ in two unknowns: the satellite phase bias has no
-separate existence at all: it is inseparable from that one
-receiver's ambiguity, and not even redundant. With \emph{two} receivers
-there are two equations,
+The code fixes the clocks, so per satellite the phase contributes
+$b^\sat + N^\sat_\rx$. With one receiver this is a single equation
+$b^\sat + N^\sat_A$ in two unknowns. The satellite phase bias is then
+inseparable from that receiver's ambiguity, and the equation carries no
+redundancy. With two receivers there are two equations,
 \begin{equation}
 b^\sat + N^\sat_A, \qquad b^\sat + N^\sat_B,
 \label{eq:ex-phase-pair}
 \end{equation}
 in three unknowns $(b^\sat, N^\sat_A, N^\sat_B)$: rank $2$, one
-deficiency per satellite. The estimable two-dimensional space now
-contains the \emph{between-receiver single-difference ambiguity}
-$\brd{N^\sat_{AB}} = N^\sat_A - N^\sat_B$, a quantity that simply does
-not exist with one receiver, and is exactly the integer a user resolves
-(\dcref{sec:diff}{the differencing section}). The second receiver is
-what gives $b^\sat$ an identity shared across stations.
+deficiency per satellite. The estimable two-dimensional space contains
+the \emph{between-receiver single-difference ambiguity}
+$\brd{N^\sat_{AB}} = N^\sat_A - N^\sat_B$. This quantity does not exist
+with one receiver, and it is the integer a user resolves
+(\dcref{sec:diff}{the differencing section}). The second receiver gives
+$b^\sat$ an identity shared across stations.
 
 \paragraph{Datum and solution.}
 The joint code\,+\,phase system has a $1$-dimensional clock gauge (as
 before) plus one phase-bias$\leftrightarrow$ambiguity gauge per
 satellite: $b^\sat \mapsto b^\sat + c_\sat$, $N^\sat_\rx \mapsto
 N^\sat_\rx - c_\sat$ for all $\rx$. The minimum-constraint datum used
-here is the clock pin $a_A \equiv 0$, S-transform-equivalent to the
-reference-\emph{satellite} clock pin $g^1 \equiv 0$ that the estimator's
-S-basis actually declares
-(\dcref{sec:net-sbasis}{the minimum-constraint datum section of the Network-mode document}: the shared-block gauge pins a satellite clock
-per constellation, not a receiver clock), plus the reference-receiver
-ambiguity pins $N^\sat_A \equiv 0$ for every $\sat$ (the local datum on
-the pivot receiver, folded into station $A$'s rows). Solving gives
+here has two parts. The first is the clock pin $a_A \equiv 0$. It is
+S-transform-equivalent to the reference-\emph{satellite} clock pin
+$g^1 \equiv 0$ that the estimator's S-basis declares
+(\dcref{sec:net-sbasis}{the minimum-constraint datum section of the Network-mode document}):
+in its default pin mode the shared-block gauge pins one satellite clock
+per constellation, not a receiver clock (the optional
+\texttt{network.clock\_datum\_sum\_to\_zero} and
+\texttt{network.clock\_datum\_broadcast\_anchored} modes replace the
+pin). The second part is the set of reference-receiver ambiguity pins
+$N^\sat_A \equiv 0$ for every $\sat$: the local datum on the pivot
+receiver, folded into station $A$'s rows. The solution is
 \begin{center}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
@@ -226,46 +228,45 @@ $\hat N^\sat_B = N^\sat_B - N^\sat_A$ & $2$ & $2$ & $-2$ & $1$ \\
 \bottomrule
 \end{tabular}
 \end{center}
-(the clocks are unchanged from
-\Cref{sec:net-example-code}). One checks the fit directly, e.g.\
+with the clocks unchanged from \Cref{sec:net-example-code}. The fit
+checks directly, e.g.\
 $\hat{\phaseo}^3_B = a_B - g^3 + \bar b^3 + \hat N^3_B
    = -2 -(-1) + 20.05 + (-2) = 17.05$, matching the observation.
 
 \paragraph{Reading the result.}
-Two things are worth dwelling on.
+The solution shows two properties.
 \begin{itemize}[leftmargin=*, itemsep=1pt]
-\item \textbf{The emitted bias is dominated by the lump.} The physical
-      satellite phase bias of satellite~$1$ is $b^1 = 0.10$~m, but the
-      \emph{emitted} estimable bias is $\bar b^1 = 10.10$~m: it has
-      absorbed receiver~$A$'s ambiguity ($10$~m) for that satellite.
-      This is Odijk's $\bar b^\sat = b^\sat + (\text{pivot-receiver
-      ambiguity})$ (\dcref{sec:net-phasebias}{the satellite phase-bias section of the Network-mode document}, Eq.~4/9) made arithmetic.
-      A consumer recovers integers only by removing the \emph{same}
-      lumped quantity: producer datum and consumer integer recovery
-      must be one S-system.
-\item \textbf{The network unlocks the integer.} The estimable
+\item \emph{The lump dominates the emitted bias.} The physical
+      satellite phase bias of satellite~$1$ is $b^1 = 0.10$~m, while the
+      emitted estimable bias is $\bar b^1 = 10.10$~m: it has absorbed
+      receiver~$A$'s ambiguity ($10$~m) for that satellite. This is
+      Odijk's $\bar b^\sat = b^\sat + (\text{pivot-receiver
+      ambiguity})$ (\dcref{sec:net-phasebias}{the satellite phase-bias section of the Network-mode document},
+      Eq.~4/9) in numbers. A consumer recovers integers only by removing
+      the same lumped quantity, so the producer datum and the consumer
+      integer recovery must belong to one S-system.
+\item \emph{The network makes the integer estimable.} The estimable
       $\hat N^\sat_B = N^\sat_B - N^\sat_A = \brd{N^\sat_{AB}}$ is the
-      between-receiver single-difference ambiguity, the very quantity an
-      RTK user fixes to an integer. It is identically absent in a
-      single-receiver problem; the second station is what brings it into
-      existence. The satellite phase bias becomes a definite,
-      transferable number for the price of pinning one reference
-      ambiguity, and that pin is what it carries.
+      between-receiver single-difference ambiguity, the quantity an RTK
+      user fixes to an integer. It is absent from a single-receiver
+      problem; the second station introduces it. The satellite phase
+      bias becomes a definite, transferable number at the cost of
+      pinning one reference ambiguity, and it carries that pin.
 \end{itemize}
 
-This four-satellite, two-receiver instance is, up to the geometry and
-the second frequency it suppresses, exactly the synthetic network the
-estimator core is validated on: the
+Up to the geometry and the second frequency it omits, this
+four-satellite, two-receiver instance has the structure of the synthetic
+network on which the estimator core is tested. The
 \texttt{RecoversSyntheticTruthUpToSTransform} test
-(\texttt{tests/test\_network\_estimator.cpp}) builds rows of exactly
-this shape (at four receivers and five satellites, from a random
-truth), pins the reference-satellite clock datum $g^1 \equiv 0$
+(\texttt{tests/test\_network\_estimator.cpp}) builds rows of this shape
+(four receivers and five satellites, from a seeded random truth), pins
+the reference-satellite clock datum $g^1 \equiv 0$
 (S-transform-equivalent to the $a_A \equiv 0$ used above) through
-\texttt{NetworkEstimator::solve}, and asserts
-recovery of the satellite-side parameters \emph{up to the declared
-S-transform}, i.e.\ recovery of the lumped $\bar b^\sat$ and the
-single-difference ambiguities above, not of the unobservable physical
-$b^\sat$.
+\texttt{NetworkEstimator::solve}, and pins the pivot receiver's
+ambiguities with tight-prior rows in that station's block. It asserts
+recovery of the satellite-side parameters up to the declared
+S-transform: the lumped $\bar b^\sat$ and the single-difference
+ambiguities above, not the unobservable physical $b^\sat$.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

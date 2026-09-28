@@ -16,14 +16,15 @@
 %  \fitwidth helper are defined in main.tex.
 % ============================================================
 
-This section sketches the control- and data-flow structures that the prose
-chapters describe algebraically: the per-epoch estimation loop
-(\Cref{fig:epoch-loop}), the shared geometry kernel behind the three
-differencing regimes (\Cref{fig:differencing}), the real-time SSR correction
-pipeline (\Cref{fig:ssr-pipeline}), the real-time streaming front-end that
-feeds it (\Cref{fig:rt-stream}), and the PPP-RTK network producer's joint
-estimator (\Cref{fig:net-flow}).  Boxes name the function or class that
-realises each step, so the diagrams double as a map into \texttt{src/}.
+This section shows the control and data flow behind the algebra of the other
+chapters: the per-epoch estimation loop (\Cref{fig:epoch-loop}), the shared
+geometry kernel behind the three differencing regimes (\Cref{fig:differencing}),
+the real-time SSR correction pipeline (\Cref{fig:ssr-pipeline}), the real-time
+streaming front-end that feeds it (\Cref{fig:rt-stream}), and the joint
+estimator of the PPP-RTK network producer (\Cref{fig:net-flow}).  Each box names
+the function or class that implements the step, so the diagrams also serve as a
+map into \texttt{src/}.  The diagrams are maintained by hand and simplify the
+code: they show the main sequence, not every gate or diagnostic.
 
 % ------------------------------------------------------------
 %  Figure 1: per-epoch post-processing loop
@@ -60,10 +61,11 @@ realises each step, so the diagrams double as a map into \texttt{src/}.
       node[pos=0.25, right, note] {next epoch};
 \end{tikzpicture}}
 \caption{Per-epoch post-processing loop in \texttt{Application::run}.  Solid
-arrows are the intra-epoch sequence; the dashed arrow is the epoch-to-epoch
-feedback.  Steps tagged \textsuperscript{(P)} run in post-processing only and
-are skipped on the real-time path (\texttt{RealTimeEngine}).  The smoother runs
-once after the forward pass completes.}
+arrows give the sequence within an epoch; the dashed arrow is the feedback from
+one epoch to the next.  Steps tagged \textsuperscript{(P)} run in
+post-processing only; the real-time path (\texttt{RealTimeEngine}) has no GIM
+source and no smoother.  The smoother runs once, after the forward pass, and
+only when \texttt{run\_smoother} is set.}
 \label{fig:epoch-loop}
 \end{figure}
 
@@ -98,11 +100,13 @@ once after the forward pass completes.}
   \draw[flow] (bssd.south) -- (kf.north);
   \draw[flow] (dd.south)   |- (kf.east);
 \end{tikzpicture}}
-\caption{The three differencing regimes share one geometry kernel.  Undifferenced
-residuals are computed once; the strategy selected by
-\texttt{differencingModeFor} then applies no transform (PPP), a between-satellite
-single difference against a pivot (PPP-RTK), or a between-receiver$\,\to\,$between-satellite
-double difference (baseline) before the common Kalman update.}
+\caption{The three differencing regimes share one geometry kernel.  The
+undifferenced observed and modelled values are computed once.  The regime
+returned by \texttt{differencingModeFor} (selected once, when
+\texttt{MeasurementBuilderFactory} builds the measurement builder) then applies
+no transform (PPP), a between-satellite single difference against a pivot
+(PPP-RTK), or a between-receiver$\,\to\,$between-satellite double difference
+(baseline).  All three feed the same Kalman update.}
 \label{fig:differencing}
 \end{figure}
 
@@ -151,12 +155,17 @@ double difference (baseline) before the common Kalman update.}
   \draw[flow] (reset) -- (kf);
   \draw[flow] (kf) -- (arr);
 \end{tikzpicture}}
-\caption{Real-time SSR correction pipeline.  Observations, SSR corrections, and
-broadcast ephemerides are decoded from the byte stream into two stores; the
-undifferenced observation model then overlays the precise orbit (RAC frame),
-clock polynomial, and code/phase biases before the Kalman update.  A
-phase-bias discontinuity counter forces an ambiguity reset ahead of the
-update.  See \texttt{RealTimeEngine::processEpoch}.}
+\caption{Real-time SSR correction pipeline.  The decoder splits the byte stream
+three ways: observations go to \texttt{processEpoch}, SSR corrections to
+\texttt{SsrCorrectionStore}, and broadcast ephemerides to
+\texttt{LiveEphemerisStore}.  The legacy SSR decoder accepts message types
+1057--1068 and 1240--1270; the diagram lists the first range only.  The
+undifferenced observation model then applies the precise orbit (RAC frame), the
+clock polynomial and the code and phase biases.  Between the slip check and the
+Kalman update, \texttt{resetOnPhaseBiasDisc} reacts to a change of the
+phase-bias discontinuity counter, by default with an ambiguity reset;
+\texttt{reinflateOnCodeBiasDisc} and \texttt{reinflateOnClockDisc} follow for
+the code-bias and clock counters.  See \texttt{RealTimeEngine::processEpoch}.}
 \label{fig:ssr-pipeline}
 \end{figure}
 
@@ -204,16 +213,22 @@ update.  See \texttt{RealTimeEngine::processEpoch}.}
         node[pos=0.25, above, note] {drainHeldObs};
 \end{tikzpicture}}
 \caption{Real-time streaming front-end ahead of the SSR correction stage of
-\Cref{fig:ssr-pipeline}.  Raw bytes from \texttt{NtripClient}/\texttt{TcpClient}
-are reassembled into CRC-validated RTCM3 frames by \texttt{RtcmStreamReader},
-then decoded and dispatched by \texttt{feedRtcmFrame}: MSM observations
-accumulate in an edge-triggered epoch buffer, while SSR corrections and
-broadcast ephemerides flow into their stores.  When
-\texttt{enable\_obs\_ssr\_sync} is set, an obs epoch that runs ahead of the SSR
-coverage horizon (newest SSR content epoch $+$ \texttt{ssr\_max\_age}) is held
-in \texttt{held\_obs\_} and re-attempted by \texttt{drainHeldObs} once an SSR
-push advances the horizon; otherwise it is passed straight to
-\texttt{processEpoch}.  See \dcref{sec:rt}{the real-time engine}.}
+\Cref{fig:ssr-pipeline}.  \texttt{RtcmStreamReader} reassembles the raw bytes
+from \texttt{NtripClient} or \texttt{TcpClient} into CRC-validated RTCM3 frames,
+and \texttt{feedRtcmFrame} decodes and dispatches each frame.  MSM observations
+accumulate in \texttt{pending\_obs\_}, which is submitted to
+\texttt{processEpoch} when a frame with a new epoch time arrives (the edge
+trigger).  SSR corrections and broadcast ephemerides go to their stores.  With
+\texttt{enable\_obs\_ssr\_sync} set, the first admission gate of
+\texttt{processEpoch} (\texttt{admitBacklogAndSync}) holds an observation epoch
+that is newer than the SSR coverage horizon (newest SSR content epoch $+$
+\texttt{ssr\_max\_age}).  The held epoch is kept in \texttt{held\_obs\_} (only
+the latest one) and resubmitted by \texttt{drainHeldObs} after each SSR push.
+An epoch inside the horizon is processed at once.  A hold longer than
+\texttt{obs\_ssr\_sync\_max\_hold\_s} (default \SI{30}{s}) latches a degraded
+outage state in which epochs pass through without SSR until the stream covers
+them again.  The gate applies only with a live SSR orbit and clock source and
+never before the first epoch.  See \dcref{sec:rt}{the real-time engine}.}
 \label{fig:rt-stream}
 \end{figure}
 
@@ -252,32 +267,29 @@ push advances the horizon; otherwise it is passed straight to
   \draw[feedback] (emit.east) -- ++(1.4,0) |- (obs.east)
         node[pos=0.25, right, note] {next epoch};
 \end{tikzpicture}}
-\caption{PPP-RTK network producer joint estimator (\texttt{NetworkEstimator}).
-Each epoch the shared satellite-side columns, one per
-(satellite, parameter-kind, signal) for the estimable clock, code bias, and
-phase bias, are re-registered at the top of every epoch (\texttt{reset}, then
-\texttt{registerClock} / \texttt{registerCodeBias} / \texttt{registerPhaseBias},
-plus \texttt{registerVtecCoeff} for the network-wide SH-VTEC coefficients when
-\texttt{network.estimate\_iono\_sh} is on), after which \texttt{beginEpoch}
-opens an arrowhead normal-equation system of that width.
-\texttt{addStation} contributes one
-pre-formed block of local-vs-shared design rows per station (the network
-applies no receiver-side differencing); the local nuisances are Schur-reduced
-out, leaving a reduced shared system that is rank-deficient by the gauge
-freedoms.  \texttt{solve} pins those with an explicit minimum-constraint
-S-basis datum on a copy of the reduced system, and \texttt{toSolutionEpoch}
-maps the shared estimate to an emittable record that
-\texttt{NetworkProductEmitter} serializes in IGS-SSR convention.  The
-\texttt{Application::runNetwork} driver runs this core in a live per-epoch loop
-over the synced \texttt{MultiRinexSync} stations, but is itself only
-orchestration: the two-pass station assembly
-(\texttt{networkPassAHead\_}/\texttt{networkPassB\_},
-\texttt{app/ApplicationNetworkAssembly}) feeds \texttt{addStation}, the datum and
-solve run in \texttt{networkSolveGlue}, and the emit step in
-\texttt{networkEmitStore}, which, when \texttt{network.closed\_loop.enable} is
-armed, additionally drives a held-out PPP-RTK consumer against the freshly
-emitted products, a between-satellite single-difference (BSSD) consumer by
-default or an undifferenced one under
+\caption{Joint estimator of the PPP-RTK network producer
+(\texttt{NetworkEstimator}).  The shared satellite-side columns, one per
+(satellite, parameter kind, signal) for the estimable clock, code bias and phase
+bias, are registered afresh every epoch (\texttt{reset}, \texttt{registerClock},
+\texttt{registerCodeBias}, \texttt{registerPhaseBias}, and
+\texttt{registerVtecCoeff} for the SH-VTEC coefficients when
+\texttt{network.estimate\_iono\_sh} is on); \texttt{beginEpoch} opens an
+arrowhead normal-equation system of that width.  \texttt{addStation} adds one
+pre-formed block of local-versus-shared design rows per station, with no
+receiver-side differencing.  Schur reduction removes the local nuisances; the
+reduced shared system is rank-deficient by the gauge freedoms.  \texttt{solve}
+fixes them with an explicit minimum-constraint S-basis datum on a copy of the
+reduced system, and \texttt{toSolutionEpoch} maps the estimate to a record that
+\texttt{NetworkProductEmitter} writes in the IGS-SSR convention.  The driver
+\texttt{Application::runNetwork} runs this core once per epoch over the
+\texttt{MultiRinexSync} stations and only orchestrates:
+\texttt{networkPassAHead\_} models each station, \texttt{networkAssemblyRegisterColumns\_}
+registers the columns and calls \texttt{beginEpoch}, \texttt{networkPassB\_}
+calls \texttt{addStation} (all in \texttt{app/ApplicationNetworkAssembly}),
+\texttt{networkSolveGlue} applies the datum and solves, \texttt{networkSolPrep}
+maps, and \texttt{networkEmitStore} emits.  With
+\texttt{network.closed\_loop.enable} set, the emit step also drives a held-out
+PPP-RTK consumer on the new products: BSSD by default, undifferenced with
 \texttt{closed\_loop.consumer\_undifferenced}.
 See \dcref{sec:net}{the network mode} and
 \dcref{sec:net-arch}{its producer-architecture section}.}
