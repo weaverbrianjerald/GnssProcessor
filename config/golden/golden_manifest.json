@@ -26,14 +26,18 @@
   "(network.gross_los_screen, gross_los_min_rows_rule available, gross_los_emit_exclude) armed at the author's instruction",
   "and pinned here on the SAME frozen bases (no second freeze; the live bases carry the knobs and a dated comment).",
   "Baseline pair runs/_rf0hv10_{field,sim}6: the field wire byte-identical to runs/_rap_rf3b_gl_nobound, the sim byte-identical",
-  "to runs/_rf0hv9_sim6 (the screen never declares there)."
+  "to runs/_rf0hv9_sim6 (the screen never declares there).",
+  "2026-09-28 (card PBF): the consumer's answer to a held phase bias's presence edges",
+  "(network.closed_loop.pb_hold_presence_flip) armed at the author's instruction and pinned here on the SAME frozen bases;",
+  "consumer-side only, the producer's solve and products untouched.  Baseline pair runs/_rf0hv11_{field,sim}6: 0 presence",
+  "edges at both held-out consumers in 6 h, byte-identical to runs/_rap_owd_{field,sim}6f (the post-OWD references)."
  ],
  "goldens": [
   {
    "name": "golden_sim_refound",
    "out": "config/golden/golden_sim_refound.json",
    "base": "config/refound/sim_gps_dual_rf0hv_golden_2026-09-22.json",
-   "description": "SIM bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): the 60-station synthetic truth bed, GPS-only L1/L2 (no lanes, no F3, no seams), SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH); the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum; SZZ000SIM held-out cold consumer.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22).  Same posture as golden_field_refound; only the bed differs.  Validated 6 h cold (runs/_rf0hv10_sim6, exe gnss_processor_rf3b.exe, byte-identical to runs/_rf0hv9_sim6): 720/720 emitted, consumer 3D p50 by hour 0.598 / 0.103 / 0.096 / 0.056 / 0.055 / 0.049 m, 448 of 720 epochs below a decimetre.",
+   "description": "SIM bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): the 60-station synthetic truth bed, GPS-only L1/L2 (no lanes, no F3, no seams), SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (sat_gf_datum broadcast_tgd, time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH); the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum; SZZ000SIM held-out cold consumer.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22), closed_loop.pb_hold_presence_flip (card PBF, 2026-09-28).  Same posture as golden_field_refound; only the bed differs.  Validated 6 h cold (runs/_rf0hv11_sim6, exe gnss_processor_pbf2.exe, byte-identical to runs/_rap_owd_sim6f): 720/720 emitted, consumer 3D p50 by hour 0.598 / 0.103 / 0.096 / 0.056 / 0.055 / 0.049 m, 448 of 720 epochs below a decimetre.",
    "pins": {
     "processing.frequency_mode": "dual",
     "processing.active_systems": [
@@ -67,7 +71,9 @@
     "network.gross_los_screen": true,
     "network.gross_los_min_rows_rule": "available",
     "network.gross_los_emit_exclude": true,
-    "network.serialize_sbasis_contract": true
+    "network.serialize_sbasis_contract": true,
+
+    "network.closed_loop.pb_hold_presence_flip": true
    },
    "unset": [],
    "exceptions": {
@@ -83,7 +89,7 @@
    "name": "golden_field_refound",
    "out": "config/golden/golden_field_refound.json",
    "base": "config/refound/field_gps_dual_rf0hv_golden_2026-09-22.json",
-   "description": "FIELD bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): DOY-129, 58 stations (the 61-station roster minus the two C2X-only stations INEG00MEX / OAFA00ARG of card RF-0g, minus MIZU00JPN of card SCU), GPS-only L1/L2 with the X channels cut (C/L/D/S 1X and 2X), WTZZ00DEU held-out cold consumer; SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH), no external biases; the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22).  Validated 6 h cold (runs/_rf0hv10_field6, exe gnss_processor_rf3b.exe): 720/720 emitted, consumer 3D p50 by hour 0.560 / 0.059 / 0.028 / 0.030 / 0.039 / 0.048 m, 611 of 720 epochs below a decimetre.",
+   "description": "FIELD bed of the RF-0hv WORKING POSTURE (docs/refound/RF-0hv_working_posture_2026-09-15.md and the cards it lists; re-based off RF-0g on 2026-09-22, card GRB): DOY-129, 58 stations (the 61-station roster minus the two C2X-only stations INEG00MEX / OAFA00ARG of card RF-0g, minus MIZU00JPN of card SCU), GPS-only L1/L2 with the X channels cut (C/L/D/S 1X and 2X), WTZZ00DEU held-out cold consumer; SELF-CONTAINED - the satellite geometry-free code bias pinned at the broadcast T_GD (time-linked), no GIM, no Kaula prior, free per-LOS slant iono (no SH), no external biases; the FLOAT VEHICLE (network.ambiguity_vehicle float_kf with network.phase_datum_held_basis, cards RF-1 / RF-2b) carried on phase_leveling with carry_coupling_gauge_project and the prioritized phase-datum family; the Q3 temporal clock anchor at the physical q + the clock step test; the receiver code-bias datum.  Armed on this posture by the author's decision and pinned here: cycle_slip.gap_reentry_relevel (card AB2), cycle_slip.gap_reentry_per_signal (card GRS), processing.canonical_signal_rule priority (card CSL), phase_datum_gate_drop_erase (card EV7), station_marker_to_arp (card UPO), second_code_channel with second_code_sigma_scale 10 (card SCC), cycle_slip.tracker_modeled_first (card GRK), gross_los_screen with gross_los_min_rows_rule available and gross_los_emit_exclude (card RF-3, 2026-09-22), closed_loop.pb_hold_presence_flip (card PBF, 2026-09-28).  Validated 6 h cold (runs/_rf0hv11_field6, exe gnss_processor_pbf2.exe, byte-identical to runs/_rap_owd_field6f): 720/720 emitted, consumer 3D p50 by hour 0.560 / 0.059 / 0.028 / 0.030 / 0.039 / 0.048 m, 611 of 720 epochs below a decimetre.",
    "pins": {
     "processing.frequency_mode": "dual",
     "processing.active_systems": [
@@ -117,7 +123,9 @@
     "network.gross_los_screen": true,
     "network.gross_los_min_rows_rule": "available",
     "network.gross_los_emit_exclude": true,
-    "network.serialize_sbasis_contract": true
+    "network.serialize_sbasis_contract": true,
+
+    "network.closed_loop.pb_hold_presence_flip": true
    },
    "unset": [],
    "exceptions": {

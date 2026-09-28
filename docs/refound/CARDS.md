@@ -234,7 +234,9 @@ line (rule 3 of the index: updated at pre-registration and at close) is its entr
   declared level step by inflating the stepped satellite's phase-blind ionosphere-ambiguity
   direction, where it absorbed 71 percent of the old code level; R-C's common-shift declaration
   sequenced; bars C0 to C3 frozen.
-- [PBF](PBF_pb_hold_presence_edges_2026-09-28.md): open (BUILT 2026-09-28, default OFF, NOT ARMED:
+- [PBF](PBF_pb_hold_presence_edges_2026-09-28.md): closed (ARMED 2026-09-28 at the author's instruction:
+  working bases, golden pins, ledger A13, posture row; baseline pair `runs/_rf0hv11_{field,sim}6`,
+  byte-identical to the post-OWD references, 0 edges at either held-out consumer; BUILT 2026-09-28:
   P0, P1 and P3 pass, P2 fails as frozen with the catastrophe removed, ARHT00ATA 803.9 to 0.762 m in
   hour 2 on the CLV wire, the rest card CLV2's phase-side cost; a candidate for the author's arming
   decision), 2026-09-28: build card, presence edges of a held phase bias at the consumer. Under the

@@ -637,6 +637,23 @@ namespace GnssProcessor {
               "a float consumer: 0.0467 m of within-arc RMS on the field against the clock's "
               "0.0274 m, first differences uncorrelated with the clock's): adopted 2026-09-20, "
               "all five PBH-1 bars pass; the solve is untouched" },
+            // --- The consumer's answer to a held bias's presence edges (card PBF).  Under the
+            //     hold, a bias that appears on a phase row the consumer already uses, or leaves
+            //     it, steps the row by the whole bias; the hold seam claims the key and, without
+            //     this knob, the A5 edge is skipped and the Kalman peel is the only response.
+            //     Consumer-side only (derived into the consumer as
+            //     processing.ssr_pb_hold_presence_flip; never reaches the producer's solve).
+            //     Regime: the hold's own (the float vehicle with a closed-loop consumer) and the
+            //     hold armed, the only wire whose keys the hold seam claims.
+            { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
+                  && nc.closed_loop.enable && nc.emit_pb_hold,
+              nc.closed_loop.pb_hold_presence_flip,
+              Tier::SCOPED, false, "network.closed_loop.pb_hold_presence_flip",
+              "answer a held phase bias's presence edges at the consumer (appearing on, or "
+              "leaving, a row in use steps it by the whole bias; unanswered, the Kalman peel "
+              "misattributes it and ARHT00ATA left by 490 m in one epoch): knob off "
+              "byte-identical, the 8 census edges answered and 15 of 17 sites unchanged, "
+              "ARHT00ATA 804 -> 0.76 m and QUIN00USA 0.79 -> 0.58 m in hour 2 on the CLV wire" },
             { network_raim_ && (nc.closed_loop.enable || network_service_mode_),
               network_emit_ura_,
               Tier::SCOPED, true , "network.emit_ura",

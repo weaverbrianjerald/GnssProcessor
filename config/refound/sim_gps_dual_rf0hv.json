@@ -87,7 +87,16 @@
     "clock wire 0.0045 / 0.0028 to 0.0041 / 0.0028 m; census of 16 sites flat to a millimetre, counts 5 better and none worse, absolute mean",
     "Up smaller at 10 of 16.  Byte-identical on the sim (2 LOS-epochs over the bar, none persisted).  The RF-3a drop floor",
     "(network.amb_float_drop_var_m2) stays built and OFF: it removes the walk but costs hour 1, a trade the census does not decide.",
-    "Baseline pair: runs/_rf0hv10_{field,sim}6, exe gnss_processor_rf3b.exe (the field wire byte-identical to runs/_rap_rf3b_gl_nobound)."
+    "Baseline pair: runs/_rf0hv10_{field,sim}6, exe gnss_processor_rf3b.exe (the field wire byte-identical to runs/_rap_rf3b_gl_nobound).",
+    "2026-09-28 (card PBF, docs/refound/PBF_pb_hold_presence_edges_2026-09-28.md): THE CONSUMER ANSWERS A HELD PHASE BIAS'S PRESENCE EDGES,",
+    "armed at the author's instruction -- network.closed_loop.pb_hold_presence_flip: true (derived into the consumer as",
+    "processing.ssr_pb_hold_presence_flip; it never reaches the producer's solve).  DEFECT CLASS: under the hold (card PBH) a bias that",
+    "appears on, or leaves, a phase row the consumer already uses steps the row by the whole bias (G32 L1W at 92.4 m; the L1W family is",
+    "tracked at 18 of 58 stations), and the hold seam's claim left the A5 edge unanswered; the Kalman peel then misattributed it at",
+    "ARHT00ATA (490 m in one epoch, above 400 m in hour 1 on 14 of 90 census keys).  Armed: the 8 census edges answered (ARHT00ATA 3,",
+    "QUIN00USA 5), 15 of 17 sites byte-identical, ARHT00ATA 803.9 to 0.762 m and QUIN00USA 0.790 to 0.584 m in hour 2 on the CLV wire.",
+    "Baseline pair: runs/_rf0hv11_{field,sim}6, exe gnss_processor_pbf2.exe (0 presence edges at WTZZ00DEU and SZZ000SIM in 6 h: products,",
+    "closed loop and epoch status byte-identical to runs/_rap_owd_{field,sim}6f, the post-OWD references of the same code)."
   ],
   "app_mode": "post",
   "data_source": "internal",
@@ -348,6 +357,7 @@
       "consume_network_iono": true,
       "pb_step_translate": false,
       "amb_level_check": false,
+      "pb_hold_presence_flip": true,
       "station": {
         "position_ecef": [
           5378997.6974,

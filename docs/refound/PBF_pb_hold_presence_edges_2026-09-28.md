@@ -4,8 +4,8 @@
 
 - **id:** PBF
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** Build card, pre-registered 2026-09-28 from the read of card CLV2 section 4.6 item 1
+- **status:** closed
+- **summary:** ARMED 2026-09-28 at the author's instruction (section 5): in the RF-0hv working bases, ledger appendix A13, the loader posture row and the golden pins; baseline pair `runs/_rf0hv11_{field,sim}6`, byte-identical to the post-OWD references (0 presence edges at either held-out consumer in 6 h). Built result (section 4): P0, P1 and P3 pass, P2 fails as frozen with the catastrophe removed (ARHT00ATA 803.9 to 0.762 m in hour 2 on the CLV wire, the rest card CLV2's phase-side cost). Original summary: Build card, pre-registered 2026-09-28 from the read of card CLV2 section 4.6 item 1
   (the census C1W sites' consumer on the CLV wire). Under the producer's phase-bias hold (card
   PBH) the consumer answers neither edge of a held bias's presence: a bias that appears on a
   phase row the consumer already uses, or leaves it, steps the applied correction by the whole
@@ -22,10 +22,14 @@
 - **knobs / posture:** new `processing.ssr_pb_hold_presence_flip` (bool, default false,
   byte-identical); new `network.closed_loop.pb_hold_presence_flip` (bool, default false, derived
   into the consumer, never reaches the producer's solve or its fingerprint); the consumer
-  replay driver now honours `network.trace_consumer_sat` (measure-only); no golden, ledger row
-  or loader default changed
+  replay driver now honours `network.trace_consumer_sat` (measure-only); at pre-registration no golden,
+  ledger row or loader default changed; ARMED 2026-09-28 (section 5): `network.closed_loop.pb_hold_presence_flip:
+  true` in `config/refound/{field,sim}_gps_dual_rf0hv.json`, pinned in both goldens, ledger appendix A13 with a
+  loader posture row; the loader default stays false
 - **dates in the text:** 2026-09-28
-- **hashes / run dirs:** main `3ca0626` plus this card's diff (uncommitted at pre-registration);
+- **hashes / run dirs:** main `3ca0626` plus this card's diff (uncommitted at pre-registration; built
+  `ff36b1f`); armed with exe `gnss_processor_pbf2.exe` sha256 prefix `73c47ebd7eb610d0`, baseline pair
+  `runs/_rf0hv11_{field,sim}6`;
   exe `gnss_processor_pbf.exe` sha256 `3a3c64ea88f8a750b166cc9158cbb61b244210539422dd5b35d08b43b7962ce1`;
   census keys `t3g0`, `t3b1` (the trace armed, knob absent), `p0g0` (knob off), `pfg0`, `pfb1`
   (knob on), replays `runs/_rap_msc_<site>_<key>_d`; wires `runs/_rap_clv2_f_g0` (the baseline
@@ -170,3 +174,23 @@ of `network.closed_loop.*`) and a golden pin; not done here.
 3. The census as a bar: at a site with an unanswered event the hour-1 grade flips on
    last-bit differences in the wire (section 1, side reading 2). Census bars should report the
    per-site list beside the median, and a site that diverges should be read, not medianed.
+
+## 5. Armed (2026-09-28, the author's instruction)
+
+`network.closed_loop.pb_hold_presence_flip: true` in both RF-0hv working bases with a dated
+comment, a manifest pin on the frozen golden bases of 2026-09-22 (no second freeze; 32 pins),
+the goldens regenerated (`make_golden_config.py --verify` PASS, 63 recommended knobs armed in
+regime on both), ledger row RECOMMEND_SCOPED with appendix A13 (regime: the float vehicle, a
+closed-loop consumer and the hold), and a loader posture row beside the hold's
+(`config_posture_check.py --verify-loader`: 0 coverage gaps). Exe `gnss_processor_pbf2.exe`
+(sha256 `73c47ebd7eb610d0dff775133fa5aac351dd8b38a8b5090645699a20f12d04f7`, main `ff36b1f` plus
+the posture row).
+
+Confirmation pair, 6 h cold on the live bases with the knob (`runs/_rf0hv11_{field,sim}6`):
+0 presence edges at WTZZ00DEU and at SZZ000SIM; products (records), `closed_loop_trace.csv` and
+`network_epoch_status.csv` byte-identical to `runs/_rap_owd_{field,sim}6f`, the post-OWD 6 h
+references of the same code. Arming therefore changes no baseline number: WTZZ00DEU 0.560 0.059
+0.028 0.030 0.039 0.048 m by hour, 611 epochs below a decimetre; the sim consumer as in
+`runs/_rf0hv10_sim6`. (Against `runs/_rf0hv10_{field,sim}6` the records differ by card OWD's S
+line and the closed loop by OWD's 0.1 mm consumer change, as card OWD recorded.) The consumers
+that meet the edge are the replayed census sites that read the L1W phase-bias family.

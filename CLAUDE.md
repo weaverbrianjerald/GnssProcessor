@@ -374,6 +374,10 @@ same-epoch emission exclusion (`network.gross_los_screen`, `gross_los_min_rows_r
 `gross_los_emit_exclude`) is armed in the bases and pinned in the goldens (30 pins, `--verify` 61
 armed); baseline pair `runs/_rf0hv10_{field,sim}6` (field 0.560 0.059 0.028 0.030 0.039 0.048 m,
 sim byte-identical to `_rf0hv9_sim6`).
+Card PBF (2026-09-28): the consumer answers a held phase bias's presence edges
+(`network.closed_loop.pb_hold_presence_flip`), armed in the bases and pinned in the goldens (32 pins,
+`--verify` 63 armed); baseline pair `runs/_rf0hv11_{field,sim}6`, byte-identical to the post-OWD references
+`runs/_rap_owd_{field,sim}6f` (0 presence edges at either held-out consumer, so no baseline number moved).
 
 They are GENERATED (`scripts/make_golden_config.py` from `config/golden/golden_manifest.json`
 + `docs/CONFIG_promotion_ledger.json`), never hand-edited: the generator flattens the base
