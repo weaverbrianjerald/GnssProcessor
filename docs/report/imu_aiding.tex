@@ -15,42 +15,41 @@
 %  called out as such inline.
 % ============================================================
 
-When an IMU is configured (\texttt{imu.enabled}; the sibling boolean
-\texttt{estimation.aiding.imu} is the \texttt{AidingSourceManager}
-selector and back-compat-defaults to \texttt{imu.enabled}, so enabling
-the legacy flag also enables the aiding-IMU source, though an explicit
-\texttt{estimation.aiding.imu} wins, see
-\texttt{src/core/config/GnssConfigLoad.cpp}), the inter-epoch time
-update of \dcref{sec:kf-predict}{the time update} is replaced by a
-first-order strapdown
-mechanization in the Earth-centred Earth-fixed (ECEF) frame.  The
-mechanization itself lives in
-\texttt{src/core/filter/ImuIntegrator.cpp}; the live per-epoch predict
-routes through \texttt{Application::run} $\to$
-\texttt{AidingSourceManager::collectPredict} $\to$
-\texttt{src/core/aiding/ImuAidingSource.cpp}, whose
-\texttt{PredictContribution} is spliced into the filter covariance by
-\texttt{KalmanFilter::predictAided}
-(\texttt{src/core/filter/KalmanFilter.cpp}).  The real-time engine
-(\texttt{RealTimeEngine::run}) drives the identical \texttt{predictAided}
-$/$ \texttt{collectPredict} path; the only difference from the batch run is
-ingest: a live sensor feeds \texttt{ImuIntegrator::addSample}, the
-streaming counterpart to the CSV \texttt{loadData}, which appends to the
-same sorted sample buffer so streaming and batch yield identical
-\texttt{integrate} results.
+With an IMU configured, a first-order strapdown mechanization in the
+Earth-centred Earth-fixed (ECEF) frame replaces the inter-epoch time
+update of \dcref{sec:kf-predict}{the time update}.  Two switches control
+it.  \texttt{imu.enabled} enables the IMU.  \texttt{estimation.aiding.imu}
+selects the IMU source in the \texttt{AidingSourceManager}.  When
+\texttt{estimation.aiding.imu} is absent it defaults to the value of
+\texttt{imu.enabled}; an explicit value takes precedence
+(\texttt{src/core/config/GnssConfigLoad.cpp}).
 
-This \texttt{IAidingSource} / \texttt{AidingSourceManager} abstraction
-(\texttt{include/aiding/}) is the composable seam through which every
-non-GNSS modality (IMU, ZUPT, NHC, baro, wheel odometry, vision)
-contributes up to three things (a \texttt{StateManager}-owned state
-block, a predict-time $\Phi/Q$ sub-block, and either independent
-measurement rows or extra Jacobian \emph{columns} on existing GNSS
-rows).  The IMU is its first and privileged client; the legacy
-monolithic \texttt{KalmanFilter::predictImu} is retained but no longer
-on the live path (superseded by \texttt{predictAided}).  The
-\texttt{ImuAidingSource} replicates \texttt{predictImu}'s arithmetic
-verbatim, so the strapdown equations below are unchanged by the
-refactor.
+The mechanization is implemented in
+\texttt{src/core/filter/ImuIntegrator.cpp}.  The per-epoch prediction
+runs \texttt{Application::run} $\to$
+\texttt{AidingSourceManager::collectPredict} $\to$
+\texttt{src/core/aiding/ImuAidingSource.cpp}, and
+\texttt{KalmanFilter::predictAided}
+(\texttt{src/core/filter/KalmanFilter.cpp}) splices the resulting
+\texttt{PredictContribution} into the filter covariance.  The real-time
+engine (\texttt{RealTimeEngine::processEpoch}) uses the same
+\texttt{predictAided} $/$ \texttt{collectPredict} path.  Only the sample
+ingest differs.  Post-processing reads a CSV file with
+\texttt{loadData}, which sorts the samples by time.  In real time each
+sensor sample reaches \texttt{ImuIntegrator::addSample}, which appends it
+to the same buffer in arrival order.  For samples that arrive in time
+order the two paths therefore give the same \texttt{integrate} results.
+
+The \texttt{IAidingSource} / \texttt{AidingSourceManager} abstraction
+(\texttt{include/aiding/}) is the interface through which every non-GNSS
+modality (IMU, ZUPT, NHC, baro, wheel odometry, vision) contributes up to
+three items: a \texttt{StateManager}-owned state block, a predict-time
+$\Phi/Q$ sub-block, and either independent measurement rows or extra
+Jacobian \emph{columns} on existing GNSS rows.  The IMU is its first
+client.  \texttt{ImuAidingSource} reproduces the arithmetic of the older
+monolithic \texttt{KalmanFilter::predictImu}, so the
+strapdown equations below apply unchanged.  \texttt{predictImu} remains
+in the source but has no callers; \texttt{predictAided} replaces it.
 
 The formulation is an \emph{error-state} extended Kalman filter.  The
 mechanization propagates the nominal navigation state
@@ -63,37 +62,37 @@ while a $15$-element INS error vector
   \in \mathbb{R}^{15}
 \label{eq:ins-error-state}
 \end{equation}
-carries the linearised transition and process noise that drive the
+carries the linearised transition and process noise that propagate the
 covariance.  Three attitude-error states $\imupsi$, three
-accelerometer-bias states $\biasa$, and three gyro-bias states $\biasg$
-augment the existing position state (and, when
-\texttt{estimation.estimate\_velocity} is set, the three velocity
-states); the augmented block is allocated contiguously by
-\texttt{StateManager} (accessors \texttt{getAttitudeIndex},
-\texttt{getAccelBiasIndex}, \texttt{getGyroBiasIndex}).
+accelerometer-bias states $\biasa$ and three gyro-bias states $\biasg$
+augment the position state (and the three velocity states when
+\texttt{estimation.estimate\_velocity} is set).  \texttt{StateManager}
+allocates the nine added states as one contiguous block (accessors
+\texttt{getAttitudeIndex}, \texttt{getAccelBiasIndex},
+\texttt{getGyroBiasIndex}).
 
 \begin{remark}[Implemented scope]
-The block order of \cref{eq:ins-error-state}
-($[\delta\rxpos,\delta\imuvel,\imupsi,\delta\biasa,\delta\biasg]$) is
-fixed by \texttt{ImuIntegrator}.  \emph{No} lever-arm state and \emph{no}
-sensor scale-factor states are carried, and there is no
-IMU-to-antenna lever-arm term in the GNSS measurement model
-(\Cref{sec:imu-coupling}).  These are roadmap items, not part of the
-current implementation; the corresponding terms are omitted from every
-equation below rather than written and then ignored.
+\texttt{ImuIntegrator} fixes the block order of
+\cref{eq:ins-error-state}
+($[\delta\rxpos,\delta\imuvel,\imupsi,\delta\biasa,\delta\biasg]$).  The
+filter carries no lever-arm state and no sensor scale-factor states, and
+the GNSS measurement model has no IMU-to-antenna lever-arm term
+(\Cref{sec:imu-coupling}).  These are planned extensions.  The equations
+below omit the corresponding terms.
 \end{remark}
 
 \subsection{Strapdown mechanization}\label{sec:imu-mech}
 
-For each IMU sample the raw specific force $\tilde{\boldsymbol a}$ and
+For each IMU sample, the raw specific force $\tilde{\boldsymbol a}$ and
 angular rate $\tilde{\boldsymbol\omega}$ (both in the body frame) are
-bias-corrected with the current filter estimates,
+corrected with the current filter bias estimates,
 \begin{equation}
 \imuf = \tilde{\boldsymbol a} - \biasa, \qquad
 \imuw = \tilde{\boldsymbol\omega} - \biasg ,
 \label{eq:imu-bias-correct}
 \end{equation}
-and integrated over the sample interval $\dt$.  The attitude
+and integrated over the sample interval $\dt$.  A sample whose interval
+is not positive or exceeds \SI{10}{\second} is skipped.  The attitude
 direction-cosine matrix $\Cbe$ (body $\to$ ECEF) is updated to first
 order with Earth-rotation compensation,
 \begin{empheq}[box=\fbox]{equation}
@@ -106,9 +105,10 @@ where $\earthrate = [\,0,\,0,\,\omega_e\,]^{\Tr}$ is the ECEF
 Earth-rotation vector
 ($\omega_e = \SI{7.2921151467e-5}{\radian\per\second}$,
 \texttt{common/Constants.hpp}) and $\skewm{\cdot}$ is the skew-symmetric
-(cross-product) matrix.  To curb numerical drift, $\Cbe$ is
-re-orthonormalised by singular-value decomposition every $100$ samples.
-The velocity and position propagate as
+(cross-product) matrix.  To limit numerical drift, $\Cbe$ is
+re-orthonormalised by singular-value decomposition every $100$ integrated
+samples, starting with the first.  The velocity and position propagate
+as
 \begin{empheq}[box=\fbox]{align}
 \imuvel_{k+1} &= \imuvel_k
   + \bigl(\Cbe\,\imuf + \gravec(\rxpos_k)
@@ -118,11 +118,13 @@ The velocity and position propagate as
   + \tfrac12\bigl(\imuvel_k + \imuvel_{k+1}\bigr)\dt .
 \label{eq:imu-position}
 \end{empheq}
-\Cref{eq:imu-velocity} applies the Coriolis acceleration
-$-2\,\skewm{\earthrate}\imuvel$, while the centrifugal acceleration is
-folded into the gravity vector $\gravec$ (i.e.\ $\gravec$ is a
-\emph{plumb-bob} gravity, gravitational plus centrifugal);
-\Cref{eq:imu-position} uses a trapezoidal position update.
+The specific force is resolved with the attitude already updated by
+\cref{eq:imu-attitude}, and gravity is evaluated at the position of the
+start of the step.  \Cref{eq:imu-velocity} applies the Coriolis
+acceleration $-2\,\skewm{\earthrate}\imuvel$.  The centrifugal
+acceleration is part of the gravity vector $\gravec$: $\gravec$ is a
+\emph{plumb-bob} gravity (gravitational plus centrifugal).
+\Cref{eq:imu-position} is a trapezoidal position update.
 
 The gravity vector is a point-mass radial model plus the centrifugal
 term (\texttt{ImuIntegrator::computeGravityEcef}):
@@ -134,9 +136,9 @@ term (\texttt{ImuIntegrator::computeGravityEcef}):
 \label{eq:imu-gravity}
 \end{equation}
 The normal-gravity (Somigliana) flattening and the $J_2$ zonal term are
-\emph{not} modelled; over a single GNSS epoch interval the resulting
-deterministic acceleration error is small and is absorbed by the
-estimated accelerometer bias $\biasa$.
+not modelled.  Over one GNSS epoch interval the resulting deterministic
+acceleration error is small, and the estimated accelerometer bias
+$\biasa$ absorbs it.
 
 \subsection{INS error-state dynamics}\label{sec:imu-error}
 
@@ -157,25 +159,24 @@ $\dot{\delta\stateV}_{\mathrm{ins}} = \insF\,\delta\stateV_{\mathrm{ins}}
 \qquad \imufe := \Cbe\,\imuf .
 \label{eq:ins-F}
 \end{equation}
-Both sensor biases are modelled as pure random walks (zero
-deterministic dynamics, the null bottom rows of \cref{eq:ins-F}).  Two
-terms of the textbook ECEF error model are deliberately dropped: the
-position-error feedback row
+Both sensor biases are random walks (no deterministic dynamics: the
+null bottom rows of \cref{eq:ins-F}).  Two terms of the standard ECEF
+error model are omitted by design: the position-error feedback row
 ($[\insF]_{\delta\rxpos,\delta\rxpos} = -\skewm{\earthrate}$) and the
 gravity-gradient coupling
 $[\insF]_{\delta\imuvel,\delta\rxpos} = +\,\partial\gravec/\partial\rxpos$
 (the gradient of the \emph{plumb} gravity of \cref{eq:imu-gravity}, which
 already subsumes the centrifugal $-\skewm{\earthrate}^{2}$; the leading
 sign follows from differentiating the velocity update
-\cref{eq:imu-velocity}).  This is a first-order approximation that is
-accurate over the short epoch interval of a GNSS-aided run.  The
-discrete transition is taken to first order,
+\cref{eq:imu-velocity}).  The resulting first-order model is accurate
+over the short epoch interval of a GNSS-aided run.  The discrete
+transition is also first order,
 \begin{equation}
 [\insPhi]_k = \boldsymbol I + \insF\,\dt .
 \label{eq:ins-Phi}
 \end{equation}
-The process noise maps the continuous accelerometer / gyro white noise
-and the bias random walks through
+The process noise maps the continuous accelerometer and gyro white
+noise and the bias random walks through
 \begin{equation}
 [\insQ]_k = \insG\,\boldsymbol W\,\insG^{\Tr}\,\dt, \quad
 \insG =
@@ -190,14 +191,19 @@ and the bias random walks through
   \sigma_a^2, \sigma_g^2, \sigma_{ba}^2, \sigma_{bg}^2\bigr)\!\otimes\! \boldsymbol I_3 ,
 \label{eq:ins-Q}
 \end{equation}
-with the spectral densities $\sigma_a,\sigma_g,\sigma_{ba},\sigma_{bg}$
-read from
+where the spectral densities $\sigma_a,\sigma_g,\sigma_{ba},\sigma_{bg}$
+are read from
 \texttt{imu.\{accel\_noise\_density},
 \texttt{gyro\_noise\_density}, \texttt{accel\_bias\_instability},
-\texttt{gyro\_bias\_instability\}} (defaults in
-\texttt{config/GnssConfigTypes.hpp}).
-Over one GNSS epoch the per-sample $([\insPhi]_k,[\insQ]_k)$ accumulate by
-the standard recursion
+\texttt{gyro\_bias\_instability\}}.  The defaults in
+\texttt{config/GnssConfigTypes.hpp} are
+\SI{0.05}{\metre\per\second\squared\per\hertz\tothe{0.5}},
+\SI{5e-4}{\radian\per\second\per\hertz\tothe{0.5}},
+\SI{1e-4}{\metre\per\second\cubed\per\hertz\tothe{0.5}} and
+\SI{1e-6}{\radian\per\second\squared\per\hertz\tothe{0.5}}, in that
+order.  Over one GNSS epoch the
+per-sample pairs $([\insPhi]_k,[\insQ]_k)$ accumulate by the standard
+recursion
 \begin{equation}
 \insPhi \leftarrow [\insPhi]_k\,\insPhi, \qquad
 \insQ   \leftarrow [\insPhi]_k\,\insQ\,[\insPhi]_k^{\Tr} + [\insQ]_k .
@@ -206,26 +212,31 @@ the standard recursion
 
 \subsection{Covariance splice and attitude feedback}\label{sec:imu-splice}
 
-The accumulated $15\times15$ pair $(\insPhi,\insQ)$ is spliced
-(\emph{assigned}, not accumulated) onto an identity-seeded full-state
-transition $\Fmat$ and onto the random-walk process-noise baseline
-$\Qmat$ over the indices the INS owns; the non-INS states (clock,
-troposphere, ionosphere, ambiguities, \dots) retain their standard
-random-walk model from \dcref{sec:kf-predict}{the time update}.  The
-covariance is then
-propagated once and symmetrised,
+The accumulated $15\times15$ pair $(\insPhi,\insQ)$ is written over the
+indices the INS owns in an identity-seeded full-state transition $\Fmat$
+and in the random-walk process-noise baseline $\Qmat$.  The write is an
+assignment, so the baseline noise on those rows is not counted twice.
+The baseline process noise is evaluated over the interval the INS
+integrated.  The non-INS states (clock, troposphere, ionosphere, ambiguities, \dots)
+keep their random-walk model from \dcref{sec:kf-predict}{the time
+update}; because the transition is the identity there, their means are
+not propagated.  The covariance is then propagated once and symmetrised,
 \begin{empheq}[box=\fbox]{equation}
 \covM \leftarrow \Fmat\,\covM\,\Fmat^{\Tr} + \Qmat, \qquad
 \covM \leftarrow \tfrac12\bigl(\covM + \covM^{\Tr}\bigr).
 \label{eq:imu-cov-prop}
 \end{empheq}
-The nominal navigation states $(\rxpos,\imuvel)$ are overwritten by the
-mechanised values of \crefrange{eq:imu-velocity}{eq:imu-position}, and
-the attitude error is reset, $\imupsi := \boldsymbol 0$, because the
-rotation increment has already been applied directly to $\Cbe$ in
-\cref{eq:imu-attitude}.  After the subsequent GNSS measurement update
-the corrected attitude error feeds back multiplicatively into the DCM
-and is again reset,
+The mechanised values of \crefrange{eq:imu-velocity}{eq:imu-position}
+overwrite the nominal navigation states $(\rxpos,\imuvel)$.  The
+attitude error is reset, $\imupsi := \boldsymbol 0$, because
+\cref{eq:imu-attitude} has already applied the rotation increment to
+$\Cbe$: after each aided prediction the IMU aiding source writes the
+propagated attitude into the filter through its attitude setter.  The
+filter holds the single nominal attitude.  It is initialised to the
+identity (there is no initial alignment step), and on the live path only
+two operations write it: that setter call and the feedback step below.
+After the next GNSS measurement update, the corrected attitude error
+feeds back multiplicatively into the DCM and is reset again,
 \begin{equation}
 \Cbe \leftarrow \bigl(\boldsymbol I + \skewm{\imupsi}\bigr)\Cbe,
 \qquad \imupsi := \boldsymbol 0 ,
@@ -233,41 +244,41 @@ and is again reset,
 \end{equation}
 followed by SVD re-orthonormalisation
 (\texttt{KalmanFilter::update}).  This closed-loop reset keeps $\imupsi$
-a small-angle quantity throughout, so the linearisation in
-\cref{eq:ins-F} stays valid.
+a small angle, so the linearisation in \cref{eq:ins-F} remains valid.
 
 \subsection{Coupling modes and the GNSS update}\label{sec:imu-coupling}
 
-How the GNSS observations correct the inertial errors depends on the
-coupling mode (\texttt{imu.coupling\_mode}).
+The coupling mode (\texttt{imu.coupling\_mode}) determines how the GNSS
+observations correct the inertial errors.  In both modes the filter
+processes the raw GNSS observations; the modes differ in the Doppler
+Jacobian and in the relinearisation path (see the remark at the end of
+this section).
 
 \paragraph{Loosely coupled (default).}
-The GNSS code and carrier-phase Jacobians of
+Among the INS states, the GNSS Jacobians of
 \dcref{sec:obs-geometry}{the observation geometry} touch only the
-position (and velocity) columns.
-The INS error states $\imupsi,\biasa,\biasg$ therefore receive
-\emph{no direct} observation partials; they are corrected only
-indirectly, through the off-diagonal cross-covariances that
-\cref{eq:imu-cov-prop} builds between the position/velocity block and
-the attitude/bias block.  The attitude correction is then realised by
-the feedback of \cref{eq:imu-att-feedback}.
+position and velocity columns.  The INS error states
+$\imupsi,\biasa,\biasg$ have no direct observation partials.  They are
+corrected indirectly, through the cross-covariances that
+\cref{eq:imu-cov-prop} builds between the position/velocity block and the
+attitude/bias block.  The feedback of \cref{eq:imu-att-feedback} then
+applies the attitude correction.
 
 \paragraph{Tightly coupled.}
-Tightly-coupled mode requires the velocity block, so the loader
-force-enables it independently of the user's
-\texttt{estimation.estimate\_velocity}: a
-\texttt{TightCoupled} \texttt{coupling\_mode} with the flag left false
-flips it true and logs \texttt{"forcing estimate\_velocity=true"}
-(\texttt{GnssConfigLoad.cpp}), guaranteeing the three velocity states and
-hence the Doppler rows the TC Jacobian below attaches to.
-In this mode the \emph{Doppler} observation alone gains
-direct attitude and accelerometer-bias columns.  This is the one
-aiding contribution that re-parameterizes existing GNSS rows rather
-than appending its own: each relinearisation pass calls
+Tight coupling requires the velocity block, so the loader enables it
+regardless of \texttt{estimation.estimate\_velocity}.  A
+\texttt{TightCoupled} \texttt{coupling\_mode} with the flag false sets
+the flag true and logs \texttt{"forcing estimate\_velocity=true"}
+(\texttt{GnssConfigLoad.cpp}).  The three velocity states, and with
+them the Doppler rows that carry the Jacobian below, are therefore
+always present.  In this mode the Doppler observation, and only the
+Doppler observation, gains direct attitude and accelerometer-bias
+columns.  It is the one aiding contribution that adds columns to
+existing GNSS rows instead of appending rows of its own.  Each
+relinearisation pass calls
 \texttt{AidingSourceManager::applyTcJacobianInputs} $\to$
-\texttt{ImuAidingSource::applyTcJacobianInputs}, which feeds the
-current attitude and specific force to
-\texttt{MeasurementModel::setImuState}
+\texttt{ImuAidingSource::applyTcJacobianInputs}, which passes the current
+attitude and specific force to \texttt{MeasurementModel::setImuState}
 (\texttt{src/core/measurement/MeasurementModel.cpp}).  With
 $\imufe = \Cbe\imuf$ the specific force in ECEF and
 $\los^\sat_{\rx}$ the unit line-of-sight of
@@ -281,27 +292,29 @@ contributes
   = -\,(\Cbe)^{\Tr}\,\los^\sat_{\rx}.
 \label{eq:imu-tc-jac}
 \end{empheq}
-The specific force fed into \cref{eq:imu-tc-jac} is a static-rest
+The specific force used in \cref{eq:imu-tc-jac} is the static-rest
 approximation $\imuf \approx (\Cbe)^{\Tr}\!\bigl(-\gravec\bigr) - \biasa$
-(\texttt{ImuAidingSource.cpp}); it is exact only when the platform's
-true acceleration is negligible against gravity.  The \emph{code and
-carrier-phase rows carry no attitude or bias partials in either mode};
-only Doppler couples directly to the inertial errors.
+(\texttt{ImuAidingSource.cpp}), evaluated at the current position
+estimate rather than from the IMU samples.  It is exact only when the
+true platform acceleration is negligible compared with gravity.  In
+either mode the code and carrier-phase rows carry no attitude or bias
+partials; only the Doppler rows couple directly to the inertial errors.
 
 \begin{remark}[Relinearisation under tight coupling]
-The tightly-coupled path retains the legacy single \emph{naive}
-second-pass relinearisation rather than the prior-anchored iterated
-EKF of \dcref{sec:kf-iekf}{the iterated EKF}: re-deriving the gain from
-a fixed prior
-conflicts with the multiplicative attitude/bias feedback of
-\cref{eq:imu-att-feedback}, which has already mutated $\Cbe$ between
-passes.  The aiding layer exposes this as a capability query
+The tightly coupled path keeps a single \emph{naive} second-pass
+relinearisation instead of the prior-anchored iterated EKF of
+\dcref{sec:kf-iekf}{the iterated EKF}.  Re-deriving the gain from a
+fixed prior is inconsistent with the multiplicative attitude feedback
+of \cref{eq:imu-att-feedback}, which has already changed $\Cbe$ and
+zeroed the attitude error between passes.  The aiding layer exposes the
+requirement as a capability query
 (\texttt{AidingSourceManager::anySourceRequiresNaiveRelin\-earization},
-which the IMU source answers true for in tight coupling), so any future
-nominal-feedback source forces the same path; the migration off the
-direct \texttt{tightlyCoupledImu()} checks in
-\texttt{Application.cpp} / \texttt{KalmanFilter.cpp} is still in
-progress.
+true for the IMU source under tight coupling), so any later source with
+nominal-state feedback selects the same path.  Direct
+\texttt{tightlyCoupledImu()} checks remain in
+\texttt{Application.cpp} / \texttt{KalmanFilter.cpp} (the IEKF gating
+and the prior capture), so the migration to the capability query is
+incomplete.
 \end{remark}
 
 \ifSubfilesClassLoaded{\printbibliography}{}

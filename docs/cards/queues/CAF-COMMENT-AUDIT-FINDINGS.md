@@ -218,3 +218,23 @@ These are program output or data, so the comment rewrite left them unchanged.
   "WL-fix-with-tight-coupling milestone" that do not exist.
 - [ ] `AmbiguityResolver.cpp` and `NetworkPriorResidual.hpp` cite a private assistant memory
   file (`project_m1_card4_d5_innovation`) as if it were a repository document.
+
+## 2026-09-28: findings from the LaTeX report prose pass, run 1
+
+The prose pass over `docs/report/` (slip_detection, ambiguity_resolution, imu_aiding,
+ssr_corrections, realtime_engine) checked the report's claims against the code and
+corrected the report. What it found in the code or the mathematics:
+
+- [ ] **Verified defect: GLONASS ephemeris time anchored on the host clock.**
+  `decodeGlonass1020` promotes `toe` with `TimeUtils::nowContinuousGpsSeconds()`
+  (`src/core/rtcm/RtcmNavDecoder.cpp:327`), so a file replay of historical data puts the
+  ephemeris on the wrong day and GLONASS broadcast orbits are propagated across days.
+- [ ] **Author check: `eq:imu-tc-jac` (docs/report/imu_aiding.tex).** The Doppler (m/s)
+  partials with respect to attitude and accelerometer bias carry acceleration units; an
+  interval factor appears missing. The code implements the same expression.
+- [ ] **Stale comment:** `ImuCouplingMode::LooseCoupled` in
+  `include/config/GnssConfigTypes.hpp` says GNSS position and velocity solutions update the
+  INS; both coupling modes use raw observations.
+- [ ] **Stale comment:** `src/core/config/GnssConfigLoad.cpp` (near line 2719) cites
+  `RealTimeEngine::run`, which does not exist; the aided prediction runs in
+  `RealTimeEngine::processEpoch`.

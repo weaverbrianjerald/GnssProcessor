@@ -52,8 +52,8 @@ The user and kinematic set is composed at run time from the config block
 per-station set from a parallel \texttt{network.cycle\_slip} block
 (\Cref{sec:slip-registry}).
 
-Throughout this section we suppress the receiver index $\rx$
-(single-receiver PPP / PPP-RTK) and write $f_1 > f_2$ for the two
+Throughout this section the receiver index $\rx$ is suppressed
+(single-receiver PPP / PPP-RTK), and $f_1 > f_2$ denotes the two
 carriers of a band pair, sorted by frequency so that $f_1 - f_2 > 0$
 and $\lambda_1 < \lambda_2$
 (\texttt{src/core/slip/MwSlipDetector.cpp}, the band-frequency sort).
@@ -429,165 +429,175 @@ $\theta$ is flagged when
 \max\!\left(\frac{k\,\hat s_{\mathrm{eff}}}{\sin\theta},
 \;\; c_{\mathrm{floor}}\,\lamif\right),
 \end{equation}
-where $k$ is a deliberately loose MAD multiplier.  The floor is
-\emph{proportional} to the $(1,1)$ IF jump
-$\lamif = \sLight/(f_1+f_2) \approx \SI{10.7}{cm}$ and is kept in raw
-metres, so a simultaneous one-cycle slip is caught at any elevation.
-Only the clean survivors are then folded into the station-pair EWMA,
-so the scale never absorbs the event it must catch.  The five knobs
-($\kappa$, $k$, $c_{\mathrm{floor}}$, the minimum pool size and the
-EWMA weight) live under
-\texttt{network.cycle\_slip.if\_phase\_td\_*} and are snapshot once
-inside the driver.
+where $k$ is a loose MAD multiplier.  The floor is proportional to the
+$(1,1)$ IF jump $\lamif = \sLight/(f_1+f_2) \approx \SI{10.7}{cm}$ and
+is kept in raw metres, so a simultaneous one-cycle slip is caught at any
+elevation.  Only the clean survivors are folded into the station-pair
+EWMA, so the scale does not absorb the event it has to catch.  The five
+knobs ($\kappa$, $k$, $c_{\mathrm{floor}}$, the minimum pool size and
+the EWMA weight) live under \texttt{network.cycle\_slip.if\_phase\_td\_*}
+and are read once per call inside the driver.
 
 A flag never repairs and never resets filter state in place.  It
-restarts the detector's own arc unconditionally (arc hygiene), and its
-two estimator-side consequences are gated separately inside
-\texttt{refloat\_pair}: the flagged pair enters the Card-4 invariant-carry
-slip funnel only when that carry is armed, and both band ambiguities are
-marked pending-reseed, the actual refloat, only once the
+restarts the detector's own arc unconditionally (arc hygiene).  Its two
+estimator-side consequences are gated separately inside
+\texttt{refloat\_pair}.  The flagged pair enters the Card-4
+invariant-carry slip funnel only when that carry is armed.  The band
+ambiguities are marked pending-reseed (the refloat itself) only when the
 phase-leveling carry is warm.  On a cold or absent carry the flag is
 emitted as diagnostic telemetry and changes nothing, so a clean run log
-is not evidence that the arm acted; the run-end counters are.  The sharp
+is no evidence that the arm acted; the run-end counters are.  The loose
+gate is intentional.  The driver is a coarse first pass, and the sharp
 integer decision is left to a post-estimation phase validation that is
-not yet built, and the loose gate is intentional: this is a coarse
-first pass, not the discriminating solver of
+not yet built; it is not the discriminating solver of
 \Cref{sec:slip-turboedit}.
 
-The pool cannot see a slip on the between-satellite reference itself:
-such a jump is common-mode across every satellite of that station's pool
-and is removed with $\mathrm{med}$.  The driver therefore folds in a
-second, independent flag source, the detector's own
-reference-satellite reset keys, parsed by \texttt{parseIfPairResetKey}
-and refloated through the same \texttt{refloat\_pair}.  Both bands of the
-pair must refloat because the IF combination cannot localise which one
-slipped.  The reference-satellite election that produces those keys is
-itself gated by \texttt{IfPhaseSlipDetector::RefGateParams}, pushed only
-on the network path and armed by
+The pool cannot see a slip on the between-satellite reference itself.
+Such a jump is common to every satellite of that station's pool and is
+removed with $\mathrm{med}$.  The driver therefore folds in a second,
+independent flag source: the detector's own reference-satellite reset
+keys, parsed by \texttt{parseIfPairResetKey} and refloated through the
+same \texttt{refloat\_pair}.  Both bands of the pair are refloated,
+because the IF combination cannot localise which one slipped.  The
+exceptions are the band-scope and common-band-scope knobs, which, when
+armed, keep one band of the pair pinned.  The reference-satellite
+election that produces those keys is gated by
+\texttt{IfPhaseSlipDetector::RefGateParams}.  The gate is pushed only on
+the network path and armed by
 \texttt{network.cycle\_slip.if\_phase\_td\_ref\_gate} (default off); the
 staged user/kinematic path keeps the legacy fixed gate.
 
 \subsection{Network slip QC: raw evidence and refloat over repair}\label{sec:slip-network-qc}
 
-The IF-phase driver of \Cref{sec:slip-if} is one of three arms of the
-network producer's slip layer.  All three are free functions in
+The IF-phase driver of \Cref{sec:slip-if} is one arm of the network
+producer's slip layer.  The arms are free functions in
 \texttt{slip/NetworkSlipQc}, called in a fixed serial, station-ordered
 sequence from the per-epoch PASS-A slip seam
-(\texttt{Application::networkPassASlipScan\_}).  The other two are
-\texttt{networkSlipDrainT0Repairs}, which drains the phase-leveling
-carry's integer repairs, and \texttt{networkSlipDrainMwRefloat}, which
-drains confident wide-lane integer jumps and the receiver's own LLI
-loss-of-lock bit.  Their shared evidence is a fourth component,
+(\texttt{Application::networkPassASlipScan\_}).  Two further arms are
+described here: \texttt{networkSlipDrainT0Repairs}, which applies the
+integer repairs of the network TurboEdit resolver to the phase-leveling
+carry, and \texttt{networkSlipDrainMwRefloat}, which refloats on an
+admitted wide-lane slip candidate or on the receiver's own LLI
+loss-of-lock bit.  The same seam then runs the wind-up restart drain,
+the two gap re-entry drains (per satellite and per signal) and the
+harness-only injected-free drain, each behind its own default-off knob.
+The shared evidence is a separate component,
 \texttt{slip/NetworkRawObservables}.
 
 \paragraph{Shared evidence.}
-\texttt{networkComputeRawObservables} forms, once per epoch per
-(station, satellite) on the two lowest distinct bands whose phase
-\emph{and} matching code are both present, the same MW combination of
-\Cref{eq:mw} and the same GF combination of \Cref{eq:gf}, plus the
-first band's phase-minus-code level and the per-band RINEX LLI byte.
-These are absolute \emph{levels}, not differences.
+Once per epoch per (station, satellite),
+\texttt{networkComputeRawObservables} forms the MW combination of
+\Cref{eq:mw} and the GF combination of \Cref{eq:gf} on the two lowest
+distinct bands whose phase \emph{and} matching code are both present.
+It also records the first band's phase-minus-code level and the
+per-band RINEX LLI byte.  These are absolute levels, not differences.
 \texttt{networkQualifyRawObservables} then adjudicates each observable's
-step against the immediately adjacent processed epoch, that is $\mwc^\sat(k)
-- \mwc^\sat(k-1)$ and $\gfc^\sat(k) - \gfc^\sat(k-1)$, under the same
-threshold shape as \Cref{sec:slip-if}: a multiple of an empirical scale,
-floored from below.  The empirical term is a per-station robust EWMA of
-that station's \emph{own} clean steps, built from the same
-$1.4826\,\mathrm{median}\,|\cdot|$ estimator (exposed for test as
-\texttt{networkRobustStepScale}); the floor is a \emph{physical} integer
-bound kept in raw metres, a fraction of a wide-lane cycle $\lamwl$
-for MW, a few centimetres for GF.  The gate therefore degrades to
-physics when the empirical term is cold or degenerate, never to a
-stochastic-model $\sigma$, which is the same discipline as the MW
-adaptive threshold of \Cref{sec:slip-mw}.  The ordering invariant also
-matches the IF-TD pool arm: each satellite is thresholded with the
-\emph{pre-update} scale and only the clean survivors are folded into the
-EWMA, so the scale can never absorb the event it exists to catch.  A
-step is measurable only against an \emph{adjacent} predecessor; across a
-gap it is structurally unmeasurable, and the code is explicit that
-absence of evidence is neither evidence of a slip nor evidence of its
-absence.  The multipliers and floor values live in
-\texttt{SlipQcParams}, not here.
+step against the immediately adjacent processed epoch, that is
+$\mwc^\sat(k) - \mwc^\sat(k-1)$ and $\gfc^\sat(k) - \gfc^\sat(k-1)$.
+The threshold has the shape of \Cref{sec:slip-if}: a multiple of an
+empirical scale, floored from below.  The empirical term is a
+per-station robust EWMA of that station's own clean steps, built from
+the same $1.4826\,\mathrm{median}\,|\cdot|$ estimator (exposed for test
+as \texttt{networkRobustStepScale}).  The floor is a physical integer
+bound kept in raw metres: a fraction of a wide-lane cycle $\lamwl$ for
+MW (default 0.5 cycle) and a few centimetres for GF (default 4 cm); the
+default multiplier is 5 for both.  The gate therefore falls back to the
+physical bound when the empirical term is cold or degenerate, never to a
+stochastic-model $\sigma$.  The MW adaptive threshold of
+\Cref{sec:slip-mw} follows the same rule.  The ordering also matches the
+IF-TD pool arm: each satellite is thresholded with the pre-update scale,
+and only the clean survivors are folded into the EWMA, so the scale does
+not absorb the event it has to catch.  A step is measurable only against
+an adjacent predecessor.  Across a gap it cannot be measured, and the
+code treats that absence of evidence as neither evidence of a slip nor
+evidence of continuity.  The multipliers and floor values live in
+\texttt{SlipQcParams}.
 
 \paragraph{Response doctrine.}
-On the network path a detection \emph{refloats}: it marks the
-ambiguity pending-reseed so the next pass re-estimates it from that
-epoch's data, and never applies an integer.  This is a deliberate
-asymmetry against the user-path TurboEdit repair of
-\Cref{sec:slip-turboedit}, and the reason is the network's missing
-satellite phase biases: without them the network wide-lane integer is
-not trustworthy, so a wrong integer written into a carried value would
-bias the gauge, whereas a refloat costs only re-convergence.  The one
-exception is \texttt{networkSlipDrainT0Repairs}, which shifts the
-phase-leveling carry by $\slipd N_\sigl\,\lambda_\sigl$
-\emph{continuously}, variance unchanged and covariance-preserving,
-and only for an integer that is both confident (small rounding residual,
-\Cref{eq:te-round}) and of sane magnitude.  A low-confidence detection is
-left untouched rather than repaired, refloated or dropped, because the
-float wide-lane's marginal repairs are measured to be predominantly
-false positives and acting on them discards a good carry.
+On the network path a detection refloats: it marks the ambiguity
+pending-reseed so that PASS B re-estimates it from that epoch's data,
+and it never applies an integer.  This differs from the user-path
+TurboEdit repair of \Cref{sec:slip-turboedit}.  The reason is the
+network's missing satellite phase biases.  Without them the network
+wide-lane integer is not trustworthy, and a wrong integer written into a
+carried value would bias the gauge, whereas a refloat costs only
+re-convergence.  The one exception is \texttt{networkSlipDrainT0Repairs},
+active only when the network TurboEdit key of \Cref{sec:slip-turboedit}
+is armed.  It shifts the phase-leveling carry by
+$\slipd N_\sigl\,\lambda_\sigl$ continuously, with the variance
+unchanged and the covariance preserved.  It does so only for an integer
+that is both confident and of sane magnitude.  Both bounds are network
+knobs, separate from the resolver's own constants: a rounding residual
+(\Cref{eq:te-round}) of at most 0.15 cycle and a magnitude of at most
+50 cycles by default.
+A low-confidence detection is left untouched: it is neither repaired,
+refloated nor dropped.  The float wide-lane's low-confidence repairs are
+measured to be mostly false positives, and acting on them discards a
+good carry.  The resolver's reset set is not acted on either; without
+satellite phase biases it flags tens of satellites per epoch.
 
 \paragraph{Status.}
-Every arm is default \emph{off}:
+Every arm is default off in the loader.
 \texttt{network.cycle\_slip.mw\_detect} arms the MW/LLI drain,
 \texttt{network.cycle\_slip.mw\_lli\_corroborate} the LLI qualification
 and \texttt{network.cycle\_slip.gap\_instrument} the arc-resumption
-instrument.  The raw observables are computed at all only when some
-consumer asked for them (\texttt{SlipQcParams::anyConsumer}), and the
-adjudication above runs only when a \emph{decision} card is armed; a
-run with the raw trace alone computes the levels and adjudicates
-nothing.  The drains therefore guard every use of the verdicts on
-whether the evidence exists this epoch; without it the LLI arm stays
-decisive, because a gate that fired on missing data would be worse than
-the chatter it exists to fix.
-The qualification never \emph{excludes} an LLI assertion: an assertion
-acts when a measured MW or GF step corroborates it, or when the
-station's own LLI behaviour is still judged credible by a two-state
+instrument.  The raw observables are computed only when a consumer asks
+for them (\texttt{SlipQcParams::anyConsumer}).  The adjudication above
+runs only when a decision card is armed; a run with the raw trace alone
+computes the levels and adjudicates nothing.  Every use of the verdicts
+in the drains is therefore guarded on whether the evidence exists this
+epoch.  Without it the LLI arm stays decisive, because a gate that fired
+on missing data would do more harm than the chatter it is meant to
+suppress.  The qualification never excludes an LLI assertion.  An
+assertion acts when a measured MW or GF step corroborates it, or when
+the station's own LLI behaviour is still judged credible by a two-state
 hysteresis on the EWMA of its LLI-set fraction
 (\texttt{networkLliCredibilityStep}).  Only an uncorroborated assertion
-at a demonstrably non-credible station is downgraded, and it is then
-emitted as suppressed and counted rather than silently dropped.
+at a station whose LLI is judged not credible is downgraded.  It is then
+emitted as suppressed and counted, not dropped.
 
 The raw step evidence has a second consumer outside this chapter.  With
 \texttt{network.carry\_invariant\_innov\_corroborate} armed (default
-off), the Card-4 innovation gate on the carried double differences will
-not re-tap a chord whose arc the raw observables positively measured as
-continuous.  That gate is fail-safe in one direction only:
-measured-and-flat suppresses, absence of evidence still re-taps, so
-the slip response is narrowed, never removed.  The gate itself is
-estimation-side and is described in \dcref{sec:net}{the Network mode
+off), the Card-4 innovation gate on the carried double differences does
+not re-tap a chord whose arc the raw observables measured as continuous.
+The gate is fail-safe in one direction only: a measured flat arc
+suppresses the re-tap, and absence of evidence still re-taps.  The slip
+response is therefore narrowed and never removed.  The gate is part of
+the estimator and is described in \dcref{sec:net}{the Network mode
 document}.
 
 \subsection{TurboEdit dual-frequency resolution}\label{sec:slip-turboedit}
 
-The TurboEdit resolver is a \emph{pure} MW+GF joint integer solver
+The TurboEdit resolver is a pure MW+GF joint integer solver
 (\texttt{src/core/slip/TurboEditResolver.cpp} and its header
-\texttt{include/slip/TurboEditResolver.hpp}).  It owns the per-arc geometry-free jump history
-and the integer arithmetic, and returns per-signal integer repairs plus
-a reset-fallback set without mutating filter state; it is wired into
-both the post-processing \texttt{CycleSlipManager} and the real-time
-engine, and enabled by \texttt{estimation.cycle\_slip.turbo\_edit}.
+\texttt{include/slip/TurboEditResolver.hpp}).  It owns the per-arc
+geometry-free jump history and the integer arithmetic.  It returns
+per-signal integer repairs and a reset-fallback set, and it does not
+modify filter state.  It is wired into the post-processing
+\texttt{CycleSlipManager} and the real-time engine, and is enabled by
+\texttt{estimation.cycle\_slip.turbo\_edit}.
 
-That key is default \emph{off}.  The bundled real-time and SBF-replay
-configs turn it on; the internal PPP-RTK AR config leaves it off.  The
-network producer has a separate key,
-\texttt{network.cycle\_slip.turbo\_edit}, and with that off but
-\texttt{network.cycle\_slip.mw\_detect} on the same MW detector runs as
-a pure detector and the network refloats rather than repairing
+That key is default off.  The bundled real-time and SBF-replay configs
+turn it on; the internal PPP-RTK AR config leaves it off.  The network
+producer has a separate key, \texttt{network.cycle\_slip.turbo\_edit},
+which builds one resolver per station and feeds the repair drain of
+\Cref{sec:slip-network-qc}.  With that key off and
+\texttt{network.cycle\_slip.mw\_detect} on, the same MW detector runs as
+a pure detector, and the network refloats instead of repairing
 (\Cref{sec:slip-network-qc}).  Of the sub-toggles below, the soft-LLI
-bridge (\texttt{turbo\_edit\_bridge\_lli}) is likewise default off,
-while the MW-only code-domain veto
-(\texttt{turbo\_edit\_mw\_only\_veto}) is default on.
+bridge (\texttt{turbo\_edit\_bridge\_lli}) is default off and the
+MW-only code-domain veto (\texttt{turbo\_edit\_mw\_only\_veto}) is
+default on.
 
 \subsubsection{The 2$\times$2 system}\label{sec:slip-te-system}
 
 For a dual-frequency phase pair $(\sigl_1, \sigl_2)$ on satellite
-$\sat$, ordered higher-frequency first ($f_{\sigl_1} > f_{\sigl_2}$,
+$\sat$, ordered higher frequency first ($f_{\sigl_1} > f_{\sigl_2}$,
 hence $\lambda_{\sigl_1} < \lambda_{\sigl_2}$), the resolver pairs two
 scalar slip observables.  The first is the MW wide-lane integer of
-\Cref{eq:mw-content}, taken \emph{as input} from the MW detector and
-never recomputed (the empirically tuned MW path of
-\Cref{sec:slip-mw} is the single source of $\slipd \Nwl$):
+\Cref{eq:mw-content}.  It is taken as input from the MW detector and
+never recomputed, so the empirically tuned MW path of
+\Cref{sec:slip-mw} is the single source of $\slipd \Nwl$:
 \begin{equation}
 \slipd \Nwl \;=\; \slipd N_{\sigl_1} - \slipd N_{\sigl_2}
 \qquad\text{(one equation, two unknowns).}
@@ -603,12 +613,12 @@ ambiguity content by
 \lambda_{\sigl_1}\,\slipd N_{\sigl_1} - \lambda_{\sigl_2}\,\slipd N_{\sigl_2},
 \label{eq:te-gf}
 \end{equation}
-estimated in-arc by the second-order time difference $\mathrm{TD2}(t) =
-\gfc(t) - 2\,\gfc(t-1) + \gfc(t-2)$ of \Cref{eq:gf-td2}, which cancels
-the ionospheric delay up to quadratic order so that at the slip epoch it
-equals the integer jump plus phase noise only.  The TD2 chain requires
-three \emph{consecutive} epochs; non-consecutive history forces a chain
-re-seed (\Cref{sec:slip-te-bridge}).
+estimated within the arc by the second-order time difference
+$\mathrm{TD2}(t) = \gfc(t) - 2\,\gfc(t-1) + \gfc(t-2)$ of
+\Cref{eq:gf-td2}.  TD2 cancels the ionospheric delay up to quadratic
+order, so at the slip epoch it equals the integer jump plus phase noise.
+The TD2 chain requires three consecutive epochs; a non-consecutive
+history re-seeds the chain (\Cref{sec:slip-te-bridge}).
 
 Stacking \Cref{eq:te-mw,eq:te-gf} gives the linear map from the integer
 slip pair to the two observed jumps:
@@ -620,10 +630,10 @@ slip pair to the two observed jumps:
 \label{eq:te-2x2}
 \end{empheq}
 The determinant $\det \bm A = \lambda_{\sigl_1} - \lambda_{\sigl_2}$ is
-non-zero for any genuine cross-band pair: it is the cm-scale quantity
+non-zero for any cross-band pair.  It is the centimetre-scale quantity
 \texttt{denom} of \Cref{eq:te-solve}, $\approx \SI{-0.0539}{m}$ for GPS
-L1/L2, \emph{not} the $\sim\!\SI{0.86}{m}$ wide-lane wavelength, so
-the system is always invertible:
+L1/L2, and is distinct from the $\sim\!\SI{0.86}{m}$ wide-lane
+wavelength.  The system is therefore always invertible:
 \begin{equation}
 \bm A^{-1}
 =
@@ -631,8 +641,8 @@ the system is always invertible:
 \begin{pmatrix} -\lambda_{\sigl_2} & 1 \\[2pt] -\lambda_{\sigl_1} & 1 \end{pmatrix}.
 \label{eq:te-inv}
 \end{equation}
-The implementation does not invert the full matrix; it solves the second
-row for $\slipd N_{\sigl_2}$ and back-substitutes the first
+The implementation does not invert the full matrix.  It solves the
+second row for $\slipd N_{\sigl_2}$ and back-substitutes into the first
 (\texttt{TurboEditResolver.cpp}):
 \begin{equation}
 \slipd N_{\sigl_2}
@@ -644,15 +654,15 @@ row for $\slipd N_{\sigl_2}$ and back-substitutes the first
 \slipd N_{\sigl_2} + \slipd \Nwl,
 \label{eq:te-solve}
 \end{equation}
-with $\slipd \gfc$ instantiated either by the in-arc TD2 or, across a
-data gap, by the bridged jump of \Cref{sec:slip-te-bridge}.  The
-denominator $\lambda_{\sigl_1} - \lambda_{\sigl_2}$ (the variable
-\texttt{denom} in the source) equals $\approx \SI{-0.0539}{m}$ for GPS
-L1/L2, so the amplification factor on the wide-lane integer is
+where $\slipd \gfc$ is the in-arc TD2 or, across a data gap, the
+bridged jump of \Cref{sec:slip-te-bridge}.  The denominator
+$\lambda_{\sigl_1} - \lambda_{\sigl_2}$ (the variable \texttt{denom} in
+the source) is $\approx \SI{-0.0539}{m}$ for GPS L1/L2.  The
+amplification factor on the wide-lane integer is therefore
 $\lambda_{\sigl_1} / (\lambda_{\sigl_1} - \lambda_{\sigl_2}) \approx
--3.53$: the GF equation must localise $\slipd N_{\sigl_2}$ to well
-within $\pm 0.5$ cycle despite that lever, which is what the
-split-capability gate below enforces.
+-3.53$.  Despite that lever, the GF equation must localise
+$\slipd N_{\sigl_2}$ to well within $\pm 0.5$ cycle; the
+split-capability gate below enforces this.
 
 \subsubsection{Integer rounding and validation}\label{sec:slip-te-round}
 
@@ -666,17 +676,19 @@ f = \bigl|\slipd N_{\sigl_2} - d_2\bigr|,
 d_1 = d_2 + \slipd \Nwl.
 \label{eq:te-round}
 \end{equation}
-A candidate is \emph{accepted} as a repair only if the rounding is clean
-($f \le 0.30$, the constant \texttt{kMaxFractional}; a $1 - 0.30 = 0.70$
-cycle margin to the nearest wrong integer), the magnitudes are sane
-($|d_1|, |d_2| \le \texttt{kMaxSlipCycles}$), and the pair is non-trivial
-($d_1 \neq 0 \lor d_2 \neq 0$).  A non-trivial accepted candidate yields
-\texttt{action="repair"}; $(d_1, d_2) = (0, 0)$ is resolved as no-slip
-and the arc keeps rolling; otherwise the satellite is reset.
+A candidate is accepted as a repair only if three conditions hold.  The
+rounding is clean ($f \le 0.30$, the constant \texttt{kMaxFractional},
+which leaves a $1 - 0.30 = 0.70$ cycle margin to the nearest wrong
+integer).  The magnitudes are sane
+($|d_1|, |d_2| \le \texttt{kMaxSlipCycles}$, which is 1000 cycles).  The
+pair is non-trivial ($d_1 \neq 0 \lor d_2 \neq 0$).  An accepted
+candidate yields \texttt{action="repair"}.  The pair
+$(d_1, d_2) = (0, 0)$ resolves as no slip, and the arc continues.  Any
+other outcome resets the satellite.
 
-Before the joint solve is \emph{trusted}, the GF evidence must be sharp
-enough to discriminate the integer lattice.  The float $\slipd
-N_{\sigl_2}$ carries $\sigma_{\mathrm{TD2}} / |\lambda_{\sigl_1} -
+The joint solve is trusted only when the GF evidence is sharp enough to
+discriminate the integer lattice.  The float $\slipd N_{\sigl_2}$
+carries $\sigma_{\mathrm{TD2}} / |\lambda_{\sigl_1} -
 \lambda_{\sigl_2}|$ cycles of noise, so the solve is permitted only when
 \begin{equation}
 \sigma_{\mathrm{TD2}}
@@ -686,49 +698,60 @@ N_{\sigl_2}$ carries $\sigma_{\mathrm{TD2}} / |\lambda_{\sigl_1} -
 \qquad(\texttt{splitCapable}),
 \label{eq:te-split}
 \end{equation}
-with $\sigma_{\mathrm{TD2}}$ the arc's own MAD-derived $\sigma$ when
-mature, else the cross-satellite tier floor, else NaN (NaN fails by
-design, since ``no estimate'' is not evidence of sharpness).  The default
+Here $\sigma_{\mathrm{TD2}}$ is the arc's own MAD-derived $\sigma$ when
+the arc is mature, otherwise the cross-satellite tier value, otherwise
+NaN.  NaN fails the gate, because the absence of an estimate is no
+evidence of sharpness.  The default of
 \texttt{estimation.cycle\_slip.turbo\_edit\_split\_max\_sigma} is
-$0.2$ cycles.  This gate is the single mechanism making the resolver
-rate-adaptive: millimetric $\SI{1}{s}$ noise passes trivially, while
-coarse-rate ($\SI{30}{s}$) ionospheric residual passes only while the
-arc is quiet.  On an MW-flagged pair failing the gate the resolver falls
-back to a satellite reset; a GF-only exceedance on a split-incapable arc
-is \emph{ignored}, not reset.  When $\slipd \Nwl = 0$ (an equal slip
-$\slipd N_{\sigl_1} = \slipd N_{\sigl_2}$, to which MW is blind) a
-GF-only flag fires on $|\mathrm{TD2}|$ exceeding an adaptive threshold
+$0.2$ cycles.  This gate is the only mechanism that makes the resolver
+rate-adaptive.  Millimetre-level noise at $\SI{1}{s}$ passes easily; the
+ionospheric residual at a coarse rate ($\SI{30}{s}$) passes only while
+the arc is quiet.  An MW-flagged pair that fails the gate falls back to
+a satellite reset.  A GF-only exceedance on an arc that fails the gate is
+ignored, not reset, and the Kalman residual gate remains the backstop.
+When $\slipd \Nwl = 0$ (an equal slip
+$\slipd N_{\sigl_1} = \slipd N_{\sigl_2}$, to which MW is blind), a GF-only flag
+fires when $|\mathrm{TD2}|$ exceeds the adaptive threshold
 $\tau = \max(k_\sigma \hat\sigma_{\mathrm{TD2}}, \SI{0.04}{m})$, with
-$k_\sigma$ the \texttt{turbo\_edit\_sigma\_multiplier}; the floor sits
-just below $|\lambda_{\sigl_1} - \lambda_{\sigl_2}| \approx
-\SI{0.054}{m}$ so a $\pm 1$-cycle equal slip remains detectable.
+$k_\sigma$ the \texttt{turbo\_edit\_sigma\_multiplier} (default 6).  The
+floor sits just below $|\lambda_{\sigl_1} - \lambda_{\sigl_2}| \approx
+\SI{0.054}{m}$, so a $\pm 1$-cycle equal slip remains detectable.  The
+joint solve takes a zero wide-lane jump for a GF-only flag only when the
+MW detector affirmatively reports the pair clean this epoch.  MW silence
+alone is not taken as a zero wide-lane jump: a locked or immature MW arc
+can miss a real unequal slip, and forcing zero would alias it into a
+confident wrong repair.  Without that evidence the wide-lane integer is
+unknown and the satellite is reset.  An unstable ionosphere on the
+constellation (the cross-satellite IVI above \SI{0.06}{m}) also resets
+the satellite instead of solving.
 
 \subsubsection{MW-only / code-event null line}\label{sec:slip-te-codeevent}
 
-The asymmetric case is MW flagged but the GF jump \emph{affirmatively
-zero}.  For a fixed $\slipd \Nwl = k$, every integer pair $(\slipd
-N_{\sigl_1}, \slipd N_{\sigl_1} - k)$ predicts, via \Cref{eq:te-gf}, a GF
-jump
+The asymmetric case is an MW flag with a GF jump that is affirmatively
+zero.  For a fixed $\slipd \Nwl = k$, every integer pair $(\slipd
+N_{\sigl_1}, \slipd N_{\sigl_1} - k)$ predicts, through
+\Cref{eq:te-gf}, the GF jump
 \begin{equation}
 \slipd \gfc
 \;=\;
 \lambda_{\sigl_2} k - (\lambda_{\sigl_2} - \lambda_{\sigl_1})\,\slipd N_{\sigl_1},
 \label{eq:te-nullline}
 \end{equation}
-whose zero crossing sits at $\slipd N_{\sigl_1} = \lambda_{\sigl_2} k /
+with its zero crossing at $\slipd N_{\sigl_1} = \lambda_{\sigl_2} k /
 (\lambda_{\sigl_2} - \lambda_{\sigl_1}) \approx 4.53\,k$ for GPS L1/L2
-($\approx 3.95\,k$ for L1/L5).  Every small pair $|\slipd N_{\sigl_1}|
-\le 3$ then predicts $|\slipd \gfc| \ge \SI{8}{cm}$, orders above
-phase noise, so a flat GF leaves only \emph{null-line} pairs of
-$(4,3)$ / $(9,7)$-class magnitude: implausible multi-cycle simultaneous
-slips on both signals with no loss of lock.  The Occam-simpler
-explanation is a narrow-lane \emph{code} excursion (multipath, NLOS, DLL
-re-lock), since $\mwc = \phaseo_{\mathrm{WL}} - \code_{\mathrm{NL}}$ and
-one wide-lane cycle $\approx \SI{0.86}{m}$ of narrow-lane code.
+($\approx 3.95\,k$ for L1/L5).  Every small pair with
+$|\slipd N_{\sigl_1}| \le 3$ then predicts $|\slipd \gfc| \ge
+\SI{8}{cm}$, orders of magnitude above phase noise.  A flat GF therefore
+leaves only \emph{null-line} pairs of $(4,3)$ / $(9,7)$-class magnitude:
+multi-cycle simultaneous slips on both signals with no loss of lock,
+which are implausible.  The simpler explanation is a narrow-lane code
+excursion (multipath, NLOS, DLL re-lock), since
+$\mwc = \phaseo_{\mathrm{WL}} - \code_{\mathrm{NL}}$ and one wide-lane
+cycle corresponds to $\approx \SI{0.86}{m}$ of narrow-lane code.
 
-Accordingly the pair is classified a code-domain artifact, and the
-caller \emph{skips} the phase reset, when the GF jump is affirmatively
-zero within a discrimination-bounded gate,
+The pair is therefore classified as a code-domain artifact, and the
+caller skips the phase reset, when the GF jump is affirmatively zero
+within a gate bounded by the lattice discrimination:
 \begin{equation}
 |\mathrm{TD2}|
 \le
@@ -741,31 +764,33 @@ zero within a discrimination-bounded gate,
 \end{equation}
 with $\texttt{kCodeEventZeroSigma} = 3.5$ ($\approx 99.95\%$ two-sided)
 and $\texttt{kVetoZeroGateMaxLambdaFrac} = 0.5$.  The cap is the
-rate-adaptive safeguard: a zero gate wider than half the smallest
-GF-visible quantum cannot distinguish stillness from a small slip, so
-the veto stands down and the MW mandate governs.  The classification is
-further trust-gated: veto enabled, MW flagged, GF not exceeding, no
-post-slip cooldown, ionospherically stable constellation, no LLI on
-either signal, and MAD maturity $\ge 10$ samples (stricter than
-detection's $5$, because affirming stillness is a state-\emph{preserving}
-decision).  The implied null-line pair is computed for the trace only,
-never applied; \texttt{did\_slip} stays false so the GF chain keeps
-rolling.  A genuine null-line slip is not lost: it jumps that signal's
-Kalman phase innovation by $\ge |4\lambda_{\sigl_1}| \approx \SI{0.76}{m}$
-this very epoch, far beyond any residual gate, so the residual-driven
-reset corrects it one epoch late.  The behaviour is toggled by
+rate-adaptive safeguard.  A zero gate wider than half the smallest
+GF-visible quantum cannot distinguish stillness from a small slip; the
+veto then stands down and the MW flag governs.  The classification has
+further trust conditions: the veto is enabled, MW flagged, GF did not
+exceed its threshold, no post-slip cooldown is active, the
+constellation's ionosphere is stable, neither signal carries an LLI,
+and the MAD maturity is $\ge 10$ samples.  The last condition is
+stricter than the $5$ samples detection needs, because affirming
+stillness preserves state.  The implied null-line pair is computed for
+the trace only and never applied; \texttt{did\_slip} stays false so the
+GF chain continues.  A real null-line slip is still caught.  It moves
+that signal's Kalman phase innovation by
+$\ge |4\lambda_{\sigl_1}| \approx \SI{0.76}{m}$ in the same epoch, far
+beyond any residual gate, so the residual-driven reset corrects it one
+epoch late.  The behaviour is toggled by
 \texttt{estimation.cycle\_slip.turbo\_edit\_mw\_only\_veto} (default on).
 
 \subsubsection{Gap-spanning GF bridge}\label{sec:slip-te-bridge}
 
-The TD2 chain needs three consecutive epochs; any per-signal dropout or
-receiver gap re-seeds the chain, making the post-gap TD2 \emph{blind} to
-a re-lock slip whose GF level jump lives \emph{between} the two chains.
-When a chain break occurs within
+The TD2 chain needs three consecutive epochs.  Any per-signal dropout or
+receiver gap re-seeds the chain, and the post-gap TD2 is then blind to a
+re-lock slip whose GF level jump falls between the two chains.  When a
+chain break occurs within
 \texttt{estimation.cycle\_slip.turbo\_edit\_max\_gap\_s}, the resolver
-stashes the pre-gap GF level $\gfc_{\mathrm{ref}}$, its timestamp, the
-arc's EWMA GF rate $\dot{\gfc}$ and the pre-gap spacing $dt_0$, and on
-return forms the drift-corrected across-gap jump
+stores the pre-gap GF level $\gfc_{\mathrm{ref}}$, its timestamp, the
+arc's EWMA GF rate $\dot{\gfc}$ and the pre-gap spacing $dt_0$.  On
+return it forms the drift-corrected jump across the gap:
 \begin{empheq}[box=\fbox]{equation}
 \slipd \gfc_{\mathrm{gap}}
 \;=\;
@@ -774,67 +799,76 @@ return forms the drift-corrected across-gap jump
 \Delta t = t_{\mathrm{now}} - t_{\mathrm{ref}},
 \label{eq:te-bridge}
 \end{empheq}
-which then plays the role of $\slipd \gfc$ in \Cref{eq:te-solve}.  Here
-$\dot{\gfc}$ is an EWMA ($\alpha = 0.1$) of the per-epoch GF rate, chosen
-so its noise does not amplify when projected over the gap.  Because the
-un-cancelled ionospheric residual is random-walk over the gap, the
-detection threshold and the code-event zero gate are widened by the
-factor $w = \sqrt{\Delta t / dt_0}$ (for $\Delta t > dt_0$), and the
-split-capability $\sigma$ becomes $\sigma_{\mathrm{bridge}} =
-\hat\sigma_{\mathrm{MAD}}\,w$; the zero-gate \emph{discrimination cap}
-stays un-widened, since the integer lattice of \Cref{eq:te-2x2} does not
-stretch with the gap.  The bridge cap default is $\SI{15}{s}$ in code,
-raised to $\SI{60}{s}$ in the bundled real-time and replay configs.
+which then takes the place of $\slipd \gfc$ in \Cref{eq:te-solve}.
+Here $\dot{\gfc}$ is an EWMA ($\alpha = 0.1$) of the per-epoch GF rate,
+chosen so that its noise is not amplified when projected over the gap.
+The uncancelled ionospheric residual is a random walk over the gap.  The
+detection threshold and the code-event zero gate are therefore widened
+by the factor $w = \sqrt{\Delta t / dt_0}$ (for $\Delta t > dt_0$), and
+the split-capability $\sigma$ becomes $\sigma_{\mathrm{bridge}} =
+\hat\sigma_{\mathrm{MAD}}\,w$.  The discrimination cap of the zero gate
+is not widened, because the integer lattice of \Cref{eq:te-2x2} does not
+stretch with the gap.  The bridge cap defaults to $\SI{15}{s}$ in code
+and is raised to $\SI{60}{s}$ in the bundled real-time and replay
+configs.
 
-An MW-flagged pair across the gap is attributed three ways.  (i) A
-\emph{code event} (\texttt{action="code\_event"}) when $\slipd
-\gfc_{\mathrm{gap}}$ is affirmatively zero within the widened gate,
-the same null-line logic as \Cref{eq:te-codeevent}, applied across the
-gap, preserving phase through a re-acquisition DLL transient.
-(ii) A \emph{repair} or \emph{moot} when the joint solve runs with
-$\slipd \gfc = \slipd \gfc_{\mathrm{gap}}$; per signal it is dispatched
-by observation-domain continuity, a signal observed at every epoch
-through the gap kept its ambiguity (its nonzero $\slipd N$ is a genuine
-\emph{repair}), whereas a signal that missed an epoch was
-pruned-and-reseeded on return (its nonzero $\slipd N$ is \emph{moot},
-already absorbed, mandate suppressed).  (iii) A \emph{reset} when the
-across-gap $\sigma$ is too coarse for the split, or the candidate set
-fits zero or two integers with no deferral.
+An MW-flagged pair across the gap has three possible outcomes.
+\begin{enumerate}
+\item A \emph{code event} (\texttt{action="code\_event"}) when
+  $\slipd \gfc_{\mathrm{gap}}$ is affirmatively zero within the widened
+  gate.  This is the null-line logic of \Cref{eq:te-codeevent} applied
+  across the gap, and it preserves phase through a re-acquisition DLL
+  transient.
+\item A \emph{repair} or \emph{moot} outcome when the joint solve runs
+  with $\slipd \gfc = \slipd \gfc_{\mathrm{gap}}$.  Each signal is
+  dispatched by continuity in the observation domain.  A signal observed
+  at every epoch through the gap kept its ambiguity, so its nonzero
+  $\slipd N$ is a \emph{repair}.  A signal that missed an epoch was
+  pruned and reseeded on return, so its nonzero $\slipd N$ is
+  \emph{moot}: already absorbed, with the reset suppressed.
+\item A \emph{reset} when the across-gap $\sigma$ is too coarse for the
+  split, or when the candidate set holds no integer or more than one and
+  no deferral applies.
+\end{enumerate}
 
-Because the GF equation alone is degenerate along the null-line lattice
-of \Cref{eq:te-nullline} ($+\SI{0.735}{m}$ fits both $(0,-3)$ and
-$(9,4)$ at millimetre level; only the integer $k$ separates them), the
-bridged solve demands a \emph{unique} surviving candidate after three
-guards: the fractional gate of \Cref{eq:te-round}; a GF-separation guard
-requiring the candidate's own predicted jump to clear the zero gate,
+The GF equation alone is degenerate along the null-line lattice of
+\Cref{eq:te-nullline}: $+\SI{0.735}{m}$ fits both $(0,-3)$ and $(9,4)$
+at the millimetre level, and only the integer $k$ separates them.  The
+bridged solve therefore requires a unique surviving candidate after
+three guards.  The first is the fractional gate of \Cref{eq:te-round}.
+The second is a GF-separation guard: the candidate's own predicted jump
+must clear the zero gate,
 $|\lambda_{\sigl_1} d_1 - \lambda_{\sigl_2} d_2| > \texttt{zero\_gate}$,
-lest a marginal noise exceedance mint a multi-cycle repair from noise;
-and a sibling-pair zero affirmation, whereby a satellite's \emph{other}
-GF arc that stayed chain-continuous and unflagged through the bridged
-interval affirms $\slipd N = 0$ for both its signals and prunes any
-candidate demanding a nonzero integer on an affirmed signal.  The
-wide-lane integer feeding the bridged solve is taken in trust order: the
-published MW integer $k$; failing that, at the flag epoch,
-$\operatorname{round}(f) \pm 3$ around the (NL-code-biased) instantaneous
-re-acquisition float; and on deferral epochs the settled across-gap MW
-Hatch mean.  When the float wide-lane evidence is unsettled or the
-lattice is ambiguous (two or more acceptable integers), the solve is
-\emph{deferred} rather than guessed
-(\texttt{estimation.cycle\_slip.turbo\_edit\_wl\_settle\_max\_s}),
-terminating in a later repair, reset or timeout-reset.
+so that a marginal noise exceedance cannot produce a multi-cycle repair.
+The third is a sibling-pair zero affirmation.  Another GF arc of the
+same satellite that stayed chain-continuous and unflagged through the
+bridged interval affirms $\slipd N = 0$ for both its signals, and any
+candidate that needs a nonzero integer on an affirmed signal is pruned.
+The wide-lane integer for the bridged solve is taken in order of trust:
+the published MW integer $k$; failing that, at the flag epoch,
+$\operatorname{round}(f) \pm 3$ around the instantaneous re-acquisition
+float (biased by the narrow-lane code); and on deferral epochs the
+settled across-gap MW Hatch mean.  When the float wide-lane evidence is
+unsettled or the lattice is ambiguous (two or more acceptable integers),
+the solve is deferred instead of guessed, up to
+\texttt{estimation.cycle\_slip.turbo\_edit\_wl\_settle\_max\_s}
+(default \SI{45}{s}).  A deferral ends in a later repair, a reset or a
+timeout reset.
 
 \subsubsection{Atomic reconciliation}\label{sec:slip-te-atomic}
 
-Per-satellite candidates are reconciled atomically: a cross-pair integer
-disagreement on a shared signal demotes the whole satellite to reset,
-and a satellite ending in the reset set has its code-event, moot, clean
-and pending classifications \emph{withdrawn}, since contradictory evidence
-always resolves to the conservative outcome.  Arc bookkeeping keeps the
-TD2 validity precondition honest: a non-consecutive update partially
-resets the chain but preserves the slowly-varying MAD calibration
-window, an absolute gap beyond the configured maximum wipes the arc, and
-an accepted slip re-seeds with a short cooldown to suppress the TD2 echo;
-only clean (non-exceeding, non-bridged) TD2 samples feed the MAD window.
+Per-satellite candidates are reconciled atomically.  A cross-pair
+integer disagreement on a shared signal demotes the whole satellite to
+reset.  A satellite that ends in the reset set has its code-event, moot,
+clean and pending classifications withdrawn, so contradictory evidence
+always resolves to the conservative outcome.  Arc bookkeeping maintains
+the TD2 precondition of consecutive epochs.  A non-consecutive update
+partially resets the chain but keeps the slowly varying MAD calibration
+window.  A gap beyond the arc's maximum clears the arc.  The callers set that
+maximum to 1.5 times the data interval; the resolver's own default,
+\SI{120}{s}, applies only when no caller sets it.  An accepted slip re-seeds the chain with a cooldown of 3 epochs
+that suppresses the TD2 echo.  Only clean TD2 samples (not exceeding the
+threshold, not bridged) feed the MAD window.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}
