@@ -2,31 +2,29 @@
 %  Observation equations
 % ============================================================
 
-This section gives the full \emph{undifferenced} observation model that
-the filter linearises around at each epoch.  The PPP-RTK
-parameterisation is uncombined: per-signal pseudorange and carrier
-phase are consumed directly, without forming ionosphere-free or
-wide-lane combinations as a preprocessing step.  Combinations
-(\textsc{IF}, \textsc{MW}, \textsc{GF}) are still computed for
-diagnostic and slip-detection purposes (\dcref{sec:slip}{the
-cycle-slip document}; see
-\texttt{slip/MwSlipDetector}, \texttt{slip/GraphicSlipDetector}) but
-they do not enter the measurement update path.  This holds whenever the
-uncombined parameterisation is active; the loader forces
+This section gives the \emph{undifferenced} observation model about
+which the filter linearises at each epoch.  The PPP-RTK
+parameterisation is uncombined: the filter consumes per-signal
+pseudorange and carrier phase directly and forms no ionosphere-free or
+wide-lane combination as a preprocessing step.  The combinations
+(\textsc{IF}, \textsc{MW}, \textsc{GF}) are computed for diagnostics and
+slip detection only (\dcref{sec:slip}{the cycle-slip document};
+\texttt{slip/MwSlipDetector}, \texttt{slip/GraphicSlipDetector}) and do
+not enter the measurement update.  The loader
+(\texttt{GnssConfig::loadProcessingSection\_}) forces
 \texttt{uncombined\_enabled=true} for the whole PPP-RTK family (user,
-network producer, network consumer) in
-\texttt{GnssConfig::loadProcessingSection\_}; the same site forces it for
-the baseline double-difference modes, which process each signal
-independently (\Cref{sec:dd}).  Plain PPP mode leaves the flag at its
-default \texttt{false} and instead builds ionosphere-free combined
-observables (keys such as \texttt{C1W\_C5X}) that \emph{do} feed
-\texttt{MeasurementModel::buildJacobianRow} and the update; the sequel is
-written for the uncombined case.
+network producer, network consumer) and for the baseline
+double-difference modes, which process each signal independently
+(\Cref{sec:dd}).  Plain PPP mode keeps the flag at its default
+\texttt{false} and builds ionosphere-free combined observables (keys
+such as \texttt{C1W\_C5X}); these feed
+\texttt{MeasurementModel::buildJacobianRow} and the update.  The rest of
+this section describes the uncombined case.
 
 \subsection{Code (pseudorange) observation}
 
 For receiver $\rx$ tracking satellite $\sat$ on signal $\sigl$, the
-observed pseudorange is
+pseudorange is
 \begin{empheq}[box=\fbox]{equation}
 \code^\sat_{\rx,\sigl}
 \;=\;
@@ -42,8 +40,7 @@ observed pseudorange is
 
 \subsection{Carrier-phase observation}
 
-The corresponding carrier-phase observation, scaled to metres by
-$\lambda_\sigl$, is
+The carrier-phase observation, scaled to metres by $\lambda_\sigl$, is
 \begin{empheq}[box=\fbox]{equation}
 \phaseo^\sat_{\rx,\sigl}
 \;=\;
@@ -58,32 +55,42 @@ $\lambda_\sigl$, is
 \label{eq:obs-phase}
 \end{empheq}
 
-The defining structural difference between \Cref{eq:obs-code,eq:obs-phase}
-is the sign of the ionospheric term: $+\mu_\sigl I$ on code,
-$-\mu_\sigl I$ on phase.  Three additional remarks:
+The two equations differ structurally in the sign of the ionospheric
+term: $+\mu_\sigl I$ on code, $-\mu_\sigl I$ on phase.  Further
+remarks:
 
 \begin{enumerate}[leftmargin=*, itemsep=0pt]
-\item The phase ambiguity $N^\sat_{\rx,\sigl}$ is integer in
-      principle but is contaminated by the receiver-plus-satellite
-      phase biases $b_{\rx,\sigl} - b^\sat_\sigl$.  In a
-      \emph{float} solution these biases are absorbed into
-      $N^\sat_{\rx,\sigl}$, leaving a non-integer state with no
-      structural advantage over the code observation.  Recovering
-      integer-valued ambiguities therefore requires either external
-      Fractional Cycle Bias (FCB) products or differencing
-      (\Cref{sec:diff}), which cancels common-mode bias terms.
-\item The clock product $\sLight\,\mathrm{d}t^\sat$ is read from the
-      analysis-centre CLK file (post-processing) or refined from the
-      broadcast clock by a streamed SSR correction (real-time,
-      \dcref{sec:ssr}{the SSR-corrections document}) and treated as
-      deterministic in the filter; any
-      residual product error appears on the observation and is absorbed
-      by the receiver clock state.
+\item The phase ambiguity $N^\sat_{\rx,\sigl}$ is an integer in
+      principle, but the receiver and satellite phase biases
+      $b_{\rx,\sigl} - b^\sat_\sigl$ contaminate it.  A \emph{float}
+      solution absorbs these biases into $N^\sat_{\rx,\sigl}$, which
+      leaves a non-integer state with no structural advantage over the
+      code observation.  Integer-valued ambiguities therefore require
+      either external Fractional Cycle Bias (FCB) products or
+      differencing (\Cref{sec:diff}), which cancels the common-mode
+      bias terms.
+\item The clock product $\sLight\,\mathrm{d}t^\sat$ comes from the
+      analysis-centre CLK file (post-processing) or from the broadcast
+      clock refined by a streamed SSR correction (real time,
+      \dcref{sec:ssr}{the SSR-corrections document}).  The filter treats
+      it as deterministic.  Its error enters the observation: the part
+      common to all satellites is absorbed by the receiver clock state,
+      and the satellite-specific part remains in the residuals.
 \item The system time offset $\sLight\,\delta t^{(g(\sat))}_\rx$ is
       zero by construction when $g(\sat)$ is the reference
-      constellation (default GPS).  Together with the receiver clock
-      $\sLight\,\mathrm{d}t_\rx$ this means a multi-constellation run
-      carries $|\sysset|$ clock-like states in total.
+      constellation, which is GPS (the state manager keys no offset for
+      GPS).  With the receiver clock $\sLight\,\mathrm{d}t_\rx$, a
+      multi-constellation run therefore carries $|\sysset|$ clock-like
+      states in total.
+\item The slant tropospheric delay is the hydrostatic
+      zenith delay mapped by the dry mapping function plus the wet
+      zenith delay mapped by the wet mapping function
+      (\texttt{PppObservation} fields \texttt{mf\_d} and \texttt{mf\_w}).
+\item The equations omit the deterministic model corrections applied to
+      the computed range: satellite and receiver antenna phase-centre
+      offsets and variations, the relativistic terms, site displacement,
+      and, on phase rows only, the carrier-phase wind-up.  The wind-up
+      follows the \texttt{nominal-wu93} sign convention.
 \end{enumerate}
 
 \subsection{Geometric range and linearisation}\label{sec:obs-geometry}
@@ -91,7 +98,7 @@ $-\mu_\sigl I$ on phase.  Three additional remarks:
 The geometric range $\geomrange^\sat_\rx = \|\satpos - \rxpos_\rx\|_2$
 enters \Cref{eq:obs-code,eq:obs-phase} non-linearly through the
 receiver position $\rxpos_\rx$.  The filter linearises about the
-current state estimate $\hat{\rxpos}_\rx$:
+current estimate $\hat{\rxpos}_\rx$:
 \begin{equation}
 \geomrange^\sat_\rx
 \;=\;
@@ -107,40 +114,42 @@ with the unit line-of-sight
 \frac{\satpos - \hat{\rxpos}_\rx}{\|\satpos - \hat{\rxpos}_\rx\|_2}.
 \label{eq:los}
 \end{equation}
-The Jacobian row $\jacH_{(\sat,\sigl)}$ contributing to the design
-matrix at the position columns is therefore $-(\los^\sat_{\hat{\rx}})^{\Tr}$.
-For sub-metre residual targets this single linearisation per epoch is
-sufficient; the engine optionally relinearises within the epoch
-(\texttt{processing.relinearize\_geometry}, which defaults to off in
-code and is enabled in the PPP, PPP-RTK, baseline, and real-time
-configs but left off in the six network-producer configs) to handle
-long initial position offsets.
+The position columns of the Jacobian row $\jacH_{(\sat,\sigl)}$ are
+therefore $-(\los^\sat_{\hat{\rx}})^{\Tr}$.  One linearisation per epoch
+suffices for sub-metre residual targets.  For large initial position
+offsets the engine can relinearise within the epoch
+(\texttt{processing.relinearize\_geometry}).  The flag defaults to off in
+code; the PPP, PPP-RTK, baseline and real-time configs in
+\texttt{config/} enable it, and the six network-producer configs leave
+it off.
 
-The satellite position $\satpos$ is itself a function of the
-transmission time.  Rather than iterate the emission time against the
-geometric range, which depends on $\rxpos_\rx$,
-\texttt{Geometry::computeEmissionState} solves it in a single step from
-the \emph{pseudorange}: the time of flight is $\tau = \code / \sLight$,
-subtracted (with the satellite clock) from the receiver epoch.  Because
-the receiver clock bias $\mathrm{d}t_\rx$ enters the receiver epoch as
-$+\mathrm{d}t_\rx$ and the pseudorange as $+\sLight\,\mathrm{d}t_\rx$, it
-cancels exactly, leaving a residual $(I+T+\varepsilon)/\sLight \approx
-30$--$60$~ns of satellite displacement, sub-millimetre and below any PPP
-threshold.  This deliberately avoids a range-based fixed point: iterating
-against $\geomrange^\sat_\rx$ would re-introduce an uncancelled
-$\mathrm{d}t_\rx$ and drive a positive-feedback loop through the filter's
-receiver-clock state.  The only second pass (the
-\texttt{model\_corrections.refine\_emission\_time} block in
-\texttt{Geometry::computeSatelliteGeometry}) re-runs
-\texttt{computeEmissionState} on a cleaned pseudorange, having first
-subtracted the slant hydrostatic delay and the IF-combined ATX projection
-from the seed, a pseudorange-cleanliness refinement rather than a
-range-versus-position iteration.
+The satellite position $\satpos$ is a function of the transmission
+time.  \texttt{Geometry::computeEmissionState} obtains the emission time
+in one step from the \emph{pseudorange} rather than by iterating against
+the geometric range, which depends on $\rxpos_\rx$.  The time of flight
+$\tau = \code / \sLight$ and the satellite clock are subtracted from the
+receiver epoch.  The receiver clock bias $\mathrm{d}t_\rx$ enters the receiver epoch as
+$+\mathrm{d}t_\rx$ and the pseudorange as $+\sLight\,\mathrm{d}t_\rx$,
+so it cancels exactly.  The remaining error $(I+T+\varepsilon)/\sLight
+\approx 30$--$60$~ns displaces the satellite by less than a millimetre,
+below any PPP threshold.  The seed pseudorange is the ionosphere-free
+combination of the clock-reference signals when available
+(\texttt{Geometry::extractPseudorange}), so the ionospheric part of that
+error applies only to the single-frequency fallback.  A range-based fixed
+point is avoided on purpose: iterating against $\geomrange^\sat_\rx$
+would reintroduce an uncancelled $\mathrm{d}t_\rx$ and drive a
+positive-feedback loop through the receiver-clock state.
+
+The one second pass is the \texttt{model\_corrections.refine\_emission\_time}
+block in \texttt{Geometry::computeSatelliteGeometry} (default on).  It
+re-runs \texttt{computeEmissionState} on a cleaned pseudorange: the seed
+minus the slant hydrostatic delay and the IF-combined ATX projection,
+plus the periodic relativistic clock term.  This refines the
+pseudorange; it is not a range-versus-position iteration.
 
 \subsection{Stochastic model}
 
-Observation noise covariance is structured per epoch as a block
-diagonal matrix with entries
+The observation noise covariance of an epoch is diagonal, with entries
 \begin{equation}
 \sigma^2_{\rx,\sat,\sigl}
 \;=\;
@@ -148,18 +157,33 @@ diagonal matrix with entries
 \xi(\text{C/N}_0\text{ at } (\rx,\sat,\sigl)),
 \label{eq:noise-model}
 \end{equation}
-combining a per-type baseline ($\sigma_{0,\text{code}}$,
-$\sigma_{0,\text{phase}}$ from \texttt{filter.measurement\_noise}), an
-elevation-dependent down-weighting factor
-$w(\theta^\sat_\rx)^{-1} = (\sin\theta^\sat_\rx)^{-2p_{\text{type}}}$ whose
-exponent is \emph{continuous} and \emph{type-dependent}: code and Doppler
-rows take \texttt{filter.code\_elevation\_power}, carrier-phase rows
-\texttt{filter.phase\_elevation\_power}, with the weighting strategy
-itself selected by \texttt{filter.stochastic\_model} (derived, together with
-the low-elevation guard that leaves $\sigma^2_0$ unamplified, in
-\dcref{eq:qc-elevation}{the stochastic-model section of the quality-control
-document}), and an optional carrier-to-noise
-ratio scaling $\xi$ parameterised by \texttt{snr\_model\_params}.
-Cross-correlations between observations are assumed zero in the
-undifferenced parameterisation; differencing introduces structured
-correlations handled in \Cref{sec:diff}.
+The three factors are:
+\begin{itemize}[leftmargin=*, itemsep=0pt]
+\item a per-type baseline ($\sigma_{0,\text{code}}$,
+      $\sigma_{0,\text{phase}}$ from \texttt{filter.measurement\_noise});
+\item an elevation down-weighting factor
+      $w(\theta^\sat_\rx)^{-1} = (\sin\theta^\sat_\rx)^{-2p_{\text{type}}}$
+      with a continuous, type-dependent exponent.  Code and Doppler rows
+      use \texttt{filter.code\_elevation\_power} and carrier-phase rows
+      \texttt{filter.phase\_elevation\_power}; both default to 1.0, which
+      scales the variance by the squared cosecant of the elevation.  When
+      the sine of the elevation is at most \texttt{1e-6}, a guard returns
+      $\sigma^2_0$ unamplified.  The derivation is in
+      \dcref{eq:qc-elevation}{the stochastic-model section of the
+      quality-control document};
+\item a carrier-to-noise-ratio term $\xi$, parameterised by
+      \texttt{snr\_model\_params}.
+\end{itemize}
+\texttt{filter.stochastic\_model} selects the weighting strategy:
+\texttt{constant}, \texttt{elevation} (the default), \texttt{snr} or
+\texttt{satellite\_block}.  Only the \texttt{snr} strategy uses the
+carrier-to-noise term, and it does not multiply the baseline variance by
+a factor: for code and phase rows it replaces the baseline variance by
+the variance-additive Hadas--Bosy form built from the observed
+carrier-to-noise ratio (coefficients \texttt{code\_a}, \texttt{code\_b},
+\texttt{phase\_a}, \texttt{phase\_b}; the ratio is clamped to
+20--55~dB-Hz by default; code rows take a per-band scale), then applies
+the elevation factor
+(\texttt{StochasticModelWeight::computeSnr}).  Cross-correlations between
+observations are zero in the undifferenced parameterisation; differencing
+introduces the structured correlations treated in \Cref{sec:diff}.

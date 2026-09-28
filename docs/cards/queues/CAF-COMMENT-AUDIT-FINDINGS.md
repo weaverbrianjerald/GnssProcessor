@@ -262,3 +262,17 @@ Run 2 (network, network_example, network_carry, pipeline_diagrams, state_vector)
   calls the prefit census always-on (it runs only when `trace_prefit_census`,
   `trace_topology` or `seed_birth_check_sigma` is armed) and omits `networkBuildSignalRoster`,
   `networkAmbFloatApplyDrops`, `networkGrossLosScreen` and `networkClockLevelRebase`.
+
+## 2026-09-28: findings from the LaTeX report prose pass, run 3
+
+Run 3 (notation, foundations, observation_equations, bssd_dd). No code defects found.
+Two questions about the mathematics, left unchanged for the author:
+
+- [ ] **Author check: emission-time error estimate (docs/report/observation_equations.tex).**
+  The estimate includes the ionosphere and quotes 30 to 60 ns; the code's seed pseudorange
+  is ionosphere-free whenever the clock-reference signals exist
+  (`Geometry::extractPseudorange`), so the dominant error is troposphere, antenna and noise
+  (tens of ns).
+- [ ] **Author check: `eq:noise-model`.** The equation shows the SNR factor multiplying the
+  baseline variance; under the `snr` strategy the code's model replaces the baseline
+  variance (`StochasticModelWeight::computeSnr`).

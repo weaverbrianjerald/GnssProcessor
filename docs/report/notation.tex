@@ -3,13 +3,12 @@
 % ============================================================
 
 \paragraph{Indices and sets.}
-We use lower-case Latin letters for indices and calligraphic upper-case
-for sets:
+Indices are lower-case Latin letters; sets are calligraphic upper-case:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item $\rx \in \rxset$ is the receiver.  Single-receiver modes (PPP,
-      PPP-RTK) have $|\rxset| = 1$; baseline modes have a fixed
-      reference and one or more rovers; the network producer
-      (\texttt{PPP\_RTK\_Network}) carries a peer set of
+      PPP-RTK) have $|\rxset| = 1$.  Baseline modes have a fixed
+      reference and one or more rovers.  The network producer
+      (\texttt{PPP\_RTK\_Network}) processes a peer set of
       $|\rxset| \ge 2$ stations (50--305 in practice) with no
       reference/rover asymmetry.
 \item $g \in \sysset = \{\text{GPS}, \text{GAL}, \text{BDS},
@@ -24,49 +23,48 @@ for sets:
 \end{itemize}
 
 \paragraph{Vectors and matrices.}
-Bold lower-case for vectors ($\bm{x}$, $\rxpos$); bold upper-case for
-matrices ($\jacH$, $\covM$).  $\bm{a}^{\Tr}$ is the transpose.
-A hat denotes a state estimate; a tilde a one-step prediction:
-$\hat{\stateV}_{k|k}$ vs.\ $\tilde{\stateV}_{k|k-1}$.
+Vectors are bold lower-case ($\bm{x}$, $\rxpos$); matrices are bold
+upper-case ($\jacH$, $\covM$).  $\bm{a}^{\Tr}$ is the transpose.
+A hat denotes a state estimate and a tilde a one-step prediction:
+$\hat{\stateV}_{k|k}$ and $\tilde{\stateV}_{k|k-1}$.
 
 \paragraph{Observables.}
-For each receiver/satellite/signal triple, the engine consumes two
-real-valued observables (in metres) per epoch:
+Each receiver/satellite/signal triple supplies two real-valued
+observables per epoch, both in metres:
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item $\code^\sat_{\rx,\sigl}$ is the pseudorange (code), in metres.
 \item $\phaseo^\sat_{\rx,\sigl}$ is the carrier phase, scaled to metres
-      via $\lambda_\sigl$.  Beyond the range, clock, and atmosphere
-      terms it shares with the code, its ambiguous (non-range) part is
-      $\lambda_\sigl N^\sat_{\rx,\sigl}$ plus the fractional phase
+      by $\lambda_\sigl$.  In addition to the range, clock and atmosphere
+      terms it shares with the code, it carries an ambiguous (non-range)
+      part: $\lambda_\sigl N^\sat_{\rx,\sigl}$ plus the fractional phase
       biases $b_{\rx,\sigl} - b^\sat_\sigl$ (\Cref{eq:obs-phase}).
 \end{itemize}
-Where the distinction matters, $\sigl$ may further denote the band
+Where the distinction matters, $\sigl$ also denotes the band
 ($L_1, L_2, L_5, \ldots$) and the tracking attribute (e.g.\ \texttt{C}, \texttt{W}, \texttt{X}).
 The leading observable-type letter (\texttt{C}/\texttt{L}) selects code
-vs.\ phase; the frequency-only quantities $f_\sigl$, $\lambda_\sigl$, and
+or phase.  The frequency-only quantities $f_\sigl$, $\lambda_\sigl$ and
 $N^\sat_{\rx,\sigl}$ depend only on the (band, attribute) part, so a code
-and its sibling phase share them.  This matches the state keys, which
-carry the full phase code for ambiguities (\texttt{"G01\_L1C"}) but only
-the band digit for receiver code biases (\texttt{"GPS\_IFB2"}).
+signal and its sibling phase share them.  The state keys follow the same
+split: ambiguity keys carry the full phase code (\texttt{"G01\_L1C"}),
+receiver code-bias keys only the band digit (\texttt{"GPS\_IFB2"}).
 
 \paragraph{Frequencies and wavelengths.}
 $f_\sigl$ is the carrier frequency (Hz) and $\lambda_\sigl = \sLight / f_\sigl$
-the wavelength (m).  The frequency-squared scaling factor used to
-project the L1-equivalent slant ionospheric delay onto signal $\sigl$
-is
+the wavelength (m).  The frequency-squared factor that maps the
+L1-equivalent slant ionospheric delay onto signal $\sigl$ is
 \begin{equation}
 \mu_\sigl \;:=\; \frac{f_1^2}{f_\sigl^2}.
 \label{eq:iono-scaling}
 \end{equation}
-Here $f_1$ is the GPS~L1 frequency ($1575.42$~MHz), used as the common
-reference for \emph{every} constellation, not the band-1 frequency of
+Here $f_1$ is the GPS~L1 frequency ($1575.42$~MHz), the common
+reference for all constellations; it is not the band-1 frequency of
 the satellite's own system.  The estimated state $I^\sat_{\rx,1}$ is
-therefore GPS-L1-equivalent even for BDS/GLO/GAL satellites
+therefore GPS-L1-equivalent for BDS, GLO and GAL satellites as well
 (\texttt{MeasurementModel::buildJacobianRow}: \texttt{f\_ref =
 Constants::GPS\_L1\_FREQ}).
 
 \paragraph{Differencing operators.}
-Three differencing operations recur throughout the document:
+Three differencing operators recur throughout:
 \begin{equation*}
 \bsd{q^{\sat,\piv{g}}_{\rx,\sigl}}
   := q^\sat_{\rx,\sigl} - q^{\piv{g}}_{\rx,\sigl},
@@ -77,17 +75,17 @@ Three differencing operations recur throughout the document:
 \dd{q^{\sat,\piv{g}}_{\rx_1\rx_2,\sigl}}
   := \bsd{\big(\brd{q^\sat_{\rx_1\rx_2,\sigl}}\big)}.
 \end{equation*}
-Read $\bsd{q}$ as ``between-satellite single difference of $q$
-relative to pivot $\piv{g}$,'' $\brd{q}$ as ``between-receiver
-single difference,'' and $\dd{q}$ as ``double difference.''
+$\bsd{q}$ is the between-satellite single difference of $q$
+relative to the pivot $\piv{g}$, $\brd{q}$ the between-receiver
+single difference, and $\dd{q}$ the double difference.
 
 \paragraph{Sign conventions.}
-We adopt the convention that the slant ionospheric delay $I^\sat_{\rx,\sigl}$
-enters \emph{additively} on the code observable and \emph{subtractively}
-on the carrier phase observable; this is the source of the well-known
-``code--phase divergence.''  All other range-additive terms (geometry,
-clocks, troposphere, biases) carry the same sign on both observables.
-See \Cref{eq:obs-code,eq:obs-phase} for the explicit equations.
+The slant ionospheric delay $I^\sat_{\rx,\sigl}$ enters the code
+observable with a positive sign and the carrier phase observable with a
+negative sign; this sign difference produces code--phase divergence.
+All other range-additive terms (geometry, clocks, troposphere, biases)
+carry the same sign on both observables.
+\Cref{eq:obs-code,eq:obs-phase} give the explicit equations.
 
 \paragraph{Symbol table.}
 \begin{center}
