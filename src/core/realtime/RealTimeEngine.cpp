@@ -537,6 +537,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     resetOnPhaseBiasDisc(ctx);
     reinflateOnCodeBiasDisc(ctx);
     reinflateOnClockDisc(ctx);
+    reactToDeclaredLevelSteps_(ctx);   // card CLV2 (no-op unarmed)
 
     // --- Estimation tail ---------------------------------------------------
     runMeasurementUpdate(ctx);

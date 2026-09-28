@@ -298,6 +298,92 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       ? setup.window_t0_s + config_.getMaxDuration()
                       : TimeUtils::continuousGpsSeconds(synced.back().time) + 1.0;
 
+    // Card HLT: broadcast satellite health on the network path (network.sat_health).  The
+    // series is built once from the navigation file, a record taking force at its clock
+    // epoch as in the O3 latch.  "exclude": a satellite's observations leave the synced
+    // epochs at which the broadcast flags it, here beside the constellation door, so every
+    // reader downstream sees it absent there (a return is the satellite's re-admission, as
+    // after an eclipse).  "pivot": the clock-pivot election reads the series
+    // (NetworkSolveGlue) and the observations stay.
+    if (config_.networkSatHealth() != 0) {
+        const std::filesystem::path nav_path = config_.getNavigationPath();
+        if (nav_path.empty()) {
+            log->error("Network (card HLT): network.sat_health needs a broadcast navigation "
+                       "file, but files.navigation_path is empty.  Set it, let PathResolver "
+                       "auto-resolve a BRDC / _MN.rnx file covering the day, or set "
+                       "network.sat_health to off.");
+            return 1;
+        }
+        const std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
+        const auto& priorities = config_.getSignalPriorities();
+        const auto gal = priorities.find("Galileo");
+        int gal_mask = gal != priorities.end() ? NetworkSbasis::galileoHealthMask(gal->second) : 0;
+        if (gal_mask == 0) gal_mask = 0x1FF;   // no Galileo band named: every signal's bits count
+        setup.sat_health = NetworkSbasis::satHealthSeries(nav, gal_mask);
+        if (setup.sat_health.sats.empty()) {
+            log->error("Network (card HLT): parsed 0 usable broadcast records from '{}', so "
+                       "network.sat_health has no health to read.", nav_path.string());
+            return 1;
+        }
+        // The satellites flagged at some time inside the window, with the flagged spans.
+        const double t0 = setup.window_t0_s;
+        const double t1 = setup.window_t1_s;
+        std::set<std::string> flagged_sats;
+        std::string flagged;
+        int n_edges = 0;
+        for (const auto& [sat, steps] : setup.sat_health.sats) {
+            std::string spans;
+            for (std::size_t i = 0; i < steps.size(); ++i) {
+                if (i > 0 && steps[i].t_gps_s > t0 && steps[i].t_gps_s < t1) ++n_edges;
+                if (!steps[i].unhealthy) continue;
+                // The first step's status also holds before its time.
+                const double a = i == 0 ? t0 : std::max(t0, steps[i].t_gps_s);
+                const double b = i + 1 < steps.size() ? std::min(t1, steps[i + 1].t_gps_s) : t1;
+                if (b <= a) continue;
+                spans += (spans.empty() ? "" : ", ")
+                       + ((a == t0 && b == t1)
+                              ? std::string("the whole window")
+                              : fmt::format("TOW {:.0f} to {:.0f}", std::fmod(a, 604800.0),
+                                            std::fmod(b, 604800.0)));
+            }
+            if (spans.empty()) continue;
+            flagged_sats.insert(sat);
+            flagged += fmt::format("{}{} ({})", flagged.empty() ? "" : "; ", sat, spans);
+        }
+        log->info("Network (card HLT): broadcast health from '{}' ({} record(s), {} unhealthy "
+                  "under the band mask, Galileo mask 0x{:03X}): {} satellite(s) flagged inside "
+                  "the window [TOW {:.1f}, TOW {:.1f}){}{}; {} status change(s) inside it.  "
+                  "Mode '{}'.",
+                  nav_path.filename().string(), setup.sat_health.records,
+                  setup.sat_health.records_unhealthy, gal_mask, flagged_sats.size(),
+                  std::fmod(t0, 604800.0), std::fmod(t1, 604800.0),
+                  flagged.empty() ? "" : ": ", flagged, n_edges,
+                  config_.networkSatHealth() == 1 ? "pivot" : "exclude");
+        const std::string& declared = config_.getNetworkConfig().clock_datum_satellite;
+        if (!declared.empty() && flagged_sats.count(declared))
+            log->warn("Network (card HLT): the declared clock pivot {} "
+                      "(network.clock_datum_satellite) is flagged unhealthy inside the window; "
+                      "the declaration is kept.", declared);
+        if (config_.networkSatHealth() == 2) {
+            const std::size_t n_removed = sync.removeObservationsIf(
+                [&](const GnssTime& t, const RinexObservation& o) {
+                    const double ts = TimeUtils::continuousGpsSeconds(t);
+                    if (!setup.sat_health.unhealthyAt(o.satellite, ts)) return false;
+                    if (ts >= t0 && ts < t1) ++setup.sat_health_removed[o.satellite];
+                    return true;
+                });
+            long long in_window = 0;
+            std::string by_sat;
+            for (const auto& [sat, k] : setup.sat_health_removed) {
+                in_window += k;
+                by_sat += fmt::format("{}{} {}", by_sat.empty() ? "" : ", ", sat, k);
+            }
+            log->info("Network (card HLT): the health door removed {} observation(s) of flagged "
+                      "satellites from the synced epochs, {} inside the window{}{}.",
+                      n_removed, in_window, by_sat.empty() ? "" : ": ", by_sat);
+        }
+    }
+
     // --- Phase 3: products + cache for geometry -----------------------------
     product_parser_->loadProducts();
     auto& product_cache = ProductCache::getInstance();

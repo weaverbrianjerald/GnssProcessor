@@ -252,6 +252,13 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // store field stays absent and the consumer never reacts (byte-identical).
     if (sol.generation_id != 0) store.setGenerationId(sol.generation_id);
 
+    // Card CLV2: the declared code-level steps (the C and B records' lvl= tokens),
+    // accumulated per satellite for a consumer that answers them.  Absent on an unarmed
+    // wire, so the store is untouched.
+    for (const auto& s : sol.sats)
+        if (!s.sat.empty() && (s.level_step_m != 0.0 || !s.cb_level_step_m.empty()))
+            store.addDeclaredLevelSteps(s.sat, s.level_step_m, s.cb_level_step_m);
+
     // RTA-11: product-time stamp of this epoch, and the per-channel staleness
     // probe.  A key whose last emit is further back than the horizon is treated as
     // a FIRST SIGHTING on its channel (baseline reseed, no jump/forced bump) — the
@@ -511,8 +518,22 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // VALUE wander the structural triggers cannot see (they detect
                 // gauge re-references only, not the estimate walking).  Same
                 // fresh-baseline suppression as phase.
-                const bool value_jump = code_bias_jump_test_ && have_baseline
-                    && std::abs(bias - cb_last_it->second) > discThresholdM(s.sat, signal);
+                // Card CLV return plan R-A: a free column's declared follow step (the
+                // B-record lvl= token) is removed first, as the C-record step is for the
+                // phase biases.  Absent on an unarmed wire, so the test is the pre-card
+                // difference bit for bit.
+                bool value_jump = false;
+                if (code_bias_jump_test_ && have_baseline) {
+                    const double bar   = discThresholdM(s.sat, signal);
+                    const double raw_d = bias - cb_last_it->second;
+                    const auto   lv    = s.cb_level_step_m.find(signal);
+                    if (lv == s.cb_level_step_m.end()) {
+                        value_jump = std::abs(raw_d) > bar;
+                    } else {
+                        value_jump = std::abs(raw_d - lv->second) > bar;
+                        if (!value_jump && std::abs(raw_d) > bar) ++clv_cb_jump_excluded_;
+                    }
+                }
                 // RTA-11 fix: a genuine forced datum change steps the counter even
                 // on a beyond-horizon return (the consumer may still hold
                 // old-datum state), but the STRUCTURAL re-reference signals

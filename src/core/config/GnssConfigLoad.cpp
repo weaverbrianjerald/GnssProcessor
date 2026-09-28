@@ -691,6 +691,18 @@ namespace GnssProcessor {
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
         }
+        // Card CLV2: the consumer's response to a declared code-level step.  Default
+        // false = byte-identical; the closed-loop harness derives it from
+        // network.closed_loop.level_step_inflate, a standalone consumer sets it here.
+        ssr_level_step_inflate_ = jval<bool>(json, "processing.ssr_level_step_inflate",
+                                             "ssr_level_step_inflate", false);
+        ssr_level_step_inflate_k_ = jval<double>(json, "processing.ssr_level_step_inflate_k",
+                                                 "ssr_level_step_inflate_k", 1.0);
+        if (!(ssr_level_step_inflate_k_ > 0.0)) {
+            log->warn("processing.ssr_level_step_inflate_k = {} is not positive; using 1",
+                      ssr_level_step_inflate_k_);
+            ssr_level_step_inflate_k_ = 1.0;
+        }
         // Card ALC: the consumer's ambiguity LEVEL re-validation — invariant #7's
         // re-coupling edge for the carry and the translation.  Default false =
         // nothing measured and nothing written (byte-identical); the closed-loop

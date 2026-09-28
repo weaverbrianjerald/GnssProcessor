@@ -17,6 +17,13 @@
 #include "common/PppUtils.hpp"
 #include "measurement/StateInitializer.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "common/Constants.hpp"           // card CLV2: the L1 reference frequency
+#include "common/SignalBand.hpp"          // card CLV2: a phase signal's carrier
+#include "filter/StateKeySchema.hpp"      // card CLV2: the ambiguity keys
+#include <Eigen/Dense>
+#include <algorithm>
+#include <cmath>
+#include <map>
 #include <fmt/format.h>
 #include <set>
 #include <string>
@@ -895,6 +902,85 @@ void RealTimeEngine::logReinflateSummary(const char* tag) const {
     log_manager_.getLogger("rt_engine")->info(
         "[RT] card OWD re-inflations ({}): {}", tag,
         StateManager::reinflateSummary(state_manager_->reinflateCounters()));
+    if (config_.ssrLevelStepInflate())
+        log_manager_.getLogger("rt_engine")->info(
+            "[RT] card CLV2 declared level steps ({}): {} (satellite, epoch) above the dead "
+            "band, {} answered along the phase-blind direction, {} refused; mean sigma "
+            "{:.4f} m, max {:.4f} m, scale k {:.2f}.",
+            tag, level_step_events_, level_step_inflated_, level_step_refused_,
+            level_step_inflated_ > 0
+                ? level_step_sigma_sum_ / static_cast<double>(level_step_inflated_) : 0.0,
+            level_step_sigma_max_, config_.ssrLevelStepInflateK());
+}
+
+void RealTimeEngine::reactToDeclaredLevelSteps_(RtEpochContext& ctx) {
+    if (!config_.ssrLevelStepInflate() || !state_manager_) return;
+    constexpr double kDeadBandM = 1e-4;
+    const auto& ssr = ssrStore();
+    // This epoch's raw code and phase signals per satellite (combinations skipped).
+    std::map<std::string, std::pair<std::set<std::string>, std::set<std::string>>> sigs;
+    for (const auto& obs : ctx.modeled_obs) {
+        for (const auto& kv : obs.modeled) {
+            const std::string& code = kv.first;
+            if (code.size() != 3) continue;
+            if (code[0] == 'C')      sigs[obs.satellite].first.insert(code);
+            else if (code[0] == 'L') sigs[obs.satellite].second.insert(code);
+        }
+    }
+    std::vector<std::pair<std::vector<std::pair<int, double>>, double>> inflations;
+    for (const auto& [sat, cp] : sigs) {
+        const auto cur = ssr.getDeclaredLevelSteps(sat);
+        const SsrCorrectionStore::DeclaredLevelSteps now =
+            cur ? *cur : SsrCorrectionStore::DeclaredLevelSteps{};
+        auto it = level_steps_seen_.find(sat);
+        if (it == level_steps_seen_.end()) {   // the first reading only records
+            level_steps_seen_.emplace(sat, now);
+            continue;
+        }
+        const double d_clock = now.clock_m - it->second.clock_m;
+        double sigma = 0.0;
+        for (const std::string& c : cp.first) {
+            double d_bias = 0.0;
+            if (const auto a = now.bias_m.find(c); a != now.bias_m.end()) d_bias += a->second;
+            if (const auto b = it->second.bias_m.find(c); b != it->second.bias_m.end())
+                d_bias -= b->second;
+            sigma = std::max(sigma, std::abs(-d_clock + d_bias));
+        }
+        it->second = now;
+        if (!(sigma > kDeadBandM)) continue;
+        ++level_step_events_;
+        const int iono_idx = state_manager_->getIonosphereIndex(sat);
+        if (iono_idx < 0 || !(state_manager_->getStateVariance(iono_idx) > 0.0)) {
+            ++level_step_refused_;   // no ionosphere state, or a frozen (pivot) row
+            continue;
+        }
+        std::vector<std::pair<int, double>> v;
+        v.emplace_back(iono_idx, 1.0);
+        for (const std::string& ph : cp.second) {
+            const int ai = state_manager_->getAmbiguityIndex(StateKeys::makeAmbiguityKey(sat, ph));
+            if (ai < 0) continue;
+            const double lam = bandNominalWavelengthMeters(classifySignalForSat(sat, ph).band);
+            if (!(lam > 0.0)) continue;
+            const double f = Constants::SPEED_OF_LIGHT / lam;
+            v.emplace_back(ai, (Constants::GPS_L1_FREQ * Constants::GPS_L1_FREQ) / (f * f));
+        }
+        if (v.size() < 2) {   // without an ambiguity the direction is not phase-blind
+            ++level_step_refused_;
+            continue;
+        }
+        const double s = config_.ssrLevelStepInflateK() * sigma;
+        inflations.emplace_back(std::move(v), s * s);
+        ++level_step_inflated_;
+        level_step_sigma_sum_ += sigma;
+        level_step_sigma_max_  = std::max(level_step_sigma_max_, sigma);
+        noteConsumerSatEvent_(sat + "|LVL", "level_step_inflate");
+    }
+    if (inflations.empty()) return;
+    Eigen::MatrixXd P = state_manager_->getCovariance();
+    for (const auto& [v, var] : inflations)
+        for (const auto& [i, ci] : v)
+            for (const auto& [j, cj] : v) P(i, j) += var * ci * cj;
+    state_manager_->setCovariance(P);
 }
 
 std::set<std::string> RealTimeEngine::isbReinflationSet(

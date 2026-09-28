@@ -693,6 +693,22 @@ namespace GnssProcessor {
         ///        a declared step translate exactly once.
         ///        See @c RealTimeEngine::translatePhaseBiasStep_.
         bool ssrPhaseBiasStepTranslate() const { return ssr_phase_bias_step_translate_; }
+        /**
+         * @brief Card CLV2: answer a declared code-level step by raising the variance along
+         *        the stepped satellite's phase-blind ionosphere-ambiguity direction
+         *        (@c processing.ssr_level_step_inflate, or derived from
+         *        @c network.closed_loop.level_step_inflate).
+         *
+         * The direction (ionosphere +1, each of the satellite's phase ambiguities +alpha_f,
+         * alpha_f = (f_L1 / f)^2) moves the satellite's code rows and no phase row, which
+         * is where an undifferenced consumer absorbs a satellite's code-level error.
+         * @return true when armed.
+         */
+        bool ssrLevelStepInflate() const { return ssr_level_step_inflate_; }
+        /// @brief Card CLV2: that inflation's standard deviation over the declared code step
+        ///        (@c processing.ssr_level_step_inflate_k, default 1).
+        /// @return the scale (positive).
+        double ssrLevelStepInflateK() const { return ssr_level_step_inflate_k_; }
 
         /// @brief Card PBT (A): the dead band of @ref ssrPhaseBiasStepTranslate — a
         ///        step at or below this magnitude (m) is left for the filter to
@@ -5230,7 +5246,109 @@ namespace GnssProcessor {
         /// information older than a few horizons and can follow a genuine change.
         /// @return the horizon in seconds (default 7200).
         double networkClockLevelHorizonS() const { return network_clock_level_horizon_s_; }
+        /// @brief Read the level only from the satellite's realized pin pair
+        ///        (@c network.clock_level_pin_pair_read, card CLV return plan R-A).
+        ///
+        /// Off (the default): each band of the ionosphere-free pair is the heaviest
+        /// full-weight code row on that pin band, which on a dual-tracking station is often
+        /// the free same-band extra (GPS C1W, Galileo C1X).  A free column absorbs the
+        /// frozen level at ignition, so its rows read a residual near zero and dilute the
+        /// level effect.  On: only rows of the two signals in the satellite's realized
+        /// ionosphere-free pin pair enter (GPS C1C and C2W, Galileo C1C and C5Q), at any
+        /// weight at or above the full-weight floor.  Inert unless
+        /// @c network.clock_level_carry.
+        /// @return true when the level is read from the pin pair only.
+        bool   networkClockLevelPinPairRead() const { return network_clock_level_pin_pair_read_; }
+        /// @brief How a satellite's free same-band code-bias columns follow a level shift
+        ///        (@c network.clock_level_free_cb_follow, card CLV return plan R-A).
+        ///
+        /// A same-band extra (a code on the band of the pin pair's first signal that is not
+        /// in the pair: GPS C1W, Galileo C1X) keeps a free, carried bias column.  At
+        /// ignition it absorbed the level error, jointly with the slant ionosphere of the
+        /// stations that read band 1 through it.  "off" (the default) leaves the column
+        /// where it is.  "if" moves it by d (1 - (f2/f1)^2), f1 and f2 the pin pair's
+        /// frequencies (0.393 d for GPS L1/L2, 0.442 d for Galileo E1/E5a): the share that
+        /// keeps the ionosphere-free combination of the extra and the pinned second signal
+        /// unchanged, so a consumer reading band 1 through the extra sees no level step.
+        /// "full" moves it by d.  Every moved step is declared on the B record as its
+        /// @c lvl= token and removed from the emitter's code-bias jump test.  Inert
+        /// unless @c network.clock_level_carry.
+        /// @return 0 off, 1 "if", 2 "full".
+        int    networkClockLevelFreeCbFollow() const { return network_clock_level_free_cb_follow_; }
+        /// @brief Pause, not restart, the level filter through a datum-class anchor
+        ///        decouple (@c network.clock_level_datum_pause, card CLV return plan R-B).
+        ///
+        /// A clock-pivot handover decouples every anchored clock of the constellation
+        /// ("retired clock frame").  The level effects are relative to the constellation
+        /// (they sum to zero), so a frame re-reference leaves them valid.  Off (the
+        /// default): each satellite is disarmed and re-arms at gain 1 when its anchor
+        /// re-validates.  On: a satellite whose filter was armed when the datum changed
+        /// keeps its information and is skipped while its anchor re-validates, then
+        /// continues with its prior.  A decouple for any other reason still disarms.
+        /// Inert unless @c network.clock_level_carry.
+        /// @return true when datum-class decouples pause the filter.
+        bool   networkClockLevelDatumPause() const { return network_clock_level_datum_pause_; }
+        /// @brief Consecutive epochs an arm or a break needs before a shift
+        ///        (@c network.clock_level_confirm_epochs, card CLV return plan R-B).
+        ///
+        /// 1 (the default) arms at gain 1 on one epoch's effect and restarts on one
+        /// epoch's innovation beyond the break bar.  N above 1: an arm accumulates N
+        /// eligible epochs, and a break needs N consecutive exceedances of the same sign,
+        /// before the filter restarts; the restart applies the information-weighted mean
+        /// of those epochs' effects and takes their summed information.  An epoch waiting
+        /// for confirmation applies no shift.  Inert unless @c network.clock_level_carry.
+        /// @return the confirmation length in epochs (at least 1).
+        int    networkClockLevelConfirmEpochs() const { return network_clock_level_confirm_epochs_; }
+        /// @brief Reference the level shifts to the constellation's clock pivot
+        ///        (@c network.clock_level_pivot_ref, card CLV return plan R-C).
+        ///
+        /// Off (the default): the shifts are de-meaned, information-weighted, over the
+        /// updated satellites, and the pivot (whose clock the datum pins and the Q3 anchor
+        /// does not hold) is never updated, so it keeps its ignition offset to the rest.
+        /// On: the pivot's filter runs like any other, and every other satellite of the
+        /// constellation is shifted by its own update minus the pivot's, the pivot by
+        /// nothing.  When the pivot has no update in an epoch the de-mean is used and
+        /// counted.  Inert unless @c network.clock_level_carry.
+        /// @return true when the shifts are referenced to the pivot.
+        bool   networkClockLevelPivotRef() const { return network_clock_level_pivot_ref_; }
+        /// @brief Re-base each free same-band code-bias column from the same-band code
+        ///        difference (@c network.clock_level_free_cb_rebase, card CLV2 R-A2).
+        ///
+        /// A free same-band column (GPS C1W, Galileo C1X) is estimated mostly through the
+        /// ionosphere-free code of the stations that read band 1 through it, which also see
+        /// the frozen clock level, so it carries its own frozen error (card CLV section 8.3:
+        /// a C1W user 0.36 to 0.39 m off CODE on the baseline wire).  On: after the level
+        /// re-base, the post-fit residual of the free signal minus that of the pin pair's
+        /// first signal, at every station holding both code rows of a satellite, enters a
+        /// two-way fit (satellite effect, per-station offset, the family's mean held); a
+        /// per-column filter turns the effect into a step of the column, de-meaned over the
+        /// family, applied to the carry and declared on the B record (lvl=).  While a
+        /// column's filter is armed the column no longer follows the level
+        /// (@c network.clock_level_free_cb_follow): the same-band evidence replaces the
+        /// follow share.  Inert unless @c network.clock_level_carry.
+        /// @return true when the free columns are re-based from the same-band difference.
+        bool   networkClockLevelFreeCbRebase() const { return network_clock_level_free_cb_rebase_; }
         /// @}
+
+        /**
+         * @brief Broadcast satellite health on the network path (@c network.sat_health,
+         *        card HLT).
+         *
+         * The network's a-priori orbits and clocks come from precise products, which can
+         * carry a satellite the broadcast flags unhealthy (DOY 129: G01, health 63 in every
+         * record and the lexically first GPS satellite, hence the GPS clock pivot; E14 and
+         * E18).  "off" (the default): health is not consulted.  "pivot": the clock-pivot
+         * election passes over a satellite flagged unhealthy at the epoch (the sticky
+         * incumbent and the lexical first; a declared @c network.clock_datum_satellite is
+         * kept), and its observations are processed.  "exclude": the observations of a
+         * satellite flagged unhealthy at an epoch are removed from the synced epochs at
+         * setup, beside the constellation door, so at that epoch it is neither estimated nor
+         * on the wire.  The status at an epoch is the record in force
+         * (@ref NetworkSbasis::satHealthSeries).  Needs a broadcast navigation file.
+         * SOLVE-AFFECTING and FINGERPRINTED.
+         * @return 0 off, 1 "pivot", 2 "exclude".
+         */
+        int    networkSatHealth() const { return network_sat_health_; }
 
         /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
@@ -8341,6 +8459,8 @@ namespace GnssProcessor {
         bool   enable_ssr_bias_max_age_explicit_{ false };///< RTA-9(a): true iff the user WROTE processing.enable_ssr_bias_max_age (either key form) — lets applyNetworkConsumerProfile arm the gate under bias consumption while respecting an explicit false.
         double ssr_bias_stale_hold_factor_{ 2.0 };        ///< A5: apply-gate drop limit = factor × ssr_bias_max_age_s_ (hold the last bias over sub-limit staleness gaps → no manufactured model step / reset storm); 1.0 = drop exactly at max age.  Only meaningful when enable_ssr_bias_max_age_.
         bool   ssr_phase_bias_disc_carry_{ false };       ///< Card CC (A): carry the float ambiguity across a DECLARED phase-bias step (amb − Δ, value-only) instead of resetting it; OFF = the existing reset path (byte-identical).  Set directly (processing.ssr_phase_bias_disc_carry) or derived from network.closed_loop.pb_disc_carry.
+        bool   ssr_level_step_inflate_{ false };      ///< Card CLV2: raise the variance along a stepped satellite's phase-blind ionosphere-ambiguity direction by its declared code-level step (C and B record lvl=). OFF = byte-identical.  Set directly (processing.ssr_level_step_inflate) or derived from network.closed_loop.level_step_inflate.
+        double ssr_level_step_inflate_k_{ 1.0 };      ///< Card CLV2: the inflation's standard deviation over the declared code step.
         bool   ssr_phase_bias_step_translate_{ false };   ///< Card PBT (A): translate the float ambiguity by −Δ on EVERY change in the APPLIED phase bias, declared or not (the 451 undeclared > 0.10 m steps of EV6 and the 117 EMPTY declarations of CST §7.1 in one rule); OFF = the existing reset / card-CC carry path (byte-identical).  Set directly (processing.ssr_phase_bias_step_translate) or derived from network.closed_loop.pb_step_translate.  When ON it REPLACES both reactions ⇒ a declared step is translated exactly once.
         double ssr_phase_bias_step_translate_eps_m_{ 0.005 }; ///< Card PBT (A): dead band of the step translation (m) — at or below it nothing is written and the filter absorbs the move as noise.  processing.ssr_phase_bias_step_translate_eps_m / network.closed_loop.pb_step_translate_eps_m.
         bool   amb_level_check_{ false };                 ///< Card ALC: re-validate each float ambiguity against its own windowed code level (MW wide-lane + iono-free, both from the consumer's own corrected observations) and refloat the ones the code refuses; OFF = nothing measured, nothing written (byte-identical).  processing.amb_level_check / network.closed_loop.amb_level_check.
@@ -8697,6 +8817,13 @@ namespace GnssProcessor {
         bool   network_clock_level_carry_{false};          ///< Card CLV (docs/refound/CLV_clock_level_2026-09-22.md): estimate each satellite's clock LEVEL (its clock and every phase bias shifted together, a direction every phase row is blind to) from the post-fit ionosphere-free code alone and re-base the carry along it after every kept epoch; the emit hold follows the shift so the wire's phase side does not move. SOLVE-AFFECTING + FINGERPRINTED. OFF = byte-identical.
         double network_clock_level_sigma_floor_m_{0.01};   ///< Card CLV: floor (m) on the level standard deviation, V_L = max(1 / I_L, floor^2). INERT unless network_clock_level_carry_.
         double network_clock_level_horizon_s_{7200.0};     ///< Card CLV: memory horizon (s) of the level filter's information I_L, decayed per epoch by exp(-dt / horizon). INERT unless network_clock_level_carry_.
+        bool   network_clock_level_pin_pair_read_{false};  ///< Card CLV R-A: the ionosphere-free pairs of the level fit come only from the satellite's realized pin pair (GPS C1C/C2W, Galileo C1C/C5Q), never from a free same-band extra whose column absorbed the level. INERT unless network_clock_level_carry_. OFF = the heaviest row per pin band (byte-identical).
+        int    network_clock_level_free_cb_follow_{0};     ///< Card CLV R-A: 0 off, 1 "if" (a free same-band extra code-bias column moves by d (1 - (f2/f1)^2), the share that keeps its ionosphere-free combination with the pinned second signal unchanged), 2 "full" (moves by d). Moved steps are declared on the B record (lvl=). INERT unless network_clock_level_carry_. OFF = byte-identical.
+        bool   network_clock_level_datum_pause_{false};    ///< Card CLV R-B: a datum-class anchor decouple (clock-pivot re-reference) pauses the level filter (information kept) instead of disarming it. INERT unless network_clock_level_carry_. OFF = byte-identical.
+        int    network_clock_level_confirm_epochs_{1};     ///< Card CLV R-B: an arm or a break needs this many consecutive epochs (a break: same-sign exceedances) before the restart, which applies their information-weighted mean effect. 1 = today's single-epoch arm and break (byte-identical). INERT unless network_clock_level_carry_.
+        bool   network_clock_level_free_cb_rebase_{false}; ///< Card CLV2 R-A2: each free same-band code-bias column re-based from the same-band code difference at dual-tracking stations (a two-way fit and a per-column filter; the step declared on the B record). INERT unless network_clock_level_carry_. OFF = byte-identical.
+        int    network_sat_health_{0};                     ///< Card HLT: broadcast satellite health on the network path: 0 off, 1 "pivot" (the clock-pivot election passes over an unhealthy satellite), 2 "exclude" (an unhealthy satellite's observations are removed at the synced-epoch door). OFF = byte-identical.
+        bool   network_clock_level_pivot_ref_{false};      ///< Card CLV R-C: the shifts are referenced to the constellation's clock pivot (the pivot's filter runs; every other satellite moves by its update minus the pivot's) instead of de-meaned over the updated satellites. INERT unless network_clock_level_carry_. OFF = byte-identical.
         NetworkClockAnchorStat network_clock_anchor_gauge_free_stat_{NetworkClockAnchorStat::Auto};  ///< Card Q3 §2.1 BISECTION knob: which denominator the guard (and the census's clk family) standardizes by, INDEPENDENTLY of which prior the fold applied. The gauge-free arm moved the fold AND the denominator together, so its 65 → 3 trip collapse could not be apportioned. `Auto` = follow the fold (byte-identical to every pre-knob arm); `Raw`/`Post`/`Proj` force one. SOLVE-AFFECTING through the trip population; appended to the fingerprint only when it is not `Auto`. INERT unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_resolve_{true};        ///< Card Q3: adapt-and-EMIT. On a trip, withdraw the offending clock prior from the shared system and RE-SOLVE the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Placed BEFORE the within-epoch RAIM adaptation deliberately — a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's DATA. OFF degrades to detect+mark+decouple-next-epoch. INERT unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does NOT mask the pin. INERT unless network_phase_datum_prioritized_.

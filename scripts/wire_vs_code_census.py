@@ -140,7 +140,10 @@ def parse_products(path):
                     disc = int(f[k]); k += 1
                 cur['C'][f[1]] = (c0, c1, disc)
             elif tag == 'B':                     # writer :671, reader :184-188
-                cur['B'][(f[1], f[2])] = (float(f[3]), int(f[4]) if len(f) > 4 else None)
+                # A field holding '=' is a key=value token (isc=, card CLV's lvl=), never the
+                # positional code disc counter, exactly as the C++ reader treats it.
+                cur['B'][(f[1], f[2])] = (float(f[3]),
+                                          int(f[4]) if len(f) > 4 and '=' not in f[4] else None)
             elif tag == 'P':                     # writer :677, reader :189-206
                 disc = None; sigma = None
                 for tok in f[6:]:

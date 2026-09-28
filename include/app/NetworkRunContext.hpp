@@ -505,6 +505,15 @@ namespace GnssProcessor {
         double clv_floor_m{};        ///< network.clock_level_sigma_floor_m: V_L = max(1 / I_L, floor^2), so I_L never exceeds 1 / floor^2
         double clv_horizon_s{};      ///< network.clock_level_horizon_s: I_L decays by exp(-dt / horizon)
         double clv_ignition_var{};   ///< V_L reported for a satellite whose filter is not armed: filter.initial_std.sat_clock^2 (the clock's cold-start variance)
+        bool   clv_pin_pair_read{};  ///< network.clock_level_pin_pair_read (R-A): read the level only from the realized pin pair
+        int    clv_cb_follow{};      ///< network.clock_level_free_cb_follow (R-A): 0 off, 1 "if" (d (1 - (f2/f1)^2)), 2 "full" (d)
+        bool   clv_datum_pause{};    ///< network.clock_level_datum_pause (R-B): a datum-class decouple pauses the filter instead of disarming it
+        int    clv_confirm_epochs{1};///< network.clock_level_confirm_epochs (R-B): consecutive epochs an arm or a break needs
+        bool   clv_pivot_ref{};      ///< network.clock_level_pivot_ref (R-C): shifts referenced to the constellation's clock pivot
+        bool   clv_free_cb_rebase{}; ///< network.clock_level_free_cb_rebase (card CLV2 R-A2): each free same-band code-bias column re-based from the same-band difference at dual-tracking stations
+        // --- Card HLT, broadcast satellite health on the network path.  SOLVE-AFFECTING and
+        // FINGERPRINTED.
+        int    sat_health{};         ///< network.sat_health: 0 off, 1 "pivot" (the election passes over an unhealthy satellite), 2 "exclude" (the setup door removed its observations)
         bool clk_model_on{};
         double clk_model_q1{};
         double clk_model_q2{};
@@ -2605,6 +2614,30 @@ namespace GnssProcessor {
         double    clv_shift_max_abs = 0.0;   ///< largest |applied shift| (m)
         long long clv_refs_shifted = 0;      ///< carried references moved (shared-carry keys, coupling terms, clock baselines, bridges)
         long long clv_held_moved = 0;        ///< held phase-bias emissions moved by the transfer (non-zero offset)
+        // Card CLV return plan (R-A, R-B, R-C).  All zero unless the matching knob is armed.
+        long long clv_pairs_offpin = 0;      ///< R-A: (station,sat,band) cells whose heaviest row was not a pin-pair signal (the rows the pin-pair read left out)
+        long long clv_cb_follow_moves = 0;   ///< R-A: (sat,signal,epoch) free same-band code-bias columns moved with the level
+        double    clv_cb_follow_sum_abs = 0.0; ///< R-A: Σ |code-bias follow step| (m)
+        long long clv_paused = 0;            ///< R-B: (sat,epoch) skipped with the filter's information kept (datum pause)
+        long long clv_pause_marks = 0;       ///< R-B: armed satellites marked paused at a datum change
+        long long clv_confirm_wait = 0;      ///< R-B: (sat,epoch) arms or breaks waiting for confirmation (no shift applied)
+        long long clv_confirm_reset = 0;     ///< R-B: break sequences reset by an in-band epoch or a sign change
+        long long clv_pivot_ref_epochs = 0;  ///< R-C: (constellation,epoch) shifts referenced to the pivot's update
+        long long clv_pivot_ref_missing = 0; ///< R-C: (constellation,epoch) the pivot had no update, so the de-mean was used
+        // Card CLV2 R-A2, the free columns' own re-base.  All zero unless the knob is armed.
+        long long clv_fcb_cells = 0;         ///< (station,sat,signal,epoch) same-band difference cells entering the fits
+        long long clv_fcb_clipped = 0;       ///< …of which the per-satellite robust screen removed
+        long long clv_fcb_few = 0;           ///< (sat,signal,epoch) with fewer than the minimum cells (no update)
+        long long clv_fcb_fit_failed = 0;    ///< (constellation,signal,epoch) same-band fits that failed
+        long long clv_fcb_updates = 0;       ///< (sat,signal,epoch) filter updates (a step was computed)
+        long long clv_fcb_arms = 0;          ///< …of which were first arms
+        long long clv_fcb_breaks = 0;        ///< …of which were restarts at an innovation break
+        double    clv_fcb_sum_abs = 0.0;     ///< Σ |applied step| (m)
+        double    clv_fcb_max_abs = 0.0;     ///< largest |applied step| (m)
+        // Card HLT, broadcast health on the network path.  All zero unless network.sat_health.
+        long long hlt_unhealthy_registered = 0; ///< (sat,epoch) registered clock satellites the broadcast flags unhealthy (processed in "pivot" mode, absent in "exclude")
+        long long hlt_pivot_skips = 0;          ///< (constellation,epoch) pivot picks that passed over an unhealthy satellite
+        long long hlt_pivot_fallbacks = 0;      ///< (constellation,epoch) with no healthy registered satellite, where the lexical first stood
         /// Queue 1(b) handover S-transform telemetry (invariant #4 — these are the
         /// card's ON-path counters; transforms applied with sts_rows_retained == 0
         /// means the fold release is mis-wired no matter how clean the log looks).

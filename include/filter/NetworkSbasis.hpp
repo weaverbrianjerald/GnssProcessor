@@ -240,6 +240,8 @@ public:
         Eigen::MatrixXd clock_constraint_H;              ///< Gauge-row Jacobian (see above); empty in PIN mode.
         Eigen::VectorXd clock_constraint_z;              ///< Constraint targets (zeros); empty in PIN mode.
         double          clock_constraint_weight{ 0.0 };  ///< Row information weight (@ref kClockGaugeWeight sum-to-zero; 1/σ² broadcast-anchored); 0 in PIN mode.
+        int pivot_health_skips{ 0 };                     ///< Card HLT: constellations whose pick passed over a satellite the broadcast flags unhealthy (the sticky incumbent or the lexical first).  0 without an ineligible set.
+        int pivot_health_fallbacks{ 0 };                 ///< Card HLT: constellations with no healthy registered satellite, where the lexical first stands.  0 without an ineligible set.
     };
 
     /// Tight gauge-row information weight (= 1/σ²) for the SUM-TO-ZERO clock
@@ -492,6 +494,95 @@ public:
      */
     static GroupDelayLatch latchBroadcastGroupDelays(const std::vector<BroadcastEphemeris>& nav,
                                                      double t0_gps_s, double t1_gps_s);
+
+    /// Card HLT: from @c t_gps_s on, a satellite's broadcast health status.
+    struct SatHealthStep {
+        double t_gps_s{0.0};     ///< continuous GPS seconds at which the status takes force
+        bool   unhealthy{false}; ///< the status from then on
+    };
+
+    /// Card HLT: every satellite's broadcast health as a step function of time.
+    struct SatHealth {
+        /// Per satellite, the status changes in time order (consecutive steps differ).  The
+        /// first step's status also holds before its time.
+        std::map<std::string, std::vector<SatHealthStep>> sats;
+        long long records{0};            ///< records read (GLONASS skipped)
+        long long records_unhealthy{0};  ///< of those, unhealthy under the band mask
+
+        /**
+         * @brief The satellite's status at a time.
+         * @param sat     Satellite id ("G01").
+         * @param t_gps_s Continuous GPS seconds.
+         * @return true when the broadcast flags the satellite unhealthy then; false for a
+         *         satellite without records (no evidence against it).
+         */
+        bool unhealthyAt(const std::string& sat, double t_gps_s) const;
+    };
+
+    /**
+     * @brief The Galileo health-word bits that concern the processed bands (card HLT).
+     *
+     * The RINEX Galileo SV health word holds, per signal, a data-validity bit and a
+     * two-bit signal-health field: bits 0 to 2 for E1-B, 3 to 5 for E5a, 6 to 8 for
+     * E5b.  Band 1 selects the E1-B bits, band 5 the E5a bits, band 7 the E5b bits and
+     * band 8 (E5 AltBOC) both E5 fields.  A signal on another band (E6) has no bits in
+     * the word and selects none.
+     *
+     * @param signals The Galileo signals the network may process (observation codes,
+     *                e.g. "C1C", "L5Q"); the band is the second character.
+     * @return The bit mask (0x03F for E1 with E5a).
+     */
+    static int galileoHealthMask(const std::vector<std::string>& signals);
+
+    /**
+     * @brief Each satellite's broadcast health over time (card HLT).
+     *
+     * A record takes force at its clock reference epoch, the network's availability
+     * rule for a broadcast record (@c navAvailabilityGpsSeconds, shared with the O3
+     * latch).  A satellite's records form one group per message source (Galileo I/NAV
+     * and F/NAV; one group for every other system), because the Galileo sources carry
+     * different signals' health (I/NAV: E1-B and E5b; F/NAV: E5a).  At a time t, a
+     * group's status is that of its latest record at or before t, else of its earliest
+     * record; the satellite is unhealthy when any group's status is.  A record is
+     * unhealthy when its health word is nonzero, a Galileo record when the word masked
+     * by @p galileo_mask is.  GLONASS records are skipped.
+     *
+     * @param nav          The parsed navigation records, any order.
+     * @param galileo_mask The Galileo bits that count (@ref galileoHealthMask).
+     * @return The step function of every satellite with a record.
+     */
+    static SatHealth satHealthSeries(const std::vector<BroadcastEphemeris>& nav,
+                                     int galileo_mask);
+
+    /// Card HLT: one constellation's clock-pivot pick.
+    struct PivotPick {
+        std::string sat;              ///< the elected pivot
+        bool health_skipped{false};   ///< the pick passed over an unhealthy incumbent or lexical first
+        bool health_fallback{false};  ///< no registered satellite was healthy, so the lexical first stands
+    };
+
+    /**
+     * @brief Elect one constellation's clock pivot (the rule of @ref buildSharedDatum).
+     *
+     * In priority order: the declared pin when registered; the sticky incumbent when
+     * registered; the first registered satellite.  With @p ineligible (card HLT,
+     * @c network.sat_health), the incumbent and the first satellite must also be
+     * outside the set: the pick is the incumbent if eligible, else the first eligible
+     * satellite, else (none eligible) the first satellite.  The declared pin is kept
+     * even when ineligible (an explicit choice).  With @p ineligible null the pick is
+     * the rule as it was before the card.
+     *
+     * @param sats       The constellation's registered clock satellites, lexically sorted,
+     *                   not empty.
+     * @param declared   The declared pin (@c network.clock_datum_satellite), or empty.
+     * @param incumbent  The sticky incumbent (@c network.sticky_pivot), or empty.
+     * @param ineligible Satellites the broadcast flags unhealthy now, or null.
+     * @return The pick and whether health changed it.
+     */
+    static PivotPick electClockPivot(const std::vector<std::string>& sats,
+                                     const std::string& declared,
+                                     const std::string& incumbent,
+                                     const std::set<std::string>* ineligible);
 
     static ChannelFamily channelFamilyOf(const std::string& constellation,
                                          const std::string& signal);
@@ -824,13 +915,18 @@ public:
      *                              persistent emit-baseline map, advanced only at
      *                              the emit site).  Pass @c nullptr for the legacy
      *                              per-epoch lexical auto-pick (byte-identical).
+     * @param pivot_ineligible      Card HLT (@c network.sat_health): satellites the
+     *                              broadcast flags unhealthy at this epoch, which rules 2
+     *                              and 3 pass over (@ref electClockPivot).  Pass
+     *                              @c nullptr for the rule without health (byte-identical).
      * @return the datum plan (shared pins + declared residual dimension).
      */
     Plan buildSharedDatum(const NetworkEstimator& est,
                           const std::vector<std::string>& registered_clock_sats,
                           const SbasisDeclaration& decl,
                           const std::map<std::string, std::string>* sticky_prev_pivot
-                              = nullptr) const;
+                              = nullptr,
+                          const std::set<std::string>* pivot_ineligible = nullptr) const;
 
     /**
      * @brief The STRUCTURAL per-constellation clock null direction @f$v_c@f$

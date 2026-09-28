@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -165,6 +166,115 @@ NetworkSbasis::GroupDelayLatch NetworkSbasis::latchBroadcastGroupDelays(
     return out;
 }
 
+bool NetworkSbasis::SatHealth::unhealthyAt(const std::string& sat, double t_gps_s) const {
+    const auto it = sats.find(sat);
+    if (it == sats.end() || it->second.empty()) return false;
+    const std::vector<SatHealthStep>& s = it->second;
+    const auto next = std::upper_bound(
+        s.begin(), s.end(), t_gps_s,
+        [](double t, const SatHealthStep& x) { return t < x.t_gps_s; });
+    return next == s.begin() ? s.front().unhealthy : std::prev(next)->unhealthy;
+}
+
+int NetworkSbasis::galileoHealthMask(const std::vector<std::string>& signals) {
+    int mask = 0;
+    for (const std::string& s : signals) {
+        if (s.size() < 2) continue;
+        switch (s[1]) {
+        case '1': mask |= 0x007;         break;   // E1-B: data validity bit 0, health bits 1-2
+        case '5': mask |= 0x038;         break;   // E5a: bits 3 to 5
+        case '7': mask |= 0x1C0;         break;   // E5b: bits 6 to 8
+        case '8': mask |= 0x038 | 0x1C0; break;   // E5 AltBOC: both E5 fields
+        default:                         break;   // E6 has no bits in the word
+        }
+    }
+    return mask;
+}
+
+NetworkSbasis::SatHealth NetworkSbasis::satHealthSeries(const std::vector<BroadcastEphemeris>& nav,
+                                                        int galileo_mask) {
+    SatHealth out;
+    // Per satellite and message source: (the time a record takes force, unhealthy).
+    // Galileo F/NAV (data-source bit 1) carries the E5a health, I/NAV the E1-B and E5b
+    // health, so each source keeps its own record in force.
+    std::map<std::string, std::map<int, std::vector<std::pair<double, bool>>>> groups;
+    for (const auto& e : nav) {
+        if (e.satellite.empty() || e.system == System::GLONASS) continue;
+        int source = 0;
+        int word   = e.health;
+        if (e.system == System::Galileo) {
+            source = (e.data_source >= 0 && (e.data_source & 2)) ? 2 : 1;
+            word  &= galileo_mask;
+        }
+        const bool bad = word != 0;
+        ++out.records;
+        if (bad) ++out.records_unhealthy;
+        groups[e.satellite][source].emplace_back(brdcTocGpsSeconds(e), bad);
+    }
+    for (auto& [sat, by_source] : groups) {
+        std::vector<double> times;
+        for (auto& [source, recs] : by_source) {
+            (void)source;
+            // Stable: records sharing a time keep file order, and the last one decides.
+            std::stable_sort(recs.begin(), recs.end(),
+                             [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (const auto& r : recs) times.push_back(r.first);
+        }
+        std::sort(times.begin(), times.end());
+        times.erase(std::unique(times.begin(), times.end()), times.end());
+        // Before the satellite's first record every group reads its earliest record, the
+        // same status as at that first time, so the first step also covers the time before.
+        const auto unhealthyAt = [&by_source](double t) {
+            for (const auto& [source, recs] : by_source) {
+                (void)source;
+                const auto next = std::upper_bound(
+                    recs.begin(), recs.end(), t,
+                    [](double v, const std::pair<double, bool>& r) { return v < r.first; });
+                if (next == recs.begin() ? recs.front().second : std::prev(next)->second)
+                    return true;
+            }
+            return false;
+        };
+        std::vector<SatHealthStep> steps;
+        for (double t : times) {
+            const bool bad = unhealthyAt(t);
+            if (steps.empty() || steps.back().unhealthy != bad) steps.push_back({t, bad});
+        }
+        out.sats.emplace(sat, std::move(steps));
+    }
+    return out;
+}
+
+NetworkSbasis::PivotPick NetworkSbasis::electClockPivot(const std::vector<std::string>& sats,
+                                                        const std::string& declared,
+                                                        const std::string& incumbent,
+                                                        const std::set<std::string>* ineligible) {
+    const auto present = [&sats](const std::string& s) {
+        return !s.empty() && std::find(sats.begin(), sats.end(), s) != sats.end();
+    };
+    PivotPick out;
+    if (present(declared)) {   // an explicit choice is kept, healthy or not
+        out.sat = declared;
+        return out;
+    }
+    const std::string& base = present(incumbent) ? incumbent : sats.front();
+    if (!ineligible || !ineligible->count(base)) {
+        out.sat = base;
+        return out;
+    }
+    // Card HLT: the incumbent or the lexical first is unhealthy; the first healthy one.
+    for (const std::string& s : sats) {
+        if (!ineligible->count(s)) {
+            out.sat            = s;
+            out.health_skipped = true;
+            return out;
+        }
+    }
+    out.sat             = sats.front();
+    out.health_fallback = true;
+    return out;
+}
+
 NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
     const std::string& constellation, const std::string& signal) {
     // Raw RINEX-3 code observable, "C<band><attribute>"; the attribute is signal[2]
@@ -286,7 +396,8 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     const NetworkEstimator& est,
     const std::vector<std::string>& registered_clock_sats,
     const SbasisDeclaration& decl,
-    const std::map<std::string, std::string>* sticky_prev_pivot) const {
+    const std::map<std::string, std::string>* sticky_prev_pivot,
+    const std::set<std::string>* pivot_ineligible) const {
     Plan plan;
 
     // Group the registered clock satellites by constellation in a stable
@@ -365,30 +476,24 @@ NetworkSbasis::Plan NetworkSbasis::buildSharedDatum(
     // flip-back when a pinned satellite returns); (2) sticky mode only: the
     // incumbent pivot from sticky_prev_pivot, kept as long as it is still
     // registered; (3) the first registered satellite of that constellation.
+    // Card HLT: with pivot_ineligible, rules 2 and 3 pass over a satellite the
+    // broadcast flags unhealthy (electClockPivot).
     for (const auto& [c, sats] : by_const) {
-        const auto present = [&sats](const std::string& s) {
-            return std::find(sats.begin(), sats.end(), s) != sats.end();
-        };
-        std::string pivot;
-        auto it = decl.clock_pivot_sat.find(c);
-        if (it != decl.clock_pivot_sat.end() && !it->second.empty()
-            && present(it->second)) {
-            pivot = it->second;
-        } else if (sticky_prev_pivot) {
+        std::string declared, incumbent;
+        const auto it = decl.clock_pivot_sat.find(c);
+        if (it != decl.clock_pivot_sat.end()) declared = it->second;
+        if (sticky_prev_pivot) {
             // RTA-1 sticky mode: keep the incumbent while it is registered.  When
             // it is absent, fall back to the lexical pick — the driver's emit-
             // baseline map then advances to the NEW pivot at the next emit, so the
             // NEW pivot is sticky in turn (no flip-back on the old one's return).
             const auto pit = sticky_prev_pivot->find(c);
-            if (pit != sticky_prev_pivot->end() && !pit->second.empty()
-                && present(pit->second)) {
-                pivot = pit->second;
-            } else {
-                pivot = sats.front();
-            }
-        } else {
-            pivot = sats.front();
+            if (pit != sticky_prev_pivot->end()) incumbent = pit->second;
         }
+        const PivotPick pick = electClockPivot(sats, declared, incumbent, pivot_ineligible);
+        if (pick.health_skipped)  ++plan.pivot_health_skips;
+        if (pick.health_fallback) ++plan.pivot_health_fallbacks;
+        const std::string& pivot = pick.sat;
         plan.clock_pivot[c] = pivot;
         plan.shared_datum.push_back(
             NetworkEstimator::Pin{ est.clockColumn(pivot), 0.0 });

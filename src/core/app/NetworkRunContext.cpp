@@ -273,6 +273,14 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.clv_floor_m      = config_.networkClockLevelSigmaFloorM();
     k.clv_horizon_s    = config_.networkClockLevelHorizonS();
     k.clv_ignition_var = config_.getInitialStd().sat_clock * config_.getInitialStd().sat_clock;
+    k.clv_pin_pair_read  = config_.networkClockLevelPinPairRead();
+    k.clv_cb_follow      = config_.networkClockLevelFreeCbFollow();
+    k.clv_datum_pause    = config_.networkClockLevelDatumPause();
+    k.clv_confirm_epochs = std::max(1, config_.networkClockLevelConfirmEpochs());
+    k.clv_pivot_ref      = config_.networkClockLevelPivotRef();
+    k.clv_free_cb_rebase = config_.networkClockLevelFreeCbRebase();
+    // Card HLT: broadcast satellite health on the network path.
+    k.sat_health         = config_.networkSatHealth();
     // Card C-GF: ONE resolved predicate that every fold, withdraw and replay site reads.
     //
     // The gauge-free downdate belongs to the CARRY FOLD, not to the Q3 clock anchor —
@@ -1008,6 +1016,25 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Conditional append, so every pre-card snapshot fingerprint is unchanged.
         if (ctx.knobs.clv_on)
             add(fmt::format("clv:{}:{}", ctx.knobs.clv_floor_m, ctx.knobs.clv_horizon_s));
+        // Card CLV return plan: appended only when a sub-knob leaves its default, so a
+        // snapshot written by the built card keeps its fingerprint.
+        if (ctx.knobs.clv_on
+            && (ctx.knobs.clv_pin_pair_read || ctx.knobs.clv_cb_follow != 0
+                || ctx.knobs.clv_datum_pause || ctx.knobs.clv_confirm_epochs != 1
+                || ctx.knobs.clv_pivot_ref))
+            add(fmt::format("clvrp:{}:{}:{}:{}:{}", ctx.knobs.clv_pin_pair_read ? 1 : 0,
+                            ctx.knobs.clv_cb_follow, ctx.knobs.clv_datum_pause ? 1 : 0,
+                            ctx.knobs.clv_confirm_epochs, ctx.knobs.clv_pivot_ref ? 1 : 0));
+        // Card CLV2: the batch-2 knobs move further carried values (the free code-bias
+        // columns), so a snapshot written with one armed carries a different state.
+        // Conditional append, so every earlier fingerprint is unchanged.
+        if (ctx.knobs.clv_on && ctx.knobs.clv_free_cb_rebase)
+            add("clv2:fcb");
+        // Card HLT: the health rule changes the clock pivot ("pivot") or the satellite set
+        // ("exclude"), so a snapshot written with it armed carries a different datum or
+        // state.  Conditional append, so every earlier fingerprint is unchanged.
+        if (ctx.knobs.sat_health != 0)
+            add(fmt::format("hlt:{}", ctx.knobs.sat_health));
         // Card LV-1: the seed reframe changes the per-station LINEARIZATION POINT of
         // the per-LOS iono AND (through initializeCodeBiases, which subtracts the
         // seeded iono) of the receiver DCB.  The absolute solve is invariant to that

@@ -527,6 +527,8 @@ add_executable(gnss_tests
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp
     tests/test_group_delay_latch.cpp
+    tests/test_sat_health.cpp
+    tests/test_clock_level_batch2.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

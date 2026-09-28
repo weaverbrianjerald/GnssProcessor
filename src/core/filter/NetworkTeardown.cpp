@@ -5604,6 +5604,30 @@ int networkTeardown(
     // Card CLV: the level re-base's run-end readout (one line per constellation, the
     // mechanism's counters, the wire).  Silent unless network.clock_level_carry.
     networkClockLevelTeardown(ctx, setup.emitter ? &*setup.emitter : nullptr, log);
+    // Card HLT: broadcast health on the network path (silent unless network.sat_health).
+    // Standing invariant #4: the counters are the evidence the rule acted.
+    if (ctx.knobs.sat_health != 0) {
+        const auto& c = ctx.counters;
+        long long removed = 0;
+        std::string by_sat;
+        for (const auto& [sat, n] : setup.sat_health_removed) {
+            removed += n;
+            by_sat += fmt::format("{}{} {}", by_sat.empty() ? "" : ", ", sat, n);
+        }
+        log->info("Network (card HLT): sat_health '{}': {} (satellite, epoch) registered clock "
+                  "satellite(s) flagged unhealthy; the clock-pivot election passed over one at "
+                  "{} (constellation, epoch) and found none healthy at {}; {} observation(s) "
+                  "removed by the setup door inside the window{}{}.",
+                  ctx.knobs.sat_health == 1 ? "pivot" : "exclude", c.hlt_unhealthy_registered,
+                  c.hlt_pivot_skips, c.hlt_pivot_fallbacks, removed,
+                  by_sat.empty() ? "" : ": ", by_sat);
+        if (ctx.knobs.sat_health == 1 && c.hlt_pivot_skips == 0)
+            log->warn("Network (card HLT): sat_health 'pivot' is armed but no pick passed over an "
+                      "unhealthy satellite: INERT for this run.");
+        if (ctx.knobs.sat_health == 2 && removed == 0)
+            log->warn("Network (card HLT): sat_health 'exclude' is armed but the door removed no "
+                      "observation inside the window: INERT for this run.");
+    }
     if (ctx.knobs.cta_on) {
         // Card Q3 run-end telemetry (standing invariant #4 — the ON-path counters
         // ARE the evidence).  `folded_anchored = 0` means the anchor never bound a
