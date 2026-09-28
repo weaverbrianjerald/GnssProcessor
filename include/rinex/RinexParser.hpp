@@ -44,7 +44,7 @@ namespace GnssProcessor {
      * See @c common/ObsValueMap.hpp.
      */
     struct RinexObservation {
-        std::string satellite;                     /**< Satellite ID (e.g., "G01" or "G01" for GPS) */
+        std::string satellite;                     /**< Satellite ID (e.g., "G01" for GPS) */
         System system;                             /**< GNSS system enum for the satellite */
         GnssTime time;                             /**< Epoch time of this observation */
         ObsValueMap<double> measurements;          /**< Observation code -> observed value */
@@ -129,6 +129,19 @@ namespace GnssProcessor {
          *  count (system-wide); records with a satellite list go to
          *  @ref phase_shifts_by_sat. */
         std::map<System, std::map<std::string, double>> phase_shifts;
+
+        /** Per-(satellite, observation-code) phase shift in cycles, from RINEX 3
+         *  "SYS / PHASE SHIFT" records that carry a satellite list (count in
+         *  columns 17-18, satellites as 10(1X,A3) in columns 19-58, further
+         *  satellites on continuation records).  Such a record applies to the
+         *  listed satellites only.
+         *  Outer key: satellite id (e.g. "G01", zero-padded).  Inner key: full
+         *  obs code.  Value: shift in cycles.  Every listed value is stored,
+         *  zero included, so that a listed zero overrides a system-wide entry.
+         *  When @c model_corrections.apply_phase_shifts is on, an entry here
+         *  takes precedence over @ref phase_shifts for the same satellite and
+         *  code; with it off, neither map is read. */
+        std::map<std::string, std::map<std::string, double>> phase_shifts_by_sat;
     };
 
     /**
@@ -334,7 +347,7 @@ namespace GnssProcessor {
 
         RinexHeader header_;             /**< Parsed header metadata. */
         std::vector<RinexObservation> observations_; /**< Parsed observation epochs. */
-        long long zero_sentinels_skipped_{0}; /**< RINEX 3 written-0.0 values skipped this parse (guard armed via processing.rinex_skip_zero_values; logged at parse end — invariant #4 observability). */
+        long long zero_sentinels_skipped_{0}; /**< RINEX 3 written-0.0 values skipped this parse (guard armed via processing.rinex_skip_zero_values; logged at parse end as the counter invariant #4 asks for). */
 
         /**
          * @brief Per-system shared obs-code layouts, built lazily during parse.

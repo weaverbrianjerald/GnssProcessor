@@ -719,8 +719,8 @@ namespace GnssProcessor {
         // x_new / P_new, so the copies can be handed to the outlier validator
         // without a separate backup (a ~1 MB matrix copy at n = 350).  The
         // validator edits them in place on the outlier path (see below).
-        const Eigen::VectorXd x = state_manager_.getStateVector();
-        const Eigen::MatrixXd P = state_manager_.getCovariance();
+        Eigen::VectorXd x = state_manager_.getStateVector();
+        Eigen::MatrixXd P = state_manager_.getCovariance();
 
         // --- Persistent-bias R-inflation ---------------------------------
         // When a phase row's EWMA residual mean has warmed up past
@@ -745,9 +745,9 @@ namespace GnssProcessor {
                 const auto stats_opt = residual_history_.getStats(prim, sig);
                 if (!stats_opt.has_value()) continue;
                 const auto& st = stats_opt.value();
-                // Require a warmed-up EWMA history.  The tracker's own warmup
-                // threshold is internal; 20 mirrors its public Config default.
-                if (st.n < 20) continue;
+                // Require a warmed-up EWMA history, by the tracker's own rule
+                // (n ≥ estimation.residual_history.warmup_n).
+                if (!st.warmed_up) continue;
 
                 const std::string band_str = sig.substr(0, 2);
                 const double lambda = bandWavelengthForSat(prim, band_str);
@@ -965,8 +965,8 @@ namespace GnssProcessor {
         // writes those edits back.
         auto [is_outlier, is_reset] = validatePostFitResiduals(
             measurement,
-            const_cast<Eigen::VectorXd&>(x),
-            const_cast<Eigen::MatrixXd&>(P));
+            x,
+            P);
         was_complete_reset_ = is_reset;
 
         if (is_outlier) {
@@ -1053,27 +1053,8 @@ namespace GnssProcessor {
             }
         }
 
-
-        // Per-satellite residual summary
-        if (is_outlier) {
-            const size_t n_res = std::min({ static_cast<size_t>(measurement.residuals.size()),
-                                            measurement.satellite_ids.size(),
-                                            measurement.signal_types.size() });
-            std::string res_summary;
-            for (size_t i = 0; i < n_res; ++i) {
-                const double r = measurement.residuals(static_cast<Eigen::Index>(i));
-                res_summary += measurement.satellite_ids[i];
-                res_summary += ':';
-                // Use spdlog-compatible formatting style via a small buffer
-                char buf[24];
-                std::snprintf(buf, sizeof(buf), "%+.2fm ", r);
-                res_summary += buf;
-            }
-            klogger->debug("{}Post-fit residuals: {}", epoch_prefix, res_summary);
-        }
-
-        if (logger_) logger_->logStateVector(x, "Updated State Vector", epoch_tag);
-        if (logger_) logger_->logCovarianceMatrix(P, "Updated Covariance Matrix", epoch_tag);
+        if (logger_) logger_->logStateVector(x_new, "Updated State Vector", epoch_tag);
+        if (logger_) logger_->logCovarianceMatrix(P_new, "Updated Covariance Matrix", epoch_tag);
 
         return UpdateResult::Applied;
     }

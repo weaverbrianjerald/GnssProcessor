@@ -125,6 +125,7 @@ namespace GnssProcessor {
             double      mean;    ///< EWMA mean (m).
             double      std_dev; ///< EWMA standard deviation (m); 0 when n < 2.
             std::size_t consecutive_rejections; ///< Number of consecutive epochs the row has been outlier-rejected since the last kept update.
+            bool        warmed_up = false; ///< True when @c n ≥ @c warmup_n, the rule @c evaluate and @c evaluateStuckBias apply.
         };
 
         /**

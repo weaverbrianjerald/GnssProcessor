@@ -195,6 +195,7 @@ namespace GnssProcessor {
         s.mean = e.mean;
         s.std_dev = (e.n >= 2) ? std::sqrt(std::max(e.var, 0.0)) : 0.0;
         s.consecutive_rejections = e.consecutive_rejections;
+        s.warmed_up = (e.n >= cfg_.warmup_n);
         return s;
     }
 

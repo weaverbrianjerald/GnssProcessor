@@ -5,11 +5,11 @@
 - **id:** CLV
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-09-22 (`e47b267`), NOT ARMED, SEQUENCED with a return plan (section 6.5). The pre-registered in-solve inflation was built, measured and replaced: on the field it let station events into the satellite clocks (`runs/_rap_clv_f4_field6`: 23 NIS anchor trips against 1, WTZZ00DEU 0.639 and 0.910 m in hours 4 and 5). What stands is an out-of-solve, code-only re-base of the carry along each satellite's LEVEL direction (its clock and every phase bias shifted together, +1 on both in this codebase), the step declared on the wire as the C-record `lvl=` token and replayed identically. The sim level is fixed: datum-free clock error 1.15 to 0.07 m at epoch 240 and 1.12 to 0.05 m at epoch 720, the code-residual spread 0.97 to 1.04 m down to 0.06 to 0.08 m in hours 2 to 6, the sim consumer 0.365 0.088 0.066 m in hours 1 to 3 against 0.601 0.104 0.096 (519 against 448 epochs below 0.1 m), and the consumer inter-system bias within 0.053 m of the value the truth and the run's datum predict from hour 2 on the GPS and Galileo sim (0.95 m off before). The field is not: WTZZ00DEU 0.791 m in hour 1 against 0.560, the census median count 348 to 235 (the Galileo wire 434.5 to 362.5), the code-residual spread 0.24 m against a 0.10 bar, and the split emulation's C1X minus C1C recovery 0.272 m in hour 4 against 0.05. The read (6.3): a satellite's FREE same-band code-bias column (GPS C1W, Galileo C1X) absorbed the frozen level at ignition like the clock and the re-base does not move it (C1W follows at a slope of 0.16 to 0.25), while the fit reads band 1 through C1W in 44 percent of the dual-tracking cells; C1W consumers lose (census count -1044 over 10 sites) and C1C consumers gain (+88 over 6), and E12's 8 m split between its pinned and free Galileo families turns into a 77-break limit cycle. Return plan: R-A the free families, R-B the arm and the break, R-C the clock pivot, each on 2 h arms first. Original summary: Build card, pre-registered 2026-09-22 by the author's decision to fix the root card GAL exposed before continuing. Every satellite's clock level on the wire is set by the single-epoch code solves of the first epochs and frozen by the carry from its first harvest on (datum-free error against truth 1.12 m rms across satellites on the GPS-only sim baseline, constant for six hours; per-satellite ionosphere-free code residual medians of -2.6 to +1.9 m, 71 percent of the error absorbed by the free slant ionosphere of every station). Twenty-two config-only arms locate the lock in the carried priors as a whole, not in any one knob: the Q3 anchor, its floor and walk, the held basis, the phase-bias floors, the emit hold, the birth floors and the in-block carries leave the level untouched; a walking phase bias moves it halfway at a consumer cost; only the free-ambiguity era (the harvest delayed to epoch 76) converges it at the code's rate, 1.30 to 0.16 m, at an ignition cost of 2.1 m. Design: the border carry inflated along each satellite's LEVEL direction (its clock up, its phase biases down, the phase rows invariant) by the code-only level variance, which the accumulated ionosphere-free code information shrinks like a constant's, so the level converges as in PPP while the clock walk stays anchored and the phase side of the wire does not move.
+- **summary:** RETURN PLAN BATCH 2 in card [CLV2](CLV2_clock_level_batch2_2026-09-25.md) (2026-09-25, NOT ARMED: the census cost is the C1W users'; batch 3 proposed there). RETURN PLAN BATCH 1 (sections 7 and 8, 2026-09-25), NOT ARMED: the free same-band column follows a level shift by 1 - (f2/f1)^2 of it (0.393 GPS, 0.442 Galileo), not by all of it, and that share recovers the split emulation's C1X minus C1C to 0.080 m (built card 0.385); against the CODE products the re-base takes a C1C user's code side from 0.29 to 0.19 m, while a C1W user sits at 0.36 to 0.39 m on the baseline wire already (the free family carries its own frozen error, so it needs its own re-base, R-A2); the pivot reference fixes the pivot (Galileo sim datum-free 0.167 to 0.033 m, consumer better in both hours) but moves the inter-system bias by 0.44 m undeclared; the datum pause removes the post-handover NIS cascade; the confirmation arm trips the anchor; every variant that moves the level in the first minutes costs a cold consumer hour 1. Batch 2 (8.6) goes in a new card file. Earlier summary: BUILT 2026-09-22 (`e47b267`), NOT ARMED, SEQUENCED with a return plan (section 6.5). The pre-registered in-solve inflation was built, measured and replaced: on the field it let station events into the satellite clocks (`runs/_rap_clv_f4_field6`: 23 NIS anchor trips against 1, WTZZ00DEU 0.639 and 0.910 m in hours 4 and 5). What stands is an out-of-solve, code-only re-base of the carry along each satellite's LEVEL direction (its clock and every phase bias shifted together, +1 on both in this codebase), the step declared on the wire as the C-record `lvl=` token and replayed identically. The sim level is fixed: datum-free clock error 1.15 to 0.07 m at epoch 240 and 1.12 to 0.05 m at epoch 720, the code-residual spread 0.97 to 1.04 m down to 0.06 to 0.08 m in hours 2 to 6, the sim consumer 0.365 0.088 0.066 m in hours 1 to 3 against 0.601 0.104 0.096 (519 against 448 epochs below 0.1 m), and the consumer inter-system bias within 0.053 m of the value the truth and the run's datum predict from hour 2 on the GPS and Galileo sim (0.95 m off before). The field is not: WTZZ00DEU 0.791 m in hour 1 against 0.560, the census median count 348 to 235 (the Galileo wire 434.5 to 362.5), the code-residual spread 0.24 m against a 0.10 bar, and the split emulation's C1X minus C1C recovery 0.272 m in hour 4 against 0.05. The read (6.3): a satellite's FREE same-band code-bias column (GPS C1W, Galileo C1X) absorbed the frozen level at ignition like the clock and the re-base does not move it (C1W follows at a slope of 0.16 to 0.25), while the fit reads band 1 through C1W in 44 percent of the dual-tracking cells; C1W consumers lose (census count -1044 over 10 sites) and C1C consumers gain (+88 over 6), and E12's 8 m split between its pinned and free Galileo families turns into a 77-break limit cycle. Return plan: R-A the free families, R-B the arm and the break, R-C the clock pivot, each on 2 h arms first. Original summary: Build card, pre-registered 2026-09-22 by the author's decision to fix the root card GAL exposed before continuing. Every satellite's clock level on the wire is set by the single-epoch code solves of the first epochs and frozen by the carry from its first harvest on (datum-free error against truth 1.12 m rms across satellites on the GPS-only sim baseline, constant for six hours; per-satellite ionosphere-free code residual medians of -2.6 to +1.9 m, 71 percent of the error absorbed by the free slant ionosphere of every station). Twenty-two config-only arms locate the lock in the carried priors as a whole, not in any one knob: the Q3 anchor, its floor and walk, the held basis, the phase-bias floors, the emit hold, the birth floors and the in-block carries leave the level untouched; a walking phase bias moves it halfway at a consumer cost; only the free-ambiguity era (the harvest delayed to epoch 76) converges it at the code's rate, 1.30 to 0.16 m, at an ignition cost of 2.1 m. Design: the border carry inflated along each satellite's LEVEL direction (its clock up, its phase biases down, the phase rows invariant) by the code-only level variance, which the accumulated ionosphere-free code information shrinks like a constant's, so the level converges as in PPP while the clock walk stays anchored and the phase side of the wire does not move.
 - **source:** [GAL](GAL_gps_galileo_dual_2026-09-22.md) section 6.1 (the finding and the first arms); [RF-1_float_ambiguities_design](RF-1_float_ambiguities_design.md) sections 1.3 and 1.4 (the carried priors count the level as phase-precise; "the level freezes at K_eff epochs"); [RF-IGN](RF-IGN_ignition_born_levels_2026-09-15.md) (the same lever on the field golden); [RF-2](RF-2_held_basis_2026-09-15.md) (the clock-level ramp read R-CL, never done); [Q3 design](../cards/clock/Q3-ANCHOR-DESIGN.md) and [Q3 results](../cards/clock/Q3-ANCHOR-RESULTS.md) (the anchor binds the walk, not the level)
-- **knobs / posture:** new `network.clock_level_carry` (bool, default false, byte-identical off) with `network.clock_level_sigma_floor_m` (default 0.01) and `network.clock_level_horizon_s` (default 7200); on the RF-0hv working bases at main `68915a0` (GPS only), then card GAL's Galileo set on top
-- **dates in the text:** 2026-09-22
-- **hashes / run dirs:** baseline pair `runs/_rf0hv10_{field,sim}6`; the ladder `runs/_rap_cil_e2` to `_e23` (2 h sim); arms `runs/_rap_clv_*`; exe `gnss_processor_clv.exe` sha256 `289404cbbbbad82d2f6eb4c744c3250737eae8574376f05143bd1380a9416b77`; build `e47b267`; gate arms `runs/_rap_clv_g0f_sim2`, `_g0f_field2`, `_g1f_sim2`, `_g2_sim6`, `_g3_field6`, `_gal_sim6`, `_galx_sim6`, `_gal_field6` (card GAL's bases `runs/_rap_gal_g2b_sim6`, `_g3x2_sim6`, `_g5s_field6`); census keys `clv` against `rf3gl2nb` and `clvgal` against `gals` (replays `runs/_rap_msc_<site>_{clv,clvgal}_d`); the in-solve variants `runs/_rap_clv_v3*_sim2`, `_v4*_sim2`, `_f4_field6` and `_f6_field6` to `_f9_field6`
+- **knobs / posture:** new `network.clock_level_carry` (bool, default false, byte-identical off) with `network.clock_level_sigma_floor_m` (default 0.01) and `network.clock_level_horizon_s` (default 7200); the return plan (section 7): `network.clock_level_pin_pair_read`, `network.clock_level_free_cb_follow` (off, if, full), `network.clock_level_datum_pause`, `network.clock_level_confirm_epochs`, `network.clock_level_pivot_ref`, every default the built card; on the RF-0hv working bases at main `68915a0` (GPS only), then card GAL's Galileo set on top
+- **dates in the text:** 2026-09-22, 2026-09-25
+- **hashes / run dirs:** batch 1 (section 8): exe `gnss_processor_clvrp1.exe` sha256 prefix `a2060462f5ba3ec2` (worktree build on `335f640`), arms `runs/_rap_clvrp1_*`, census replays `runs/_rap_msc_<site>_rp1<arm>_d`; baseline pair `runs/_rf0hv10_{field,sim}6`; the ladder `runs/_rap_cil_e2` to `_e23` (2 h sim); arms `runs/_rap_clv_*`; exe `gnss_processor_clv.exe` sha256 `289404cbbbbad82d2f6eb4c744c3250737eae8574376f05143bd1380a9416b77`; build `e47b267`; gate arms `runs/_rap_clv_g0f_sim2`, `_g0f_field2`, `_g1f_sim2`, `_g2_sim6`, `_g3_field6`, `_gal_sim6`, `_galx_sim6`, `_gal_field6` (card GAL's bases `runs/_rap_gal_g2b_sim6`, `_g3x2_sim6`, `_g5s_field6`); census keys `clv` against `rf3gl2nb` and `clvgal` against `gals` (replays `runs/_rap_msc_<site>_{clv,clvgal}_d`); the in-solve variants `runs/_rap_clv_v3*_sim2`, `_v4*_sim2`, `_f4_field6` and `_f6_field6` to `_f9_field6`
 
 ## 1. What is measured (GPS-only sim baseline `runs/_rf0hv10_sim6`, where the a priori clock is the truth)
 
@@ -430,3 +430,176 @@ for adoption:
 
 Then G2, G3 and G4 at 6 h with the censuses `clv` and `clvgal` for adoption. The coupling kappa
 of 6.4, item 1, is the root of the lock and stays a separate card.
+
+## 7. Return plan, batch 1 (pre-registered 2026-09-25, before any arm was graded)
+
+**7.1 The share a free same-band column follows (a correction to R-A as written in 6.5).**
+R-A moves a free same-band extra by the whole level shift d. Consider a station that reads
+band 1 through the free extra k (GPS C1W, Galileo C1X) and band 2 through the pinned second
+signal (GPS C2W; Galileo C5X, tied to C1C by its geometry-free pin, section 6.3). An ignition
+level error e enters its code rows as -e + x_k + I and -e + mu2 I, with mu2 = (f1/f2)^2. The
+fit absorbs both with I = e / mu2 and x_k = e (1 - 1/mu2): the free column holds 0.393 e on
+GPS L1/L2 and 0.442 e on Galileo E1/E5a, not e, and the ionosphere-free combination of that
+station's pair carries no level error. A consumer reading that pair is therefore on a
+consistent wire before any re-base. A re-base that moves the clock by d and the extra by x
+changes that consumer's ionosphere-free code by -d + a1 x, a1 = f1^2 / (f1^2 - f2^2) = 2.546:
+zero for x = d (1 - (f2/f1)^2), +1.55 d for the whole-shift follow of 6.5, and -0.49 d for the
+partial follow the built card measured (slope 0.18 to 0.25, section 6.3). The last matches the
+census split of 6.3 (the C1W consumers lose, the C1C consumers gain). The pin-pair read of R-A
+stands: at a station reading C1W and C2W the ionosphere-free pair is blind to the level and
+dilutes the effect.
+
+**7.2 Built (every knob inert unless `network.clock_level_carry`; every default reproduces the
+built card).** Worktree build on main `335f640`, exe `gnss_processor_clvrp1.exe`, sha256 prefix
+`a2060462f5ba3ec2`.
+
+- `network.clock_level_pin_pair_read` (R-A): the ionosphere-free pairs of the two-way fit come
+  only from the rows of the satellite's realized pin pair (`this_epoch_if_pin_real`); a column
+  outside it is counted and left out.
+- `network.clock_level_free_cb_follow` (R-A): `off`, `if` or `full`. A free same-band extra (a
+  code on the band of the pin pair's first signal that is not in the pair) moves by
+  d (1 - (f2/f1)^2) (`if`) or by d (`full`): its carried value, the `s_prev` of every coupling
+  term on it, its time-linked datum reference (`code_bias_prev_`), and a declaration on its
+  next B record (`lvl=`), which the emitter's code-bias jump test removes in the producer and
+  in a replay.
+- `network.clock_level_datum_pause` (R-B): at a datum change every armed filter is marked; a
+  marked satellite whose anchor is re-validating is skipped with its information kept.
+- `network.clock_level_confirm_epochs` N (R-B): an arm, or a break, needs N consecutive epochs
+  (a break: the same sign) and restarts at their information-weighted mean effect with their
+  summed information; an epoch waiting for confirmation applies no shift.
+- `network.clock_level_pivot_ref` (R-C): the pivot's filter runs; every other satellite of the
+  constellation shifts by its update minus the pivot's, the pivot by nothing; without a pivot
+  update the de-mean is used and counted.
+
+**7.3 The batch (2 h arms, tags `clvrp1_*`, run dirs `runs/_rap_clvrp1_*`; bases: field
+`_rf0hv10_field6`, sim `_rf0hv10_sim6`, split emulation `_rap_gal_g3x2_sim6`, Galileo field
+`_rap_gal_g5s_field6`, Galileo sim `_rap_gal_g2b_sim6`).**
+
+| tag | base | change (with `clock_level_carry` unless stated) | question |
+| --- | --- | --- | --- |
+| `f_g0`, `s_g0` | field, sim | nothing | the build's knob-absent identity |
+| `f_clv`, `s_clv`, `x_clv`, `fg_clv`, `sg_clv` | all five | the built card | reference on this build |
+| `f_pp` | field | pin-pair read | the dilution alone |
+| `f_ppif`, `x_ppif`, `fg_ppif` | field, split, Galileo field | pin-pair read, follow `if` | R-A as corrected |
+| `f_ppfull`, `x_ppfull` | field, split | pin-pair read, follow `full` | R-A as written |
+| `f_cf`, `s_cf` | field, sim | confirm 3 | R-B's arm and break |
+| `s_pv`, `sg_pv` | sim, Galileo sim | pivot reference | R-C |
+| `fw_clv`, `fw_dp` | field, 3.75 to 5.75 h | the built card; datum pause | R-B across the G01 handover (TOW 276150) |
+| `f_all`, `s_all`, `x_all`, `fg_all`, `sg_all`, `fw_all` | all | every sub-knob, follow `if`, confirm 3 | the candidate |
+
+**7.4 Frozen reading.**
+
+| bar | arms | pass |
+| --- | --- | --- |
+| B0 | `f_g0`, `s_g0` | `products.txt` (comments stripped), `closed_loop_trace.csv`, `network_epoch_status.csv` identical to `_rf0hv10_{field,sim}6` over the window; the `*_clv` arms identical to the built card's 6 h arms over the window, or else the batch's own `*_clv` arms are the references |
+| B1 | `f_ppif` | WTZZ00DEU hours 1 and 2 at most 0.570 and 0.069 m; the IF(C1C, C2W) residual spread in hour 2 at most 0.10 m (built card 0.17, baseline 0.27); the C1W follow slope against `f_g0` within 0.05 of 0.393 in hour 2; on the 16-site census replayed on the 2 h wire, paired against `rf3gl2nb` per site: the median change of the hour-2 p50 at the C1W sites at most +0.010 m, and at the C1C sites at most 0 |
+| B2 | `x_ppif` | the C1X minus C1C recovery rms in hour 2 at most 0.10 m (built card 0.385, base 0.868); the C5X minus C5Q recovery not above 0.035 m |
+| B3 | `fg_ppif` | WTZZ00DEU hours 1 and 2 not worse than card GAL's base (0.197 and 0.063 m) by more than 0.010 m; E12's breaks and pilot ionosphere-free median reported |
+| B4 | `f_cf`, `s_cf` | the sim datum-free error at epochs 16, 60 and 240 not above the built card's (0.43, 0.13, 0.07 m) by more than 0.05 m; fewer breaks; WTZZ00DEU hour 1 not worse than `f_clv` |
+| B5 | `fw_dp` | Q3 anchor decouples in the hour after TOW 276150 at most 34 (the base's 31 plus 3; built card 56) |
+| B6 | `s_pv`, `sg_pv` | the GPS datum-free rms at epoch 240 with the pivot at most 0.03 m above the rms without it; on `sg_pv`, the consumer inter-system bias within 0.10 m of the prediction from hour 2 |
+| B7 | `*_all` | reported; if B1 to B6 pass, `*_all` is the candidate for the 6 h gates G2 to G4 and the censuses |
+
+A bar missed is a result, not a stop: the next batch changes one thing against it.
+
+## 8. Batch 1 result (2026-09-25)
+
+Every number is read from the run directory named (`runs/_rap_clvrp1_<tag>`). Graders (read-only):
+the card's `clklevel.py`, `g3_recovery.py`, `clv_c1w_follow.py`, `clv_df_sys.py`,
+`clv_e12_family.py` and `gross_sys.py`; `scripts/gal_grade.py`;
+`scripts/wire_vs_code_census.py` with the fix of 8.5; and the session graders `ident2h.py`
+(windowed identity on the post-OWD rules: records only, `n_sats` dropped), `census2h.py` (the
+16 census sites replayed for 2 h on a wire, paired against `rf3gl2nb`), `codeside.py`,
+`phaseside.py` and `iflevel_code.py` (the ionosphere-free code side against the CODE products).
+
+**8.1 The bars.**
+
+| bar | reading | verdict |
+| --- | --- | --- |
+| B0 | `f_g0` and `s_g0` identical to `_rap_owd_field6f` and `_rap_owd_sim6f` over the window (records, closed loop, epoch status); against `_rf0hv10_{field,sim}6` the records are identical and the consumer differs by 0.1 mm (card OWD O2); the `f_clv` records identical to `_rap_clv_g3_field6` | PASS |
+| B1 | `f_ppif`: WTZZ00DEU 0.966 / 0.056 m (bars 0.570 / 0.069); IF(C1C, C2W) residual spread 0.14 / 0.15 m (bar 0.10); C1W follow slope 0.386 / 0.392 (bar 0.393 +/- 0.05); census change of the hour-2 p50, C1W sites +0.158 m (bar +0.010), C1C sites -0.011 m (bar 0) | FAIL (the slope and the C1C sites pass) |
+| B2 | `x_ppif`: C1X minus C1C recovery 0.359 / 0.080 m (bar 0.10 in hour 2; built card 0.648 / 0.385; `x_ppfull` 0.489 / 0.279); C5X minus C5Q 0.030 / 0.030 m | PASS |
+| B3 | `fg_ppif`: WTZZ00DEU 0.386 / 0.054 m (bars 0.207 / 0.073); E12 pilot IF median -7.63 m (built card on this build -8.69), E12 C1C median -0.09 m (-1.53); Galileo code rows above 3 m 553 (284) | FAIL in hour 1 |
+| B4 | `s_cf`: datum-free 0.45 / 0.12 / 0.03 m at epochs 16 / 60 / 240 and no break, but the sim consumer 0.941 / 0.199 m against `s_clv` 0.358 / 0.088, with 3 NIS anchor trips right after the delayed arm (TOW 259410 and 259440; none on `s_clv`); `f_cf` WTZZ00DEU hour 1 0.925 m against 0.791 | FAIL |
+| B5 | `fw_dp`: 31 anchor decouples in the hour after TOW 276150, all datum-class (`fw_clv` 40: 31 datum, 9 NIS) | PASS |
+| B6 | datum-free at epoch 240 with the pivot: `s_pv` 0.03 m (`s_clv` 0.07), `sg_pv` GPS 0.033 and Galileo 0.036 m (`sg_clv` 0.167 and 0.082); consumer inter-system bias minus the prediction +0.494 / +0.443 m in hours 2 / 3 (`sg_clv` +0.013 / -0.000) | the datum part PASS, the inter-system bias FAIL |
+
+Consumer 3D p50 by hour (m), 2 h: field WTZZ00DEU `g0` 0.560 0.059, `clv` 0.791 0.051, `pp`
+1.011 0.056, `ppif` 0.966 0.056, `ppfull` 0.872 0.054, `cf` 0.925 0.078, `all` 1.017 0.093; sim
+`g0` 0.598 0.103, `clv` 0.358 0.088, `cf` 0.941 0.199, `pv` 0.209 0.109, `all` 0.941 0.203;
+split emulation `x_clv` 0.220 0.059, `x_ppif` 0.516 0.071, `x_ppfull` 0.316 0.089, `x_all`
+0.379 0.050; Galileo sim `sg_clv` 0.652 0.056, `sg_pv` 0.510 0.040, `sg_all` 0.378 0.089;
+Galileo field `fg_clv` 0.260 0.042, `fg_ppif` 0.386 0.054, `fg_all` 0.286 0.045.
+
+The field census (median change of the hour-1 / hour-2 p50 against `rf3gl2nb`, 10 C1W and 6
+C1C sites; the replay of `f_g0` equals `rf3gl2nb` at every site):
+
+| wire | C1W sites | C1C sites | median p50 by hour |
+| --- | --- | --- | --- |
+| `f_clv` | +0.581 / +0.075 | +0.118 / -0.034 | 1.389 / 0.280 |
+| `f_pp` | +0.477 / +0.174 | +0.048 / -0.014 | 1.533 / 0.284 |
+| `f_ppif` | +0.412 / +0.158 | +0.059 / -0.011 | 1.452 / 0.288 |
+| `f_ppfull` | +0.333 / +0.150 | +0.083 / -0.005 | 1.297 / 0.341 |
+| `f_cf` | +0.390 / +0.044 | +0.072 / +0.006 | 1.298 / 0.234 |
+| `f_all` | +0.420 / +0.029 | +0.264 / +0.002 | 1.329 / 0.204 |
+| `rf3gl2nb` | | | 0.670 / 0.169 |
+
+**8.2 The follow share is right where the truth is known.** On the split emulation the corrected
+share recovers the injected C1X minus C1C constants to 0.080 m in hour 2 (B2) where the
+whole-shift follow leaves 0.279 m, and the Galileo datum-free error at epoch 240 falls to 0.062 m
+(built card 0.436, whole shift 0.083). On the field wire the share does what section 7.1 derives:
+a C1W user's ionosphere-free code side moves 0.021 / 0.020 m rms across satellites against `f_g0`
+(`codeside.py`), against 0.079 / 0.087 m for the built card and 0.160 / 0.160 m for the whole
+shift; the measured follow slope is 0.386 / 0.392.
+
+**8.3 The field against the CODE products: the C1W family was never consistent.** The
+ionosphere-free code error a user sees per satellite, network minus CODE (the wire clock is the
+residual against the CODE a-priori, so X = -c0 + a1 (B1 - OSB1) - a2 (B2 - OSB2)), per-epoch
+median removed, rms across satellites of the hourly per-satellite mean (`iflevel_code.py`):
+
+| wire | C1C user, hours 1 / 2 | C1W user, hours 1 / 2 |
+| --- | --- | --- |
+| `f_g0` (the baseline) | 0.290 / 0.293 | 0.360 / 0.392 |
+| `f_clv` | 0.223 / 0.203 | 0.336 / 0.373 |
+| `f_pp` | 0.191 / 0.189 | 0.332 / 0.375 |
+| `f_ppif` | 0.191 / 0.189 | 0.359 / 0.398 |
+| `f_ppfull` | 0.190 / 0.188 | 0.436 / 0.470 |
+| `f_all` | 0.193 / 0.185 | 0.371 / 0.418 |
+
+The level re-base is a correction on an independent reference for a C1C user (0.29 to 0.19 m).
+A C1W user's code side is 0.36 to 0.39 m off CODE on the baseline wire, more than a C1C user's:
+the free C1W family carries its own frozen error. Section 7.1 assumed that the free column
+absorbed exactly the level's share, so that its user was consistent; that holds on the sim, where
+the free family is determined by the level alone, and is refuted on the field. The corrected
+share preserves the C1W family's error; the whole shift adds to it.
+
+**8.4 Why every variant loses hour 1 at a cold consumer (a reading consistent with the data, not
+independently proven).** The wire's phase side moves against `f_g0` by 0.08 to 0.11 m rms per
+satellite, mostly a per-satellite constant (0.02 m after removing each satellite's mean, which a
+float user absorbs), with its steps concentrated at the arming epochs (TOW 259350 to 259500,
+summed 1.0 to 1.75 m over the satellites in one epoch, `phaseside.py`); the code side moves at
+the same epochs by the level itself (up to 2.8 m on the sim). A consumer that started at the
+producer's ignition has put part of the old code level into its slant ionosphere (71 percent,
+section 1) and re-converges; the consumer does not read `lvl=`. The loss appears where the wire
+ends closer to the truth (`x_ppif`: recovery 0.080 m, consumer hour 1 0.516 against `x_clv`
+0.220), and in single-site trajectories (QUIN00USA converges by epoch 40 on the reference and
+sits at 3 to 4 m until epoch 100 on every variant).
+
+**8.5 Tooling.** `scripts/wire_vs_code_census.py` read field 5 of a B record as the positional
+code disc counter and stopped on a key=value token (the B-record `lvl=`); it now skips a field
+holding `=`, the C++ reader's rule.
+
+**8.6 Verdict: NOT ARMED; batch 2 (one change each, 2 h).**
+
+1. R-A2, the free family's own level: re-base each free same-band column from the same-band
+   difference (C1W minus C1C, C1X minus C1C) at stations that track both, a two-way fit of those
+   differences (satellite effect, per-station offset), instead of the clock's share alone. Check:
+   a C1W user's code side against CODE (0.36 / 0.39 m) and the census C1W sites.
+2. The consumer's response to a declared level step: on `lvl=` the consumer re-floats that
+   satellite's slant ionosphere, the state that absorbed the old code level. Check: `x_ppif`'s
+   consumer hour 1 (0.516 m) and the census hour 1.
+3. R-C with the pivot-referenced common shift declared as a constellation clock re-reference, so
+   a consumer re-inflates its inter-system bias as it does at a pivot handover. Check: `sg_pv`'s
+   inter-system bias within 0.10 m.
+4. R-B: the datum pause is kept; the confirmation arm is dropped until the anchor trips after
+   its delayed arm are read.

@@ -539,8 +539,8 @@ namespace GnssProcessor {
                             }
 
                             int n_sats = 0;
-                            if (line.size() >= 17) {
-                                std::string nsats_str = line.substr(15, 2);
+                            if (line.size() >= 18) {
+                                std::string nsats_str = line.substr(16, 2);
                                 nsats_str.erase(0, nsats_str.find_first_not_of(" \t"));
                                 nsats_str.erase(nsats_str.find_last_not_of(" \t") + 1);
                                 if (!nsats_str.empty()) {
@@ -552,30 +552,77 @@ namespace GnssProcessor {
                                 }
                             }
 
+                            // Satellite list, 10 x (1X,A3) per record: the A3 of
+                            // entry k starts at 0-based column 19 + 4k.  A blank
+                            // PRN digit ("G 7") is zero-filled as on the
+                            // observation records.
+                            std::vector<std::string> listed_sats;
+                            auto collectSats = [&listed_sats](const std::string& rec, int n_on_rec) {
+                                for (int k = 0; k < n_on_rec; ++k) {
+                                    const size_t pos = 19 + 4 * static_cast<size_t>(k);
+                                    if (pos + 3 > rec.size()) break;
+                                    std::string id = rec.substr(pos, 3);
+                                    if (id.find_first_not_of(' ') == std::string::npos) continue;
+                                    if (id[1] == ' ') id[1] = '0';
+                                    listed_sats.push_back(id);
+                                }
+                            };
+                            collectSats(line, std::min(n_sats, 10));
+
+                            // Continuation records carry the rest of the list,
+                            // 10 per record, with columns 1-18 blank.  A record
+                            // that is not a continuation is left for the header
+                            // loop (the stream is rewound to it).
+                            int remaining_sats = n_sats - 10;
+                            while (remaining_sats > 0) {
+                                const std::streampos cont_pos = file.tellg();
+                                std::string cont;
+                                if (!std::getline(file, cont)) break;
+                                cont.erase(cont.find_last_not_of(" \t") + 1);
+                                const bool is_cont = cont.size() >= 60
+                                    && cont.substr(60).find("SYS / PHASE SHIFT") != std::string::npos
+                                    && cont.find_first_not_of(' ') >= 18;
+                                if (!is_cont) {
+                                    file.clear();
+                                    file.seekg(cont_pos);
+                                    break;
+                                }
+                                collectSats(cont, std::min(remaining_sats, 10));
+                                remaining_sats -= 10;
+                            }
+
                             if (sys_enum == System::Unknown || obs_code.empty()) {
                                 log_manager_.getLogger("rinex_parser")->debug(
                                     "Skipping malformed SYS / PHASE SHIFT record: '{}'", line);
                             } else if (n_sats > 0) {
-                                log_manager_.getLogger("rinex_parser")->info(
-                                    "SYS / PHASE SHIFT for {} {} has per-sat list (n={}); "
-                                    "per-sat overrides are not applied (system-wide only).",
-                                    sys, obs_code, n_sats);
+                                if (static_cast<int>(listed_sats.size()) != n_sats) {
+                                    log_manager_.getLogger("rinex_parser")->warn(
+                                        "SYS / PHASE SHIFT for {} {} declares {} satellites but lists {}; "
+                                        "the shift is stored for the listed satellites only",
+                                        sys, obs_code, n_sats, listed_sats.size());
+                                }
+                                size_t n_stored = 0;
+                                for (const auto& id : listed_sats) {
+                                    if (id[0] != sys[0]) {
+                                        log_manager_.getLogger("rinex_parser")->warn(
+                                            "SYS / PHASE SHIFT for {} {} lists satellite '{}' of another system; ignored",
+                                            sys, obs_code, id);
+                                        continue;
+                                    }
+                                    header_.phase_shifts_by_sat[id][obs_code] = shift_cyc;
+                                    ++n_stored;
+                                }
+                                if (shift_cyc != 0.0) {
+                                    log_manager_.getLogger("rinex_parser")->info(
+                                        "SYS / PHASE SHIFT: {} {} = {:+.5f} cyc for {} listed satellites "
+                                        "(will be subtracted from raw phase)",
+                                        sys, obs_code, shift_cyc, n_stored);
+                                }
                             } else if (shift_cyc != 0.0) {
                                 header_.phase_shifts[sys_enum][obs_code] = shift_cyc;
                                 log_manager_.getLogger("rinex_parser")->info(
                                     "SYS / PHASE SHIFT: {} {} = {:+.5f} cyc (will be subtracted from raw phase)",
                                     sys, obs_code, shift_cyc);
-                            }
-
-                            // Skip any continuation lines: the spec packs 10
-                            // sat IDs per row; if more are listed, additional
-                            // SYS / PHASE SHIFT-labeled records follow with a
-                            // blank system column.  We never use the per-sat
-                            // list, so swallow them rather than mis-parsing.
-                            int remaining_sats = n_sats - 10;
-                            while (remaining_sats > 0 && std::getline(file, line)) {
-                                line.erase(line.find_last_not_of(" \t") + 1);
-                                remaining_sats -= 10;
                             }
                         }
                     }
@@ -730,12 +777,25 @@ namespace GnssProcessor {
                                     // either way.
                                     if (config_.getModelCorrections().apply_phase_shifts
                                         && !obs_types[j].empty() && obs_types[j][0] == 'L') {
-                                        auto sys_it = header_.phase_shifts.find(system);
-                                        if (sys_it != header_.phase_shifts.end()) {
-                                            auto code_it = sys_it->second.find(obs_types[j]);
-                                            if (code_it != sys_it->second.end()) {
-                                                value -= code_it->second;
+                                        const double* shift = nullptr;
+                                        auto sat_it = header_.phase_shifts_by_sat.find(sat_id);
+                                        if (sat_it != header_.phase_shifts_by_sat.end()) {
+                                            auto code_it = sat_it->second.find(obs_types[j]);
+                                            if (code_it != sat_it->second.end()) {
+                                                shift = &code_it->second;
                                             }
+                                        }
+                                        if (shift == nullptr) {
+                                            auto sys_it = header_.phase_shifts.find(system);
+                                            if (sys_it != header_.phase_shifts.end()) {
+                                                auto code_it = sys_it->second.find(obs_types[j]);
+                                                if (code_it != sys_it->second.end()) {
+                                                    shift = &code_it->second;
+                                                }
+                                            }
+                                        }
+                                        if (shift != nullptr) {
+                                            value -= *shift;
                                         }
                                     }
                                     obs.measurements[obs_types[j]] = value;
@@ -1075,6 +1135,13 @@ namespace GnssProcessor {
         }
     }
 
+    Eigen::Vector3d RinexParser::getArpPositionXyz() const {
+        // Marker -> ARP through the header eccentricity.  The conversion itself
+        // lives in Coordinates (the single owner of the H/E/N convention); this
+        // accessor only pairs the two header fields that belong together.
+        return Coordinates::markerToArp(getApproxPositionXyz(), getAntennaDeltaHen());
+    }
+
     /**
      * @brief Validate measurement rate and epoch intervals parsed from the RINEX file.
      *
@@ -1099,13 +1166,6 @@ namespace GnssProcessor {
      * @return true if the header interval (if present) and all epoch intervals are
      *         within allowed ranges; false if any invalid interval is detected.
      */
-    Eigen::Vector3d RinexParser::getArpPositionXyz() const {
-        // Marker -> ARP through the header eccentricity.  The conversion itself
-        // lives in Coordinates (one owner of the H/E/N convention); this accessor
-        // only pairs the two header fields that belong together.
-        return Coordinates::markerToArp(getApproxPositionXyz(), getAntennaDeltaHen());
-    }
-
     bool RinexParser::validateMeasurementRate() const {
         if (observations_.empty()) return true;
 

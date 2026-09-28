@@ -357,6 +357,7 @@ add_executable(gnss_tests
     tests/test_rinex_nav_parser.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_rinex3_blank_prn.cpp
+    tests/test_rinex3_phase_shift.cpp
     tests/test_network_normal_equations.cpp
     tests/test_neq_station_prior_before_pd.cpp
     tests/test_pd_safe_fold.cpp
@@ -503,6 +504,7 @@ add_executable(gnss_tests
     tests/test_phase_gate_drop_edge.cpp
     tests/test_handover_stransform.cpp
     tests/test_mw_evidence_refloat.cpp
+    tests/test_mw_pivot_reset.cpp
     tests/test_common_band_scope.cpp
     tests/test_candidacy_usable.cpp
     tests/test_restored_arc_age.cpp
@@ -527,6 +529,7 @@ add_executable(gnss_tests
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp
     tests/test_group_delay_latch.cpp
+    tests/test_residual_history_tracker.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)
