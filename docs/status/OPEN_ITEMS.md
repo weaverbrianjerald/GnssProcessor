@@ -74,6 +74,7 @@ Every card whose STATUS block says `status: open`. Twenty-four at the time of wr
 | The open valve inventory | which valves still have a bare decoupling or re-coupling edge | [SPEC_prefit_census_observability.md](../SPEC_prefit_census_observability.md) §13 |
 | Tier 3 of the config ledger | **every** row there is "plausible, never measured on field data" — the tier IS an owed list | [CONFIG_promotion_ledger.md](../CONFIG_promotion_ledger.md), `## Tier 3 — UNVALIDATED` |
 | The consolidated OWED / gate ledger | the redundancy-census family's own gate list | [cards/raim-qc/REDUNDANCY-CENSUS.md](../cards/raim-qc/REDUNDANCY-CENSUS.md) (§15) |
+| The comment-audit findings | code defects (open and fixed), unverified suspicions, author checks, CLAUDE.md claims the code contradicts, dead code and wrong output strings, found while every comment was checked against its code | [cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) |
 
 ---
 

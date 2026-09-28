@@ -28,6 +28,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [QPR 0–3](../cards/queues/QPR-ITEMS-0-3.md) | items 0–3: the pin bridge, the S-transform re-reference family, datum-station election … | open | 2026-08-21 |
 | [QPR 4](../cards/queues/QPR-ITEM-4-T3-NULLS.md) | item 4: T3-class test statistics — correct nulls, not recalibrated constants | open | 2026-08-21 |
 | [QPR 5–8](../cards/queues/QPR-ITEMS-5-8.md) | items 5–8: the level contract, the half-epoch back-off ritual, the SH health-gate relea… | open | 2026-08-21 |
+| [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | findings from the whole-repository comment audit: code defects, suspicions, author checks, CLAUDE.md errors… | open | 2026-09-28 |
 
 **Standing documents** (still at their original paths, indexed not moved):
 
