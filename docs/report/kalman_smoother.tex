@@ -22,7 +22,7 @@ the layout and the dynamic key$\to$index maps.  The filter operates on
 that state and assumes no fixed indices
 (\texttt{src/core/filter/KalmanFilter.cpp}).
 
-Throughout we write $\Fmat$ for the state-transition matrix, $\Qmat$
+The notation throughout is $\Fmat$ for the state-transition matrix, $\Qmat$
 for the discrete process-noise covariance, $\Rmat$ for the
 measurement-noise covariance, $\Smat$ for the innovation covariance,
 $\Kgain$ for the Kalman gain, and $\innov$ for the innovation
@@ -287,7 +287,7 @@ is
 \label{eq:kf-sres}
 \end{equation}
 The denominator is floored at the \emph{working} $R_{ii}$, the inflated
-noise actually used in $\Rmat$, not the formal noise.  This is a
+noise used in $\Rmat$, not the formal noise.  This is a
 deliberate compromise.  When an ambiguity absorbs the measurement
 (double-differenced phase with an ambiguity gain near one), the rigorous
 denominator $S_{r,ii}$ shrinks toward $R\,\Smat^{-1}R$, and residuals
@@ -532,7 +532,7 @@ ambiguity resets, teardowns, and pivot handovers:
       large variance and carries no information backward, so smoothing
       it would only add noise.  The exclusion matches by satellite
       prefix and is slightly broader than necessary.  The extra states
-      simply keep their forward values.
+      keep their forward values.
 \item A \emph{dimension change}
       $\dim\tilde{\stateV}_{k+1|k} \neq \dim\hat{\stateV}_{k|k}$ is a hard
       boundary.  Predict never grows the state, so a size mismatch means
@@ -587,7 +587,7 @@ gain for the position block then applies almost the same correction to
 every epoch, and the smoothed position is constant across epochs
 \emph{by construction}.  This is expected behaviour.  The smoother
 improves the other states (troposphere, ionosphere, float ambiguities),
-and the position in kinematic runs, where it really changes from epoch
+and the position in kinematic runs, where it changes from epoch
 to epoch.
 
 \ifSubfilesClassLoaded{\printbibliography}{}

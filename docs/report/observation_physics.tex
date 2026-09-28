@@ -641,12 +641,13 @@ the attitude frame \eqref{eq:obsphys-yaw-frame}, the Sun-elevation
 \eqref{eq:obsphys-beta}, the eclipse predicate
 \eqref{eq:obsphys-eclipse} and the wind-up
 \eqref{eq:obsphys-windup-dipoles} is produced by
-\texttt{model/Planetary.cpp} (the rigorous IAU precession/nutation Sun
-position, cached per epoch) and is documented in
-\dcref{sec:frames}{the Coordinate Frames and Time Systems document}.  Every term is invariant
-physics; the only user-facing knobs are enable toggles and the
-eclipse-shadow scale, all cited rather than reproduced because they tune
-\emph{whether} a correction is applied, never its functional form.
+\texttt{model/Planetary.cpp} (an analytic RTKLIB/Meeus series rotated to
+ECEF through the IAU 1976/1980 precession-nutation chain, cached per epoch)
+and is documented in
+\dcref{sec:frames}{the Coordinate Frames and Time Systems document}.  Every
+term is a fixed physical model.  The user-facing knobs are enable toggles
+and the eclipse-shadow scale; they are cited rather than reproduced because
+they set \emph{whether} a correction is applied, never its functional form.
 
 \ifSubfilesClassLoaded{\printbibliography}{}
 \end{document}

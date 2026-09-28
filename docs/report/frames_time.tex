@@ -362,7 +362,7 @@ k^{\star} = \max\{\,k : \mathrm{JD}_k \le \mathrm{JD}\,\},
 \label{eq:frame-leaplookup}
 \end{equation}
 falling back to zero before the epoch
-(\texttt{TimeUtils::leapSecondsGpsUtc}).  TAI$-$UTC is then simply
+(\texttt{TimeUtils::leapSecondsGpsUtc}).  TAI$-$UTC is then
 $\leapgu + 19\;\mathrm{s}$ from \eqref{eq:frame-tai-tt}
 (\texttt{TimeUtils::leapSecondsTaiUtc}).  The lookup must depend on the
 epoch.  A leap second was inserted between 2005 and 2010, so the same
@@ -496,7 +496,7 @@ query time by the ephemeris store, not by \texttt{TimeUtils}
 (the file-local constant \texttt{kBdtToGpsOffsetSec}, consumed by
 \texttt{LiveEphemerisStore::computeSatellitePV}).  When the
 store lifts a BeiDou ephemeris reference time onto the common GPS scale
-for an honest cross-system age check it adds the combined offset
+for a cross-system age check it adds the combined offset
 \begin{empheq}[box=\fbox]{equation}
 \Delta_{\mathrm{BDT}\to\mathrm{GPS}}
 = 1356 \times 604800\;\mathrm{s} + 14\;\mathrm{s},
@@ -570,7 +570,7 @@ true obliquity $\obleps_0 + \deps$:
 $\nutN = \rotR{1}(-\obleps_0-\deps)\,\rotR{3}(-\dpsi)\,\rotR{1}(\obleps_0)$
 (the nutation block of \texttt{Planetary::eci2ecef}).
 
-\paragraph{Apparent sidereal time and the 0h-UT1 subtlety.}
+\paragraph{Apparent sidereal time and the 0h-UT1 reference.}
 Greenwich Apparent Sidereal Time adds the equation of the equinoxes,
 the nutation in longitude projected on the equator, plus the two leading
 complementary terms in the lunar node $\Omega$, to the mean sidereal
@@ -727,15 +727,20 @@ rotated to ECEF by exactly the $\Umat$ of \eqref{eq:frame-legacy-chain}
 or \eqref{eq:frame-cio-chain} according to the
 \texttt{estimation.enable\_cio\_frame} toggle (default off,
 \Cref{sec:frame-cio}), in
-\texttt{Planetary::computeSunMoonPosition}; the ECEF Sun and Moon are precisely
+\texttt{Planetary::computeSunMoonPosition}; the ECEF Sun and Moon are
 the inputs consumed by the solid-Earth and ocean tides of
 \dcref{sec:sitedisp}{the Site Displacement document} and by the
 satellite-attitude and phase-wind-up models of
 \dcref{sec:obsphys}{the Observation Physics document}.  The two
-luni-solar models are only $\sim$100\,km accurate in position.  That is ample
-for the tidal and attitude geometry, which depend on the Sun/Moon
-\emph{direction} to well under the milliarcsecond level that matters,
-and a non-finite guard substitutes a nominal 1\,AU / mean-lunar-distance
+luni-solar series are $\sim$100\,km accurate in position.  Their output is
+in the mean-of-date frame, not J2000, and the ECI-to-ECEF rotation of the
+legacy chain applies precession again, so on the default path the Sun and
+Moon directions carry the precession accumulated since J2000 a second time
+(about 50\,arcsec per year, roughly a third of a degree in 2024).
+\texttt{estimation.enable\_sun\_frame\_correction} (default off,
+byte-identical when off) de-precesses the of-date vectors to J2000 before
+the rotation and removes that error (\texttt{Planetary::precessionIau1976}).
+A non-finite guard substitutes a nominal 1\,AU / mean-lunar-distance
 fallback rather than propagate a NaN into the correction stack (the
 output-validation tail of \texttt{Planetary::computeSunMoonPosition}).
 

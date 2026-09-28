@@ -276,3 +276,14 @@ Two questions about the mathematics, left unchanged for the author:
 - [ ] **Author check: `eq:noise-model`.** The equation shows the SNR factor multiplying the
   baseline variance; under the `snr` strategy the code's model replaces the baseline
   variance (`StochasticModelWeight::computeSnr`).
+
+## 2026-09-28: finding from the second (light) pass over the earlier report chapters
+
+- [ ] **Verified, default path: the Sun and Moon directions carry precession twice.**
+  `Planetary::sunMoonPosEci` returns mean-of-date vectors, and the legacy ECI-to-ECEF
+  chain applies IAU 1976 precession again, so the directions are off by the precession
+  accumulated since J2000 (about 50 arcsec per year, roughly a third of a degree in 2024).
+  `estimation.enable_sun_frame_correction` (default off) de-precesses them first. Decide
+  whether to arm it (a fingerprint and golden change) or make it the default through a
+  migration card. The report (frames_time.tex, sec:frame-sunmoon) now states this; it had
+  claimed the direction was good to well under a milliarcsecond.

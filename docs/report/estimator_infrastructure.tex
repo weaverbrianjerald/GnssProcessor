@@ -310,11 +310,11 @@ state.
 Two BIA-coverage gates also apply, so that the differenced code is
 consistent in its biases.  The first is \emph{presence}: a \texttt{.BIA}
 entry exists on the band, with the zero-valued BeiDou C2I/C6I entries
-treated as missing.  The second is coverage \emph{honesty}
+treated as missing.  The second is the coverage \emph{application} check
 (\texttt{bias\_coverage\_requires\_apply}).  It skips the seed when an
 entry is loaded but not \emph{applied} to $(P-\mathrm{mod})$, because the
 raw hardware bias is then still present.  The network producer uses
-presence only.  The honesty gate is needed because the failure it
+presence only.  The application check is needed because the failure it
 prevents, a zero-valued BeiDou entry that injects
 $30$--$60\,\mathrm{m}$, is well below the $200\,\mathrm{m}$ reject and
 would pass it.
